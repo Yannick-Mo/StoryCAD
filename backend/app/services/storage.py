@@ -59,3 +59,35 @@ async def get_latest_skeleton(db: AsyncSession, project_id: uuid.UUID) -> Option
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+async def list_projects(db: AsyncSession) -> list[Project]:
+    result = await db.execute(select(Project).order_by(desc(Project.created_at)))
+    return result.scalars().all()
+
+
+async def delete_project(db: AsyncSession, project_id: uuid.UUID) -> bool:
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        return False
+    await db.delete(project)
+    await db.commit()
+    return True
+
+
+async def get_skeleton_versions(db: AsyncSession, project_id: uuid.UUID) -> list[ProjectSkeleton]:
+    result = await db.execute(
+        select(ProjectSkeleton)
+        .where(ProjectSkeleton.project_id == project_id)
+        .order_by(desc(ProjectSkeleton.version))
+    )
+    return result.scalars().all()
+
+
+async def get_skeleton_by_version(db: AsyncSession, project_id: uuid.UUID, version: int) -> Optional[ProjectSkeleton]:
+    result = await db.execute(
+        select(ProjectSkeleton)
+        .where(ProjectSkeleton.project_id == project_id)
+        .where(ProjectSkeleton.version == version)
+    )
+    return result.scalar_one_or_none()
