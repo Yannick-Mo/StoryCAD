@@ -45,7 +45,7 @@ export default function WorldRulesView() {
   return (
     <div className="p-4 space-y-6 overflow-auto h-full">
       <div>
-        <label className="block text-xs text-gray-400 mb-1">World History</label>
+        <label className="block text-xs text-gray-400 mb-1">世界历史</label>
         <textarea
           value={worldRules?.history ?? ""}
           onChange={(e) => setHistory(e.target.value)}
@@ -55,12 +55,12 @@ export default function WorldRulesView() {
       </div>
       <div>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-gray-400">Rules</span>
+          <span className="text-xs text-gray-400">规则</span>
           <button
             onClick={addRule}
             className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs"
           >
-            <Plus className="w-3 h-3" /> Add Rule
+            <Plus className="w-3 h-3" /> 添加规则
           </button>
         </div>
         {rules.map((rule, i) => (
@@ -78,15 +78,15 @@ export default function WorldRulesView() {
                 onChange={(e) => updateRule(i, "category", e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
               >
-                <option value="">Select...</option>
-                <option value="physics">Physics</option>
-                <option value="magic">Magic</option>
-                <option value="society">Society</option>
-                <option value="character">Character</option>
+                <option value="">选择...</option>
+                <option value="physics">物理</option>
+                <option value="magic">魔法</option>
+                <option value="society">社会</option>
+                <option value="character">角色</option>
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Description</label>
+              <label className="block text-xs text-gray-500 mb-1">描述</label>
               <textarea
                 value={rule.description}
                 onChange={(e) => updateRule(i, "description", e.target.value)}
@@ -95,7 +95,7 @@ export default function WorldRulesView() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Limitation</label>
+              <label className="block text-xs text-gray-500 mb-1">限制</label>
               <textarea
                 value={rule.limitation}
                 onChange={(e) => updateRule(i, "limitation", e.target.value)}

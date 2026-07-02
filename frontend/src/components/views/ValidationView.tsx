@@ -50,14 +50,14 @@ export default function ValidationView() {
     <div className="p-4 space-y-4 overflow-auto h-full">
       <div className="flex items-center justify-between">
         <span className="text-sm text-gray-300">
-          Issues: {issues.length}
+          问题: {issues.length}
         </span>
         <button
           onClick={handleValidate}
           disabled={validating}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm disabled:opacity-50"
         >
-          {validating ? "Validating..." : "重新校验"}
+          {validating ? "校验中..." : "重新校验"}
         </button>
       </div>
 
@@ -87,12 +87,12 @@ export default function ValidationView() {
                     <div className="flex-1">
                       <p className="text-sm text-gray-200">{issue.description}</p>
                       <div className="flex flex-wrap gap-2 mt-1 text-xs text-gray-500">
-                        <span>Category: {issue.category}</span>
-                        <span>Location: {issue.location}</span>
+                        <span>分类: {issue.category}</span>
+                        <span>位置: {issue.location}</span>
                       </div>
                       {issue.suggestion && (
                         <p className="text-xs text-blue-400 mt-1">
-                          Suggestion: {issue.suggestion}
+                          建议: {issue.suggestion}
                         </p>
                       )}
                     </div>

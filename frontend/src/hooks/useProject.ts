@@ -17,7 +17,7 @@ export function useProject(projectId: string) {
         setLoading(true)
         const data = await getProject(projectId)
         if (!cancelled) {
-          const project = data.project as Project
+          const project = data as Project
           dispatch({ type: "SET_PROJECT", payload: project })
           setLoading(false)
           setError(null)
@@ -41,7 +41,7 @@ export function useProject(projectId: string) {
       pollingRef.current = setInterval(async () => {
         try {
           const data = await getProject(projectId)
-          const project = data.project as Project
+          const project = data as Project
           dispatch({ type: "SET_PROJECT", payload: project })
           if (project.status !== "pending") {
             stopPolling()

@@ -51,7 +51,7 @@ export default function CharacterView() {
 
   function addCharacter() {
     const newChar = {
-      name: "New Character",
+      name: "新角色",
       desire_topology: { 表层欲望: "", 深层需求: "", 核心恐惧: "" },
       bottom_line: "",
       vulnerability: "",
@@ -74,7 +74,7 @@ export default function CharacterView() {
             onClick={addCharacter}
             className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-xs w-full justify-center"
           >
-            <Plus className="w-3 h-3" /> Add
+            <Plus className="w-3 h-3" /> 添加
           </button>
         </div>
         {characters.map((c, i) => (
@@ -85,7 +85,7 @@ export default function CharacterView() {
               i === selectedIndex ? "bg-gray-700 text-blue-400" : "text-gray-300 hover:bg-gray-800"
             }`}
           >
-            {c.name || "Unnamed"}
+            {c.name || "未命名"}
           </button>
         ))}
       </div>
@@ -93,7 +93,7 @@ export default function CharacterView() {
         {selectedChar ? (
           <>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Name</label>
+              <label className="block text-xs text-gray-400 mb-1">名称</label>
               <input
                 value={selectedChar.name}
                 onChange={(e) => updateChar("name", e.target.value)}
@@ -125,7 +125,7 @@ export default function CharacterView() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Bottom Line</label>
+              <label className="block text-xs text-gray-400 mb-1">底线</label>
               <input
                 value={selectedChar.bottom_line}
                 onChange={(e) => updateChar("bottom_line", e.target.value)}
@@ -133,7 +133,7 @@ export default function CharacterView() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Vulnerability</label>
+              <label className="block text-xs text-gray-400 mb-1">弱点</label>
               <input
                 value={selectedChar.vulnerability}
                 onChange={(e) => updateChar("vulnerability", e.target.value)}
@@ -141,7 +141,7 @@ export default function CharacterView() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Language Genes</label>
+              <label className="block text-xs text-gray-400 mb-1">语言基因</label>
               {selectedChar.language_genes.map((gene, gi) => (
                 <div key={gi} className="flex gap-2 mb-1">
                   <input
@@ -158,11 +158,11 @@ export default function CharacterView() {
                 onClick={addLanguageGene}
                 className="text-xs text-blue-400 hover:text-blue-300 mt-1"
               >
-                + Add gene
+                + 添加基因
               </button>
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Growth Arc</label>
+              <label className="block text-xs text-gray-400 mb-1">成长弧</label>
               <textarea
                 value={selectedChar.growth_arc}
                 onChange={(e) => updateChar("growth_arc", e.target.value)}
@@ -171,7 +171,7 @@ export default function CharacterView() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Relationships</label>
+              <label className="block text-xs text-gray-400 mb-1">关系</label>
               {Object.entries(selectedChar.relationships).map(([name, rel]) => (
                 <div key={name} className="mb-2 p-2 bg-gray-750 rounded border border-gray-600">
                   <span className="text-sm text-gray-300">{name}</span>
@@ -209,7 +209,7 @@ export default function CharacterView() {
             </div>
           </>
         ) : (
-          <div className="text-gray-500 text-sm">Select a character to edit</div>
+          <div className="text-gray-500 text-sm">选择角色进行编辑</div>
         )}
       </div>
     </div>

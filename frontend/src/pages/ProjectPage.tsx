@@ -38,7 +38,7 @@ export default function ProjectPage() {
   if (loading) {
     return (
       <div className="h-screen bg-gray-900 text-gray-100 flex items-center justify-center">
-        <p className="text-gray-400">Loading project...</p>
+        <p className="text-gray-400">加载项目中...</p>
       </div>
     )
   }
@@ -47,15 +47,29 @@ export default function ProjectPage() {
     return (
       <div className="h-screen bg-gray-900 text-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-red-400 mb-2">{error || "Project not found"}</p>
+          <p className="text-red-400 mb-2">{error || "项目未找到"}</p>
           <button
             onClick={() => navigate("/")}
             className="text-blue-400 hover:text-blue-300 text-sm"
           >
-            Back to projects
+            返回项目列表
           </button>
         </div>
       </div>
+    )
+  }
+
+  if (project.status === "pending" || !project.skeleton) {
+    return (
+      <Layout projectId={id} saving={saving}>
+        <div className="flex-1 flex items-center justify-center bg-gray-900">
+          <div className="text-center space-y-4">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-gray-400 text-sm">正在生成故事骨架...</p>
+            <p className="text-gray-600 text-xs">这大约需要 1-2 分钟</p>
+          </div>
+        </div>
+      </Layout>
     )
   }
 
@@ -80,7 +94,7 @@ export default function ProjectPage() {
         onTabChange={setActiveTab}
         bottomPanel={
           <div className="p-4 text-sm text-gray-500 flex items-center justify-center h-full">
-            Bottom panel - output logs, AI suggestions, etc.
+            底部面板 - 输出日志、AI 建议等
           </div>
         }
       />

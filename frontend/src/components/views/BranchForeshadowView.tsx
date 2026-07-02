@@ -11,9 +11,9 @@ export default function BranchForeshadowView() {
   return (
     <div className="p-4 space-y-6 overflow-auto h-full">
       <div>
-        <h3 className="text-sm font-medium text-gray-300 mb-3">Branches</h3>
+        <h3 className="text-sm font-medium text-gray-300 mb-3">分支</h3>
         {branches.length === 0 ? (
-          <p className="text-xs text-gray-500">No branches defined</p>
+          <p className="text-xs text-gray-500">暂无分支</p>
         ) : (
           branches.map((branch, i) => (
             <div key={i} className="mb-3">
@@ -24,9 +24,9 @@ export default function BranchForeshadowView() {
         )}
       </div>
       <div>
-        <h3 className="text-sm font-medium text-gray-300 mb-3">Foreshadows</h3>
+        <h3 className="text-sm font-medium text-gray-300 mb-3">伏笔</h3>
         {foreshadows.length === 0 ? (
-          <p className="text-xs text-gray-500">No foreshadows defined</p>
+          <p className="text-xs text-gray-500">暂无伏笔</p>
         ) : (
           foreshadows.map((f) => (
             <div
@@ -52,8 +52,8 @@ export default function BranchForeshadowView() {
               </div>
               <p className="text-sm text-gray-200 mb-1">{f.content}</p>
               <div className="flex gap-4 text-xs text-gray-500">
-                <span>Planted: {f.planted_at}</span>
-                <span>Recycle: {f.planned_recycle_interval}s</span>
+                <span>埋设于: {f.planted_at}</span>
+                <span>回收间隔: {f.planned_recycle_interval}s</span>
               </div>
             </div>
           ))

@@ -15,7 +15,7 @@ export default function ProjectListPage() {
     async function fetchProjects() {
       try {
         const data = await listProjects()
-        setProjects(data.projects as ProjectListItem[])
+        setProjects(data as ProjectListItem[])
       } catch {
         // ignore
       } finally {
@@ -42,14 +42,14 @@ export default function ProjectListPage() {
         <div className="text-center">
           <FileText className="w-12 h-12 text-blue-400 mx-auto mb-4" />
           <h1 className="text-3xl font-bold">Story-Forge</h1>
-          <p className="text-gray-400 mt-2">Generate narrative skeletons from your ideas</p>
+          <p className="text-gray-400 mt-2">从你的创意生成故事骨架</p>
         </div>
 
         <div className="space-y-3">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Enter your story idea..."
+            placeholder="输入你的故事创意..."
             className="w-full h-32 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-sm resize-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           />
           <button
@@ -67,13 +67,13 @@ export default function ProjectListPage() {
         </div>
 
         <div>
-          <h2 className="text-sm font-medium text-gray-400 mb-3">Existing Projects</h2>
+          <h2 className="text-sm font-medium text-gray-400 mb-3">已有项目</h2>
           {loading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
             </div>
           ) : projects.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8">No projects yet</p>
+            <p className="text-sm text-gray-500 text-center py-8">暂无项目</p>
           ) : (
             <div className="space-y-2">
               {projects.map((p) => (

@@ -33,14 +33,14 @@ export default function PlotGraphView() {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <span className="text-sm text-gray-300">
-          Nodes: {graph?.nodes.length ?? 0} | Edges: {graph?.edges.length ?? 0}
+          节点: {graph?.nodes.length ?? 0} | 边: {graph?.edges.length ?? 0}
         </span>
       </div>
       <div ref={containerRef} className="flex-1" />
       {selectedNode && selectedNodeData && (
         <div className="border-t border-gray-700">
           <div className="flex items-center justify-between px-4 py-2 bg-gray-800">
-            <span className="text-sm font-medium">Node: {selectedNode}</span>
+            <span className="text-sm font-medium">节点: {selectedNode}</span>
             <button
               onClick={() => setSelectedNode(null)}
               className="text-gray-400 hover:text-gray-200"

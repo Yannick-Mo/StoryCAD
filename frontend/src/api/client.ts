@@ -8,11 +8,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export async function listProjects(): Promise<{ projects: { project_id: string; status: string; created_at: string }[] }> {
+export async function listProjects(): Promise<{ project_id: string; status: string; created_at: string }[]> {
   return request(`${BASE}/projects`)
 }
 
-export async function getProject(id: string): Promise<{ project: any }> {
+export async function getProject(id: string): Promise<any> {
   return request(`${BASE}/projects/${id}`)
 }
 
@@ -36,7 +36,7 @@ export async function updateSkeleton(id: string, skeleton: any): Promise<void> {
   })
 }
 
-export async function getSkeletonVersions(id: string): Promise<{ versions: any[] }> {
+export async function getSkeletonVersions(id: string): Promise<any[]> {
   return request(`${BASE}/projects/${id}/skeleton/versions`)
 }
 

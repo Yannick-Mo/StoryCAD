@@ -9,7 +9,7 @@ export default function NodePropertyEditor({ node, onUpdate }: NodePropertyEdito
   return (
     <div className="p-4 space-y-4 bg-gray-800">
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Description</label>
+        <label className="block text-xs text-gray-400 mb-1">描述</label>
         <textarea
           value={node.description}
           onChange={(e) => onUpdate("description", e.target.value)}
@@ -19,7 +19,7 @@ export default function NodePropertyEditor({ node, onUpdate }: NodePropertyEdito
       </div>
       <div>
         <label className="block text-xs text-gray-400 mb-1">
-          Emotion Value: {node.emotion_value}
+          情感值: {node.emotion_value}
         </label>
         <input
           type="range"

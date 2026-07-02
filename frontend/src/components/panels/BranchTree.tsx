@@ -8,11 +8,11 @@ export default function BranchTree({ branch }: BranchTreeProps) {
   return (
     <div className="p-3 bg-gray-800 border border-gray-700 rounded text-sm space-y-2">
       <div>
-        <span className="text-xs text-gray-500">Divergence Point:</span>
+        <span className="text-xs text-gray-500">分支点:</span>
         <p className="text-gray-200">{branch.divergence_point}</p>
       </div>
       <div>
-        <span className="text-xs text-gray-500">Paths:</span>
+        <span className="text-xs text-gray-500">路径:</span>
         {branch.paths.map((path, pi) => (
           <div key={pi} className="ml-2 mt-1 text-gray-300">
             <span className="text-xs text-blue-400">Path {pi + 1}:</span>{" "}
@@ -22,7 +22,7 @@ export default function BranchTree({ branch }: BranchTreeProps) {
       </div>
       {branch.convergence_point && (
         <div>
-          <span className="text-xs text-gray-500">Convergence Point:</span>
+          <span className="text-xs text-gray-500">汇合点:</span>
           <p className="text-gray-200">{branch.convergence_point}</p>
         </div>
       )}

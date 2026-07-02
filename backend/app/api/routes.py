@@ -1,10 +1,14 @@
 import asyncio
 import uuid
+import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
 from app.services.generation import run_generation
+
+logger = logging.getLogger(__name__)
+_background_tasks: set[asyncio.Task] = set()
 from app.services.storage import (
     create_project, get_project, get_latest_skeleton, save_skeleton,
     list_projects, delete_project, get_skeleton_versions, get_skeleton_by_version
@@ -34,7 +38,10 @@ async def create_project_route(
     db: AsyncSession = Depends(get_db)
 ):
     project = await create_project(db, raw_input)
-    asyncio.create_task(run_generation(project.id, raw_input, async_session))
+    task = asyncio.create_task(run_generation(project.id, raw_input, async_session))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    logger.info(f"Started generation task for project {project.id}")
     return {
         "project_id": str(project.id),
         "status": project.status
