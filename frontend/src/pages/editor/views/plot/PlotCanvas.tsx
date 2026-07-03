@@ -80,6 +80,7 @@ export default function PlotCanvas({
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
         style: { width: w, height: ACT_H, pointerEvents: 'none' },
+        dragHandle: '.act-drag-handle',
         selectable: false,
       })
       chs.forEach((ch, i) => {
