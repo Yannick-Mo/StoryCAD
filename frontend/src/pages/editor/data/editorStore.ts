@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { Act, Chapter, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../types'
 import { MOCK_DATA } from './mockData'
-import { topologicalSort, wouldCreateCycle } from './orderUtils'
+import { topologicalSort, wouldCreateCycle, hasIncomingTimeline, hasOutgoingTimeline, getOutgoingTimeline } from './orderUtils'
 
 let _nextId = 100
 function uid() { return `mock-${_nextId++}` }
@@ -70,16 +70,14 @@ export function useEditorStore(initialData = MOCK_DATA) {
     let result: EdgeResult = { edge: null }
     setData(d => {
       if (type === 'timeline') {
-        const targetChapter = d.chapters.find(c => c.id === targetId)
-        if (targetChapter && targetChapter.wordCount > 0) {
-          result = { edge: null, locked: true }
-          return d
-        }
-        const filtered = d.edges.filter(e => !(e.type === 'timeline' && e.targetId === targetId))
-        if (wouldCreateCycle(filtered, sourceId, targetId)) {
+        if (wouldCreateCycle(d.edges, sourceId, targetId)) {
           result = { edge: null, cycle: true }
           return d
         }
+        // Remove existing outgoing from source and incoming to target
+        const filtered = d.edges.filter(e =>
+          !(e.type === 'timeline' && (e.sourceId === sourceId || e.targetId === targetId))
+        )
         const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type }
         result = { edge: newEdge }
         return { ...d, edges: [...filtered, newEdge], chapters: reSort(d.chapters, [...filtered, newEdge]) }
@@ -107,8 +105,9 @@ export function useEditorStore(initialData = MOCK_DATA) {
       const edge = d.edges.find(e => e.id === edgeId)
       if (!edge) return d
       if (newType === 'timeline' && edge.type !== 'timeline') {
-        const targetChapter = d.chapters.find(c => c.id === edge.targetId)
-        if (targetChapter && targetChapter.wordCount > 0) { blocked = true; return d }
+        const sourceOk = !hasOutgoingTimeline(d.edges, edge.sourceId)
+        const targetOk = !hasIncomingTimeline(d.edges, edge.targetId)
+        if (!sourceOk || !targetOk) { blocked = true; return d }
       }
       return { ...d, edges: d.edges.map(e => e.id === edgeId ? { ...e, type: newType } : e) }
     })
@@ -122,10 +121,13 @@ export function useEditorStore(initialData = MOCK_DATA) {
       const source = newSource ?? edge.sourceId
       const target = newTarget ?? edge.targetId
       if (edge.type === 'timeline') {
-        const targetChapter = d.chapters.find(c => c.id === target)
-        if (targetChapter && targetChapter.wordCount > 0) return d
         if (wouldCreateCycle(d.edges.filter(e => e.id !== edgeId), source, target)) return d
-        const newEdges = d.edges.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e)
+        // Replace outgoing from new source and incoming to new target
+        const filtered = d.edges.filter(e =>
+          e.id === edgeId ||
+          !(e.type === 'timeline' && (e.sourceId === source || e.targetId === target))
+        )
+        const newEdges = filtered.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e)
         return { ...d, edges: newEdges, chapters: reSort(d.chapters, newEdges) }
       }
       return { ...d, edges: d.edges.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e) }

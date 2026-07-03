@@ -1,5 +1,4 @@
 import type { ChapterEdge, EdgeType, Chapter } from '../../types'
-import { isEdgeLocked } from '../../data/orderUtils'
 
 interface EdgePropertyPanelProps {
   edge: ChapterEdge | null
@@ -20,29 +19,20 @@ const EDGE_TYPE_OPTIONS: { value: EdgeType; label: string }[] = [
 export default function EdgePropertyPanel({ edge, chapters, onClose, onChangeType, onDelete }: EdgePropertyPanelProps) {
   if (!edge) return null
 
-  const locked = isEdgeLocked(edge, chapters)
-
   return (
     <div className="absolute right-4 bottom-20 w-64 bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-xl shadow-2xl z-30 p-4">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-xs font-medium text-gray-300">连线属性 {locked && <span className="text-amber-400 ml-1">🔒</span>}</h4>
+        <h4 className="text-xs font-medium text-gray-300">连线属性</h4>
         <button onClick={onClose} className="text-gray-500 hover:text-white text-sm leading-none">✕</button>
       </div>
-
-      {locked && (
-        <div className="mb-3 px-2.5 py-1.5 rounded-lg bg-amber-900/30 text-amber-300 text-[10px]">
-          ⚠ 该章节已有内容，时序已锁定
-        </div>
-      )}
 
       <div className="space-y-3">
         <div>
           <label className="text-[10px] text-gray-500 block mb-1">类型</label>
           <select
             value={edge.type}
-            disabled={locked}
             onChange={e => onChangeType(edge.id, e.target.value as EdgeType)}
-            className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs outline-none ${locked ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300 focus:border-amber-600'}`}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 outline-none focus:border-amber-600"
           >
             {EDGE_TYPE_OPTIONS.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>

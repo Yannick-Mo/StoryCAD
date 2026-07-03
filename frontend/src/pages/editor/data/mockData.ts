@@ -10,9 +10,10 @@ export const MOCK_DATA: EditorMockData = {
   edges: [
     { id: 'e1', sourceId: 'ch1', targetId: 'ch2', type: 'timeline' },
     { id: 'e2', sourceId: 'ch2', targetId: 'ch3', type: 'timeline' },
-    { id: 'e3', sourceId: 'ch4', targetId: 'ch5', type: 'timeline' },
-    { id: 'e4', sourceId: 'ch5', targetId: 'ch6', type: 'timeline' },
-    { id: 'e5', sourceId: 'ch2', targetId: 'ch4', type: 'causal', label: '因果' },
+    { id: 'e3', sourceId: 'ch3', targetId: 'ch4', type: 'timeline' },
+    { id: 'e4', sourceId: 'ch4', targetId: 'ch5', type: 'timeline' },
+    { id: 'e5', sourceId: 'ch5', targetId: 'ch6', type: 'timeline' },
+    { id: 're1', sourceId: 'ch2', targetId: 'ch4', type: 'causal', label: '因果' },
   ],
   chapters: [
     {
@@ -67,7 +68,7 @@ export const MOCK_DATA: EditorMockData = {
           wordCount: 1200 },
         { id: 'sc8', title: '真相碎片', povCharacter: '苏绛', setting: '苍玄湖·湖心亭', time: '黄昏',
           summary: '苏绛透露部分真相，但隐瞒了关键',
-          content: "苏绛从袖中取出一张泛黄的纸条：「这是我从父亲遗物中找到的。上面写着——'当心沈寒舟'。」\n\n「沈寒舟？」林渊皱眉，「他是我们这行的前辈。」\n\n「正是他。」苏绛的眼神闪烁，「灭门那晚，他在现场。」",
+          content: '苏绛从袖中取出一张泛黄的纸条："这是我从父亲遗物中找到的。上面写着——\'当心沈寒舟\'。"\n\n"沈寒舟？"林渊皱眉，"他是我们这行的前辈。"\n\n"正是他。"苏绛的眼神闪烁，"灭门那晚，他在现场。"',
           wordCount: 1000 },
         { id: 'sc9', title: '不欢而散', povCharacter: '林渊', setting: '苍玄湖·湖心亭', time: '入夜',
           summary: '林渊决定独自调查沈寒舟',

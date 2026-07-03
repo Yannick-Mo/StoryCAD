@@ -9,7 +9,7 @@ import ChapterNode from './ChapterNode'
 import ActGroupNode from './ActGroupNode'
 import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
-import { topologicalSort, isEdgeLocked } from '../../data/orderUtils'
+import { topologicalSort, getCompletedChain } from '../../data/orderUtils'
 import EdgePropertyPanel from './EdgePropertyPanel'
 import ContextMenu from './ContextMenu'
 import { useToast } from '../../components/Toast'
@@ -116,7 +116,7 @@ export default function PlotCanvas({
       const b = getAbsPos(tgtNode, initialNodes)
       const { sourceHandle, targetHandle } = getBestHandle(a, b)
       const isTimeline = e.type === 'timeline'
-      const locked = isEdgeLocked(e, chapters)
+      const isSelected = selection.type === 'edge' && selection.id === e.id
       return {
         id: e.id,
         source: e.sourceId,
@@ -125,18 +125,21 @@ export default function PlotCanvas({
         targetHandle,
         type: 'bezier',
         animated: isTimeline,
-        selected: selection.type === 'edge' && selection.id === e.id,
+        selected: isSelected,
         style: {
-          stroke: locked ? '#6b7280' : isTimeline ? '#d4a373' : '#6b7280',
+          stroke: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
           strokeWidth: isTimeline ? 3 : 1.5,
-          strokeDasharray: locked ? '6 3' : isTimeline ? 'none' : '6 3',
+          strokeDasharray: isTimeline ? 'none' : '6 3',
         },
-        markerEnd: { type: MarkerType.ArrowClosed, color: locked ? '#6b7280' : isTimeline ? '#d4a373' : '#6b7280' },
-        label: locked ? '🔒' : e.type !== 'timeline' ? (e.label || e.type) : undefined,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
+        },
+        label: e.type !== 'timeline' ? (e.label || e.type) : undefined,
         labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
       }
     }).filter(Boolean) as Edge[]
-  }, [edges, initialNodes, chapters, selection])
+  }, [edges, initialNodes, selection])
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
@@ -162,15 +165,12 @@ export default function PlotCanvas({
     if (!conn.source || !conn.target || conn.source === conn.target) return
     const result = onAddEdge?.(conn.source, conn.target, 'timeline')
     if (result?.cycle) addToast('不能创建环路，操作已取消', 'error')
-    else if ((result as any)?.locked) addToast('该章节已有内容，时序已锁定', 'warning')
   }, [onAddEdge, addToast])
 
   const onEdgeUpdate = useCallback((oldEdge: Edge, newConn: import('reactflow').Connection) => {
     if (!newConn.source || !newConn.target) return
-    const ch = chapters.find(c => c.id === newConn.target)
-    if (ch && ch.wordCount > 0) { addToast('该章节已有内容，时序已锁定', 'warning'); return }
     onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target)
-  }, [onReconnectEdge, chapters, addToast])
+  }, [onReconnectEdge])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     if (node.type === 'chapter') onSelectNode('chapter', node.id)
@@ -202,14 +202,12 @@ export default function PlotCanvas({
       })
     } else if (node.type === 'chapter') {
       onSelectNode('chapter', id)
-      const ch = chapters.find(c => c.id === id)
-      const locked = ch ? ch.wordCount > 0 : false
       setCtxMenu({
         x: event.clientX, y: event.clientY,
         items: [
           [{ label: '编辑目标', icon: '✎', onClick: () => onChapterClick?.(id) }],
           [{ label: '删除章', icon: '✕', onClick: () => onDeleteChapter?.(id) }],
-          [{ label: '断开时序线', icon: '⊘', disabled: locked, onClick: () => {
+          [{ label: '断开时序线', icon: '⊘', onClick: () => {
             const chEdges = edges.filter(e => e.targetId === id && e.type === 'timeline')
             chEdges.forEach(e => onDeleteEdge?.(e.id))
           }}],
@@ -221,19 +219,17 @@ export default function PlotCanvas({
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault()
     onSelectEdge(edge.id)
-    const chEdge = edges.find(e => e.id === edge.id)
-    const locked = chEdge ? isEdgeLocked(chEdge, chapters) : false
     setCtxMenu({
       x: event.clientX, y: event.clientY,
       items: [
         [{ label: '删除连线', icon: '✕', onClick: () => onDeleteEdge?.(edge.id) }],
         [
-          { label: '改为时序', icon: '→', disabled: locked, onClick: () => onChangeEdgeType?.(edge.id, 'timeline') },
+          { label: '改为时序', icon: '→', onClick: () => onChangeEdgeType?.(edge.id, 'timeline') },
           { label: '改为因果', icon: '⚡', onClick: () => onChangeEdgeType?.(edge.id, 'causal') },
         ],
       ],
     })
-  }, [onSelectEdge, onDeleteEdge, onChangeEdgeType, edges, chapters])
+  }, [onSelectEdge, onDeleteEdge, onChangeEdgeType])
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()

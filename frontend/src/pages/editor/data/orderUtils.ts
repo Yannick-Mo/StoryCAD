@@ -1,4 +1,4 @@
-import type { Chapter, ChapterEdge } from '../types'
+import type { Chapter, ChapterEdge, Act } from '../types'
 
 export function topologicalSort(chapters: { id: string }[], edges: ChapterEdge[]): string[] {
   const timelineEdges = edges.filter(e => e.type === 'timeline')
@@ -70,8 +70,42 @@ export function wouldCreateCycle(edges: ChapterEdge[], sourceId: string, targetI
   return false
 }
 
-export function isEdgeLocked(edge: ChapterEdge, chapters: Chapter[]): boolean {
-  if (edge.type !== 'timeline') return false
-  const target = chapters.find(c => c.id === edge.targetId)
-  return target ? target.wordCount > 0 : false
+export function hasIncomingTimeline(edges: ChapterEdge[], nodeId: string): boolean {
+  return edges.some(e => e.type === 'timeline' && e.targetId === nodeId)
+}
+
+export function hasOutgoingTimeline(edges: ChapterEdge[], nodeId: string): boolean {
+  return edges.some(e => e.type === 'timeline' && e.sourceId === nodeId)
+}
+
+export function getOutgoingTimeline(edges: ChapterEdge[], nodeId: string): ChapterEdge | undefined {
+  return edges.find(e => e.type === 'timeline' && e.sourceId === nodeId)
+}
+
+export function getIncomingTimeline(edges: ChapterEdge[], nodeId: string): ChapterEdge | undefined {
+  return edges.find(e => e.type === 'timeline' && e.targetId === nodeId)
+}
+
+export function getCompletedChain(chapters: Chapter[], edges: ChapterEdge[], acts: Act[]): Chapter[] {
+  const sortedActs = [...acts].sort((a, b) => a.order - b.order)
+  if (sortedActs.length === 0) return []
+
+  const ordered = topologicalSort(chapters, edges)
+  const chMap = new Map(chapters.map(c => [c.id, c]))
+  const head = ordered.find(id => chMap.has(id))
+  if (!head) return []
+
+  const outgoingMap = new Map<string, ChapterEdge>()
+  for (const e of edges) {
+    if (e.type === 'timeline') outgoingMap.set(e.sourceId, e)
+  }
+
+  const result: Chapter[] = []
+  let currentId: string | undefined = head
+  while (currentId && chMap.has(currentId)) {
+    result.push(chMap.get(currentId)!)
+    const edge = outgoingMap.get(currentId)
+    currentId = edge?.targetId
+  }
+  return result
 }

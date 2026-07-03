@@ -18,6 +18,7 @@ import { useEditorStore } from '../data/editorStore'
 import { ToastProvider } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import type { Chapter, Scene } from '../types'
+import { getCompletedChain } from '../data/orderUtils'
 
 export default function EditorShell() {
   const views = useEditorViews()
@@ -84,9 +85,10 @@ export default function EditorShell() {
   }
 
   const handleExport = () => {
-    const text = data.chapters.map(ch => {
+    const completed = getCompletedChain(data.chapters, data.edges, data.acts)
+    const text = completed.map(ch => {
       const scenes = ch.scenes.filter(s => s.content).map(s => s.content).join('\n\n')
-      return `${ch.title}\n\n${scenes}\n\n${'-'.repeat(16)}\n\n`
+      return `${ch.title}\n${ch.goal}\n\n${scenes}\n\n${'-'.repeat(16)}\n\n`
     }).join('')
     const blob = new Blob([text], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
@@ -246,7 +248,7 @@ export default function EditorShell() {
       />
 
       {/* Modals */}
-      <PreviewModal open={previewOpen} chapters={data.chapters} onClose={() => setPreviewOpen(false)} />
+      <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts)} onClose={() => setPreviewOpen(false)} />
 
       {editingScene && (
         <SceneEditor

@@ -61,7 +61,6 @@ export interface Toast {
 export interface EdgeResult {
   edge: ChapterEdge | null
   cycle?: boolean
-  locked?: boolean
 }
 
 // Mock data types
