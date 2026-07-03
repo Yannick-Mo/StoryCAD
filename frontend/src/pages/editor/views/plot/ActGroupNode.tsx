@@ -48,7 +48,7 @@ function ActGroupNode({ id, data, selected }: NodeProps<ActGroupData>) {
       onMouseLeave={() => setHover(false)}
     >
       <div
-        className="act-drag-handle text-xs font-medium px-4 pt-2.5 pointer-events-auto cursor-grab active:cursor-grabbing"
+        className="text-xs font-medium px-4 pt-2.5 pointer-events-auto"
         style={{ color: data.color }}
       >
         {data.label}

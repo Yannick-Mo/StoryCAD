@@ -79,8 +79,7 @@ export default function PlotCanvas({
         type: 'actGroup',
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
-        style: { width: w, height: ACT_H, pointerEvents: 'none' },
-        dragHandle: '.act-drag-handle',
+        style: { width: w, height: ACT_H },
         selectable: false,
       })
       chs.forEach((ch, i) => {
@@ -90,7 +89,6 @@ export default function PlotCanvas({
           parentId: actNodeId,
           extent: 'parent',
           position: { x: i * 240 + 40, y: 60 },
-          style: { pointerEvents: 'auto' },
           data: {
             actId: ch.actId,
             actColor: act.color,
@@ -154,7 +152,6 @@ export default function PlotCanvas({
       return initialNodes.map(n => ({
         ...n,
         position: prevMap.get(n.id)?.position ?? n.position,
-        style: { ...n.style, pointerEvents: n.type === 'actGroup' ? 'none' : 'auto' },
       }))
     })
   }, [initialNodes, setNodes])
@@ -192,9 +189,16 @@ export default function PlotCanvas({
   }, [onReconnectEdge])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
-    if (node.type === 'chapter') onSelectNode('chapter', node.id)
-    if (node.type === 'actGroup') onSelectNode('act', node.id.replace('act-', ''))
-  }, [onSelectNode])
+    if (node.type === 'chapter') {
+      onSelectNode('chapter', node.id)
+      onChapterClick?.(node.id)
+    }
+    if (node.type === 'actGroup') {
+      const actId = node.id.replace('act-', '')
+      onSelectNode('act', actId)
+      onActClick?.(actId)
+    }
+  }, [onSelectNode, onChapterClick, onActClick])
 
   const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     setSelectedRfEdge(edge.id)
