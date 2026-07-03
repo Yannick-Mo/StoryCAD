@@ -61,7 +61,10 @@ export function useEditorStore(initialData = MOCK_DATA) {
       chapters: d.chapters.filter(c => c.id !== chapterId),
       edges: d.edges.filter(e => e.sourceId !== chapterId && e.targetId !== chapterId),
     }))
-  }, [])
+    if (selection.type === 'chapter' && selection.id === chapterId) {
+      setSelection({ type: null, id: null })
+    }
+  }, [selection])
 
   const addEdge = useCallback((sourceId: string, targetId: string, type: EdgeType = 'timeline'): EdgeResult => {
     let result: EdgeResult = { edge: null }
@@ -72,11 +75,11 @@ export function useEditorStore(initialData = MOCK_DATA) {
           result = { edge: null, locked: true }
           return d
         }
-        if (wouldCreateCycle(d.edges, sourceId, targetId)) {
+        const filtered = d.edges.filter(e => !(e.type === 'timeline' && e.targetId === targetId))
+        if (wouldCreateCycle(filtered, sourceId, targetId)) {
           result = { edge: null, cycle: true }
           return d
         }
-        const filtered = d.edges.filter(e => !(e.type === 'timeline' && e.targetId === targetId))
         const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type }
         result = { edge: newEdge }
         return { ...d, edges: [...filtered, newEdge], chapters: reSort(d.chapters, [...filtered, newEdge]) }
