@@ -79,7 +79,7 @@ export default function PlotCanvas({
         type: 'actGroup',
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
-        style: { width: w, height: ACT_H },
+        style: { width: w, height: ACT_H, pointerEvents: 'none' },
         selectable: false,
       })
       chs.forEach((ch, i) => {
@@ -89,7 +89,7 @@ export default function PlotCanvas({
           parentId: actNodeId,
           extent: 'parent',
           position: { x: i * 240 + 40, y: 60 },
-          selected: selection.type === 'chapter' && selection.id === ch.id,
+          style: { pointerEvents: 'auto' },
           data: {
             actId: ch.actId,
             actColor: act.color,
@@ -105,7 +105,7 @@ export default function PlotCanvas({
       y += ACT_H + ACT_GAP
     })
     return result
-  }, [chapters, sortedActs, orderMap, selection])
+  }, [chapters, sortedActs, orderMap])
 
   const rfEdges: Edge[] = useMemo(() => {
     return edges.map(e => {
@@ -146,10 +146,28 @@ export default function PlotCanvas({
   const [selectedRfEdge, setSelectedRfEdge] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
 
-  // Sync data nodes
-  useEffect(() => { setNodes(initialNodes) }, [initialNodes, setNodes])
+  // Sync nodes from data without resetting drag positions
+  useEffect(() => {
+    setNodes(prev => {
+      const prevMap = new Map(prev.map(n => [n.id, n]))
+      return initialNodes.map(n => ({
+        ...n,
+        position: prevMap.get(n.id)?.position ?? n.position,
+        style: { ...n.style, pointerEvents: n.type === 'actGroup' ? 'none' : 'auto' },
+      }))
+    })
+  }, [initialNodes, setNodes])
   // Sync data edges
   useEffect(() => { setRfEdges(rfEdges) }, [rfEdges, setRfEdges])
+
+  // Sync selection state on nodes without resetting positions
+  useEffect(() => {
+    setNodes(prev => prev.map(n => {
+      if (n.type === 'chapter') return { ...n, selected: selection.type === 'chapter' && selection.id === n.id }
+      if (n.type === 'actGroup') return { ...n, selected: selection.type === 'act' && selection.id === n.id.replace('act-', '') }
+      return n
+    }))
+  }, [selection, setNodes])
 
   const handleResize = useCallback((id: string, w: number, h: number) => {
     setNodes(nds => nds.map(n => n.id === id ? { ...n, style: { ...n.style, width: w, height: h } } : n))
