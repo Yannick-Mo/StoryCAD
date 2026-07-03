@@ -1,4 +1,4 @@
-import { useState, useCallback, createContext, useContext } from 'react'
+import { useState, useCallback, useRef, useEffect, createContext, useContext } from 'react'
 import type { Toast } from '../types'
 
 interface ToastContextValue {
@@ -9,23 +9,38 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue>(null!)
 
-export function useToast() {
-  return useContext(ToastContext)
+export function useToast(): ToastContextValue {
+  const ctx = useContext(ToastContext)
+  if (!ctx) throw new Error('useToast must be used within a ToastProvider')
+  return ctx
 }
 
 let _toastId = 0
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach(t => clearTimeout(t))
+      timersRef.current.clear()
+    }
+  }, [])
 
   const removeToast = useCallback((id: string) => {
+    const t = timersRef.current.get(id)
+    if (t) { clearTimeout(t); timersRef.current.delete(id) }
     setToasts(t => t.filter(x => x.id !== id))
   }, [])
 
-  const addToast = useCallback((message: string, type: Toast['type'] = 'info') => {
+  const addToast = useCallback((message: string, type: Toast['type'] = 'info', duration?: number) => {
+    if (!message) return
     const id = `toast-${++_toastId}`
-    setToasts(t => [...t, { id, message, type }])
-    setTimeout(() => removeToast(id), 3000)
+    const toast: Toast = { id, message, type, duration }
+    setToasts(t => [...t, toast])
+    const timer = setTimeout(() => removeToast(id), duration ?? 3000)
+    timersRef.current.set(id, timer)
   }, [removeToast])
 
   return (
