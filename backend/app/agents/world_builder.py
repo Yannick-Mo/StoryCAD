@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.agents.base import run_agent
 
 prompt = ChatPromptTemplate.from_messages([
-    ("system", """你是一个世界观架构师。根据创意解析文档，构建世界规则体系。
+    ("system", """你是一个小说世界观架构师。根据创意解析文档，构建世界规则体系，不一定是现实世界格局，也可以是怪诞、抽象、虚构、夸张的世界格局。
 
 输出严格JSON：
 {{
