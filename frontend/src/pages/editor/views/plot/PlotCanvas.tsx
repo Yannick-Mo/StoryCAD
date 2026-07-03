@@ -1,7 +1,7 @@
-import { useMemo, useCallback, useEffect, useState } from 'react'
+import { useMemo, useCallback, useEffect, useState, useRef } from 'react'
 import ReactFlow, {
   Background, Controls, MiniMap,
-  type Node, type Edge, type NodeTypes,
+  type Node, type Edge, type NodeTypes, type ReactFlowInstance,
   useNodesState, useEdgesState, MarkerType,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -9,7 +9,7 @@ import ChapterNode from './ChapterNode'
 import ActGroupNode from './ActGroupNode'
 import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
-import { topologicalSort, getCompletedChain } from '../../data/orderUtils'
+import { topologicalSort } from '../../data/orderUtils'
 import EdgePropertyPanel from './EdgePropertyPanel'
 import ContextMenu from './ContextMenu'
 import { useToast } from '../../components/Toast'
@@ -79,7 +79,8 @@ export default function PlotCanvas({
         type: 'actGroup',
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
-        style: { width: w, height: ACT_H },
+        style: { width: w, height: ACT_H, pointerEvents: 'none' },
+        dragHandle: '.act-drag-handle',
         selectable: false,
       })
       chs.forEach((ch, i) => {
@@ -144,6 +145,7 @@ export default function PlotCanvas({
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
   const [selectedRfEdge, setSelectedRfEdge] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
+  const rfRef = useRef<ReactFlowInstance | null>(null)
 
   // Sync nodes from data without resetting drag positions
   useEffect(() => {
@@ -205,10 +207,27 @@ export default function PlotCanvas({
     onSelectEdge(edge.id)
   }, [onSelectEdge])
 
-  const handlePaneClick = useCallback(() => {
+  const handlePaneClick = useCallback((event: React.MouseEvent) => {
     setSelectedRfEdge(null)
-    onClearSelection()
-  }, [onClearSelection])
+    const rf = rfRef.current
+    if (!rf) return
+    const flowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const currentNodes = rf.getNodes()
+    const actNode = currentNodes.find(n => {
+      if (n.type !== 'actGroup') return false
+      const w = (n.style?.width as number) || 300
+      const h = (n.style?.height as number) || 200
+      return flowPos.x >= n.position.x && flowPos.x <= n.position.x + w &&
+             flowPos.y >= n.position.y && flowPos.y <= n.position.y + h
+    })
+    if (actNode) {
+      const actId = actNode.id.replace('act-', '')
+      onSelectNode('act', actId)
+      onActClick?.(actId)
+    } else {
+      onClearSelection()
+    }
+  }, [onClearSelection, onSelectNode, onActClick])
 
   // Context menus
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
@@ -256,14 +275,37 @@ export default function PlotCanvas({
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
-    onClearSelection()
-    setCtxMenu({
-      x: event.clientX, y: event.clientY,
-      items: [
-        [{ label: '新建幕', icon: '+', onClick: () => onAddAct?.() }],
-      ],
+    const rf = rfRef.current
+    if (!rf) return
+    const flowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const currentNodes = rf.getNodes()
+    const actNode = currentNodes.find(n => {
+      if (n.type !== 'actGroup') return false
+      const w = (n.style?.width as number) || 300
+      const h = (n.style?.height as number) || 200
+      return flowPos.x >= n.position.x && flowPos.x <= n.position.x + w &&
+             flowPos.y >= n.position.y && flowPos.y <= n.position.y + h
     })
-  }, [onClearSelection, onAddAct])
+    if (actNode) {
+      const actId = actNode.id.replace('act-', '')
+      onSelectNode('act', actId)
+      setCtxMenu({
+        x: event.clientX, y: event.clientY,
+        items: [
+          [{ label: '新建章', icon: '+', onClick: () => onAddChapter?.(actId) }],
+          [{ label: '删除幕', icon: '✕', onClick: () => onDeleteAct?.(actId) }],
+        ],
+      })
+    } else {
+      onClearSelection()
+      setCtxMenu({
+        x: event.clientX, y: event.clientY,
+        items: [
+          [{ label: '新建幕', icon: '+', onClick: () => onAddAct?.() }],
+        ],
+      })
+    }
+  }, [onClearSelection, onAddAct, onSelectNode, onAddChapter, onDeleteAct])
 
   return (
     <>
@@ -282,6 +324,7 @@ export default function PlotCanvas({
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={{ type: 'bezier' }}
+        onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
         fitView
         minZoom={0.3}
