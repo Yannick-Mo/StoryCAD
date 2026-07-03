@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import ProjectListPage from './pages/ProjectListPage'
-import ProjectPage from './pages/ProjectPage'
+import ProjectListPage from './pages/home'
+import ProjectPage from './pages/editor'
 import { ProjectProvider } from './context/ProjectContext'
 
 export default function App() {

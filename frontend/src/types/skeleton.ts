@@ -2,6 +2,7 @@ export interface WorldRule {
   category: string
   description: string
   limitation: string
+  conflict_potential: string
 }
 
 export interface WorldRules {
@@ -71,12 +72,22 @@ export interface ValidationIssue {
   suggestion: string
 }
 
+export interface CharacterSeed {
+  name: string
+  traits: string
+}
+
+export interface AnchorEvent {
+  description: string
+  order: number
+}
+
 export interface CreativeDoc {
   core_conflict: string
   implied_world_clues: string[]
-  character_seeds: string[]
+  character_seeds: CharacterSeed[]
   structural_constraints: string[]
-  anchor_events: string[]
+  anchor_events: AnchorEvent[]
 }
 
 export interface NarrativeSkeleton {

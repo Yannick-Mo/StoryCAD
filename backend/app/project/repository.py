@@ -1,0 +1,86 @@
+import uuid
+from typing import Optional
+from sqlalchemy import select, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.project.models import Project, ProjectVersion, ProjectConfig
+
+
+class ProjectRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, title: str = "Untitled", description: str = "") -> Project:
+        project = Project(title=title, description=description)
+        self.db.add(project)
+        await self.db.commit()
+        await self.db.refresh(project)
+        return project
+
+    async def get(self, project_id: uuid.UUID) -> Optional[Project]:
+        result = await self.db.execute(select(Project).where(Project.id == project_id))
+        return result.scalar_one_or_none()
+
+    async def list_projects(self, page: int = 1, size: int = 20) -> list[Project]:
+        result = await self.db.execute(
+            select(Project).order_by(desc(Project.created_at))
+            .offset((page - 1) * size).limit(size)
+        )
+        return result.scalars().all()
+
+    async def update(self, project_id: uuid.UUID, **kwargs) -> bool:
+        project = await self.get(project_id)
+        if not project:
+            return False
+        for key, value in kwargs.items():
+            setattr(project, key, value)
+        await self.db.commit()
+        return True
+
+    async def delete(self, project_id: uuid.UUID) -> bool:
+        project = await self.get(project_id)
+        if not project:
+            return False
+        await self.db.delete(project)
+        await self.db.commit()
+        return True
+
+    async def save_version(self, project_id: uuid.UUID, snapshot: dict) -> ProjectVersion:
+        result = await self.db.execute(
+            select(ProjectVersion)
+            .where(ProjectVersion.project_id == project_id)
+            .order_by(desc(ProjectVersion.version)).limit(1)
+        )
+        latest = result.scalar_one_or_none()
+        version = (latest.version + 1) if latest else 1
+        pv = ProjectVersion(project_id=project_id, version=version, snapshot=snapshot)
+        self.db.add(pv)
+        await self.db.commit()
+        await self.db.refresh(pv)
+        return pv
+
+    async def get_versions(self, project_id: uuid.UUID) -> list[ProjectVersion]:
+        result = await self.db.execute(
+            select(ProjectVersion)
+            .where(ProjectVersion.project_id == project_id)
+            .order_by(desc(ProjectVersion.version))
+        )
+        return result.scalars().all()
+
+    async def get_config(self, project_id: uuid.UUID) -> Optional[ProjectConfig]:
+        result = await self.db.execute(
+            select(ProjectConfig).where(ProjectConfig.project_id == project_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_config(self, project_id: uuid.UUID, **kwargs) -> ProjectConfig:
+        config = await self.get_config(project_id)
+        if config:
+            for key, value in kwargs.items():
+                setattr(config, key, value)
+        else:
+            config = ProjectConfig(project_id=project_id, **kwargs)
+            self.db.add(config)
+        await self.db.commit()
+        await self.db.refresh(config)
+        return config

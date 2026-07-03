@@ -1,0 +1,48 @@
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, DateTime, Integer, Text, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String(255), default="Untitled Project")
+    description = Column(Text, default="")
+    genre = Column(String(100), default="")
+    status = Column(String(20), default="init")
+    workflow_stage = Column(String(30), default="init")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    versions = relationship("ProjectVersion", back_populates="project", order_by="ProjectVersion.version.desc()", cascade="all, delete-orphan")
+
+
+class ProjectVersion(Base):
+    __tablename__ = "project_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    version = Column(Integer, default=1)
+    snapshot = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="versions")
+
+
+class ProjectConfig(Base):
+    __tablename__ = "project_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    total_words = Column(Integer, default=100000)
+    template_type = Column(String(50), default="four_act")
+    target_audience = Column(String(100), default="")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

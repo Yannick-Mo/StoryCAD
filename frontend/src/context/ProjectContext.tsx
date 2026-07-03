@@ -1,15 +1,26 @@
-﻿import React, { createContext, useContext, useReducer, type ReactNode } from "react"
+import React, { createContext, useContext, useReducer, type ReactNode } from "react"
 import type { NarrativeSkeleton } from "../types/skeleton"
-import type { Project } from "../types/project"
+
+export interface ProjectData {
+  id: string
+  title: string
+  description?: string
+  status: string
+  workflow_stage?: string
+  created_at: string
+  updated_at?: string
+  skeleton?: NarrativeSkeleton | null
+  validation_report?: any[] | null
+}
 
 interface State {
-  project: Project | null
+  project: ProjectData | null
   loading: boolean
   error: string | null
 }
 
 type Action =
-  | { type: "SET_PROJECT"; payload: Project }
+  | { type: "SET_PROJECT"; payload: ProjectData }
   | { type: "SET_LOADING"; payload: boolean }
   | { type: "SET_ERROR"; payload: string | null }
   | { type: "UPDATE_SKELETON"; payload: { key: keyof NarrativeSkeleton; value: any } }

@@ -1,3 +1,39 @@
+# Python
 __pycache__/
-.superpowers/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg
+
+# Node
+node_modules/
+frontend/dist/
+dist/
+
+# IDE & editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
 .env
+.env.local
+
+# Superpowers
+.superpowers/
+
+# Docker
+.docker/
+
+# Logs
+*.log

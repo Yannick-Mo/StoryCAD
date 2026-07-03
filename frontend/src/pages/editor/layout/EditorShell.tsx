@@ -145,27 +145,19 @@ export default function EditorShell() {
 
   return (
     <ToastProvider>
-    <div className="h-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden select-none">
-      {/* Top bar */}
-      <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
-        <button
-          onClick={() => setDrawerOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
-        >
-          ☰ 大纲
-        </button>
-        <div className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full">
-          {views.activeView.label}
-    </div>
-      <ConfirmDialog
-        open={confirmDelete !== null}
-        title="删除幕"
-        message={`确定要删除「${data.acts.find(a => a.id === confirmDelete?.id)?.name ?? ''}」吗？该幕下的所有章节和连线将一并删除。`}
-        onConfirm={() => { if (confirmDelete) store.deleteAct(confirmDelete.id); setConfirmDelete(null) }}
-        onCancel={() => setConfirmDelete(null)}
-      />
-    </ToastProvider>
-      </div>
+      <div className="h-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden select-none">
+        {/* Top bar */}
+        <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
+          >
+            ☰ 大纲
+          </button>
+          <div className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full">
+            {views.activeView.label}
+          </div>
+        </div>
 
       {/* Canvas area */}
       <div className="flex-1 relative">
@@ -279,5 +271,13 @@ export default function EditorShell() {
         onCloseSubPanel={views.closeSubPanel}
       />
     </div>
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="删除幕"
+        message={"确定要删除「" + (data.acts.find(a => a.id === confirmDelete?.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"}
+        onConfirm={() => { if (confirmDelete) store.deleteAct(confirmDelete.id); setConfirmDelete(null) }}
+        onCancel={() => setConfirmDelete(null)}
+      />
+    </ToastProvider>
   )
 }

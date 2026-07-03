@@ -1,5 +1,5 @@
 import type { ChapterEdge, EdgeType, Chapter } from '../../types'
-import { isEdgeLocked } from '../../../data/orderUtils'
+import { isEdgeLocked } from '../../data/orderUtils'
 
 interface EdgePropertyPanelProps {
   edge: ChapterEdge | null
@@ -44,11 +44,6 @@ export default function EdgePropertyPanel({ edge, chapters, onClose, onChangeTyp
             onChange={e => onChangeType(edge.id, e.target.value as EdgeType)}
             className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs outline-none ${locked ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300 focus:border-amber-600'}`}
           >
-            {EDGE_TYPE_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
             {EDGE_TYPE_OPTIONS.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}

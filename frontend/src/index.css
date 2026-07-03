@@ -6,3 +6,18 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+.btn-icon {
+  @apply w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors cursor-pointer border-none;
+  font-family: inherit;
+}
+.btn {
+  @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-200 text-xs font-medium hover:bg-gray-700 transition-colors cursor-pointer border-none;
+  font-family: inherit;
+}
+.btn-primary {
+  @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors cursor-pointer border-none;
+  font-family: inherit;
+}
+.zoom-badge {
+  @apply text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded-md min-w-[3rem] text-center font-mono border border-gray-700;
+}

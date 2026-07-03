@@ -1,10 +1,21 @@
-import os
-from dotenv import load_dotenv
+from pydantic_settings import BaseSettings
 
-load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@db:5432/storyforge")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-chat")
+class Settings(BaseSettings):
+    database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/storyforge"
+    neo4j_uri: str = "bolt://neo4j:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "password"
+    redis_url: str = "redis://redis:6379/0"
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    model_name: str = "deepseek-chat"
+    llm_provider: str = "deepseek"
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()

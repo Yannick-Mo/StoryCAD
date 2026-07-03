@@ -1,7 +1,7 @@
-﻿import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { getProject } from "../api/client"
 import { useProjectContext } from "../context/ProjectContext"
-import type { Project } from "../types/project"
+import type { ProjectData } from "../context/ProjectContext"
 
 export function useProject(projectId: string) {
   const { state, dispatch } = useProjectContext()
@@ -17,7 +17,7 @@ export function useProject(projectId: string) {
         setLoading(true)
         const data = await getProject(projectId)
         if (!cancelled) {
-          const project = data as Project
+          const project = data as ProjectData
           dispatch({ type: "SET_PROJECT", payload: project })
           setLoading(false)
           setError(null)
@@ -41,7 +41,7 @@ export function useProject(projectId: string) {
       pollingRef.current = setInterval(async () => {
         try {
           const data = await getProject(projectId)
-          const project = data as Project
+          const project = data as ProjectData
           dispatch({ type: "SET_PROJECT", payload: project })
           if (project.status !== "pending") {
             stopPolling()

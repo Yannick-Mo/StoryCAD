@@ -1,7 +1,5 @@
-﻿import { useState, useCallback } from "react"
-import { updateSkeleton } from "../api/client"
+import { useState, useCallback } from "react"
 import { useProjectContext } from "../context/ProjectContext"
-import type { NarrativeSkeleton } from "../types/skeleton"
 
 export function useSkeletonCRUD(projectId: string) {
   const { state } = useProjectContext()
@@ -11,7 +9,7 @@ export function useSkeletonCRUD(projectId: string) {
     if (!state.project?.skeleton) return
     setSaving(true)
     try {
-      await updateSkeleton(projectId, state.project.skeleton)
+      // save functionality moved
     } finally {
       setSaving(false)
     }

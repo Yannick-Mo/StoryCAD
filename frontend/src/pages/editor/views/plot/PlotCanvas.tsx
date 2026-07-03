@@ -279,6 +279,7 @@ export default function PlotCanvas({
         {selectedRfEdge && (
           <EdgePropertyPanel
             edge={edges.find(e => e.id === selectedRfEdge) ?? null}
+            chapters={chapters}
             onClose={() => setSelectedRfEdge(null)}
             onChangeType={(edgeId, newType) => {
               onChangeEdgeType?.(edgeId, newType)
