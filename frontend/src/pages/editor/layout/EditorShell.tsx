@@ -1,0 +1,283 @@
+import { useState, useCallback } from 'react'
+import BottomNav from './BottomNav'
+import LeftDrawer from './LeftDrawer'
+import ActionButtons from './ActionButtons'
+import PlotCanvas from '../views/plot/PlotCanvas'
+import PlotToolbar from '../views/plot/PlotToolbar'
+import ChapterDetail from '../views/plot/ChapterDetail'
+import ActDetail from '../views/plot/ActDetail'
+import CharCanvas from '../views/character/CharCanvas'
+import CausalityCanvas from '../views/causality/CausalityCanvas'
+import RhythmCanvas from '../views/rhythm/RhythmCanvas'
+import ThemeCanvas from '../views/theme/ThemeCanvas'
+import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
+import PreviewModal from '../modals/PreviewModal'
+import SceneEditor from '../modals/SceneEditor'
+import { useEditorViews } from '../hooks/useEditorViews'
+import { useEditorStore } from '../data/editorStore'
+import { ToastProvider } from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
+import type { Chapter, Scene } from '../types'
+
+export default function EditorShell() {
+  const views = useEditorViews()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [selectedActId, setSelectedActId] = useState<string | null>(null)
+  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
+  const [edgeFilter, setEdgeFilter] = useState<'all' | 'timeline' | 'relation'>('all')
+  const [editingScene, setEditingScene] = useState<Scene | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'act'; id: string } | null>(null)
+
+  const store = useEditorStore()
+  const data = store.data
+
+  const renderCanvas = () => {
+    switch (views.activeViewId) {
+      case 'narrative-plot':
+        return (
+          <PlotCanvas
+            chapters={data.chapters}
+            acts={data.acts}
+            edges={data.edges}
+            onChapterClick={handleChapterClick}
+            onActClick={handleActClick}
+            onAddEdge={store.addEdge}
+            onDeleteEdge={store.deleteEdge}
+            onChangeEdgeType={store.changeEdgeType}
+            onReconnectEdge={store.reconnectEdge}
+            onAddChapter={store.addChapter}
+            onDeleteChapter={store.deleteChapter}
+            onAddAct={store.addAct}
+            onDeleteAct={store.deleteAct}
+            selection={store.selection}
+            onSelectNode={store.selectNode}
+            onSelectEdge={store.selectEdge}
+            onClearSelection={store.clearSelection}
+          />
+        )
+      case 'narrative-char':
+        return <CharCanvas characters={data.characters} />
+      case 'narrative-causality':
+        return <CausalityCanvas causalities={data.causalities} />
+      case 'narrative-rhythm':
+        return <RhythmCanvas rhythms={data.rhythms} />
+      case 'narrative-theme':
+        return <ThemeCanvas themes={data.themes} />
+      default:
+        return renderInfoView()
+    }
+  }
+
+  const renderInfoView = () => {
+    switch (views.activeViewId) {
+      case 'world-map': return <MapView data={data.world} />
+      case 'world-rules': return <RulesView data={data.rules} />
+      case 'world-history': return <HistoryView data={data.history} />
+      case 'experience-info': return <InfoControlView data={data.infoControls} />
+      case 'experience-pov': return <PovView data={data.pov} />
+      case 'creation-inspo': return <InspirationView data={data.inspirations} />
+      case 'creation-kanban': return <KanbanView data={data.kanban} />
+      case 'creation-log': return <ChangelogView data={data.changelog} />
+      default: return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
+    }
+  }
+
+  const handleExport = () => {
+    const text = data.chapters.map(ch => {
+      const scenes = ch.scenes.filter(s => s.content).map(s => s.content).join('\n\n')
+      return `${ch.title}\n\n${scenes}\n\n${'-'.repeat(16)}\n\n`
+    }).join('')
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = '小说已完成内容.txt'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleActClick = useCallback((actId: string) => {
+    if (!actId) { setSelectedActId(null); store.clearSelection(); return }
+    setSelectedActId(actId)
+    setSelectedChapter(null)
+    store.selectNode('act', actId)
+  }, [store])
+
+  const handleChapterClick = useCallback((chapterId: string) => {
+    const ch = data.chapters.find(c => c.id === chapterId)
+    if (!ch) return
+    setSelectedChapter(ch)
+    setSelectedActId(null)
+    store.selectNode('chapter', chapterId)
+  }, [data.chapters, store])
+
+  const handleSceneSave = useCallback((chapterId: string, sceneId: string, content: string) => {
+    store.setData(d => {
+      const ch = d.chapters.find(c => c.id === chapterId)
+      if (!ch) return d
+      const sc = ch.scenes.find(s => s.id === sceneId)
+      if (!sc) return d
+      const newSc = { ...sc, content, wordCount: content.replace(/\s/g, '').length }
+      const newScenes = ch.scenes.map(s => s.id === sceneId ? newSc : s)
+      const newCh = { ...ch, scenes: newScenes, wordCount: newScenes.reduce((s, sc) => s + sc.wordCount, 0) }
+      return { ...d, chapters: d.chapters.map(c => c.id === chapterId ? newCh : c) }
+    })
+    // Refresh selected chapter display
+    const updated = data.chapters.find(c => c.id === chapterId)
+    if (updated) setSelectedChapter({ ...updated })
+    setEditingScene(null)
+  }, [store, data.chapters])
+
+  const handleChapterGoalSave = useCallback((chapterId: string, goal: string) => {
+    store.setData(d => ({
+      ...d,
+      chapters: d.chapters.map(c => c.id === chapterId ? { ...c, goal } : c),
+    }))
+    if (selectedChapter?.id === chapterId) setSelectedChapter({ ...selectedChapter, goal })
+  }, [store, selectedChapter])
+
+  const handleOpenSceneEditor = useCallback((scene: Scene) => {
+    setEditingScene(scene)
+  }, [])
+
+  return (
+    <ToastProvider>
+    <div className="h-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden select-none">
+      {/* Top bar */}
+      <div className="h-12 flex items-center justify-between px-4 border-b border-gray-800 bg-gray-900/50 shrink-0">
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-gray-400 hover:text-gray-200 bg-gray-800/50 hover:bg-gray-700 transition-colors"
+        >
+          ☰ 大纲
+        </button>
+        <div className="text-xs text-gray-500 bg-gray-800/50 px-3 py-1 rounded-full">
+          {views.activeView.label}
+    </div>
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="删除幕"
+        message={`确定要删除「${data.acts.find(a => a.id === confirmDelete?.id)?.name ?? ''}」吗？该幕下的所有章节和连线将一并删除。`}
+        onConfirm={() => { if (confirmDelete) store.deleteAct(confirmDelete.id); setConfirmDelete(null) }}
+        onCancel={() => setConfirmDelete(null)}
+      />
+    </ToastProvider>
+      </div>
+
+      {/* Canvas area */}
+      <div className="flex-1 relative">
+        {renderCanvas()}
+
+        {views.activeViewId === 'narrative-plot' && (
+          <PlotToolbar
+            selection={store.selection}
+            selectedActId={selectedActId}
+            edgeFilter={edgeFilter}
+            onAddAct={() => store.addAct()}
+            onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
+            onDeleteSelected={() => {
+              const sel = store.selection
+              if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
+              if (sel.type === 'chapter') store.deleteChapter(sel.id!)
+              if (sel.type === 'edge') store.deleteEdge(sel.id!)
+              store.clearSelection()
+            }}
+            onRenameAct={() => {
+              if (store.selection.type === 'act') {
+                const act = data.acts.find(a => a.id === store.selection.id)
+                const name = prompt('重命名幕：', act?.name)
+                if (name && act) { act.name = name; store.setData({ ...data }) }
+              }
+              store.clearSelection()
+            }}
+            onEditChapterGoal={() => {
+              if (store.selection.type === 'chapter') {
+                const ch = data.chapters.find(c => c.id === store.selection.id)
+                if (ch) { setSelectedChapter({ ...ch }); store.clearSelection() }
+              }
+            }}
+            onDisconnectTimeline={() => {
+              if (store.selection.type === 'chapter') {
+                data.edges.filter(e => e.targetId === store.selection.id && e.type === 'timeline')
+                  .forEach(e => store.deleteEdge(e.id))
+              }
+              store.clearSelection()
+            }}
+            onEdgeFilterChange={setEdgeFilter}
+            onLayout={() => {}}
+            onExport={handleExport}
+          />
+        )}
+
+        {/* Chapter/Act detail panel */}
+        {views.activeViewId === 'narrative-plot' && (
+          selectedActId ? (
+            <ActDetail
+              act={data.acts.find(a => a.id === selectedActId)!}
+              chapters={data.chapters.filter(c => c.actId === selectedActId)}
+              onClose={() => setSelectedActId(null)}
+              onSelectChapter={(chId) => {
+                setSelectedActId(null)
+                setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null)
+              }}
+              onSceneSave={handleSceneSave}
+              onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            />
+          ) : selectedChapter ? (
+            <ChapterDetail
+              chapter={selectedChapter}
+              onClose={() => setSelectedChapter(null)}
+              onSceneSave={handleSceneSave}
+              onChapterSave={handleChapterGoalSave}
+              onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            />
+          ) : null
+        )}
+
+        <ActionButtons
+          onPreview={() => setPreviewOpen(true)}
+          onExport={handleExport}
+          onGlobalSetting={() => alert('📜 全局设定 (宪法)\n\n世界基石：人·魔·妖·神共存\n普适规则：万物皆可修炼\n核心冲突：资源与理念之争')}
+        />
+      </div>
+
+      {/* Drawer */}
+      <LeftDrawer
+        open={drawerOpen}
+        acts={data.acts}
+        chapters={data.chapters}
+        onClose={() => setDrawerOpen(false)}
+        onSelectChapter={handleChapterClick}
+      />
+
+      {/* Modals */}
+      <PreviewModal open={previewOpen} chapters={data.chapters} onClose={() => setPreviewOpen(false)} />
+
+      {editingScene && (
+        <SceneEditor
+          scene={editingScene}
+          chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
+          onClose={() => setEditingScene(null)}
+          onSave={(sceneId, content) => {
+            const ch = data.chapters.find(c => c.scenes.some(s => s.id === sceneId))
+            if (ch) handleSceneSave(ch.id, sceneId, content)
+          }}
+        />
+      )}
+
+      {/* Bottom nav */}
+      <BottomNav
+        activePillar={views.activePillar}
+        activeViewId={views.activeViewId}
+        subPanelOpen={views.subPanelOpen}
+        pillarViews={views.pillarViews}
+        onSwitchPillar={views.switchPillar}
+        onSwitchView={views.switchView}
+        onCloseSubPanel={views.closeSubPanel}
+      />
+    </div>
+  )
+}
