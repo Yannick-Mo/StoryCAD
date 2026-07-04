@@ -22,40 +22,58 @@ export function sideFromHandle(handleId?: string | null): PhysicalSide | null {
   return suffix ? SUFFIX_TO_SIDE[suffix] ?? null : null
 }
 
+type OccupancyMap = Map<string, Map<PhysicalSide, Set<string>>>
+
 function addSide(
-  occupancy: Map<string, Set<PhysicalSide>>,
+  occupancy: OccupancyMap,
   nodeId: string,
-  handleId?: string
+  handleId?: string,
+  type?: string,
 ) {
+  if (!type) return
   const side = sideFromHandle(handleId)
   if (!side) return
-  const sides = occupancy.get(nodeId) ?? new Set<PhysicalSide>()
-  sides.add(side)
-  occupancy.set(nodeId, sides)
+  let sides = occupancy.get(nodeId)
+  if (!sides) {
+    sides = new Map()
+    occupancy.set(nodeId, sides)
+  }
+  let types = sides.get(side)
+  if (!types) {
+    types = new Set()
+    sides.set(side, types)
+  }
+  types.add(type)
 }
 
 export function buildHandleOccupancy(
   edges: EdgeForHandleAllocation[],
   ignoreEdgeIds: Iterable<string> = []
-): Map<string, Set<PhysicalSide>> {
+): OccupancyMap {
   const ignored = new Set(ignoreEdgeIds)
-  const occupancy = new Map<string, Set<PhysicalSide>>()
+  const occupancy: OccupancyMap = new Map()
 
   for (const edge of edges) {
     if (edge.id && ignored.has(edge.id)) continue
-    addSide(occupancy, edge.sourceId, edge.sourceHandle)
-    addSide(occupancy, edge.targetId, edge.targetHandle)
+    addSide(occupancy, edge.sourceId, edge.sourceHandle, edge.type)
+    addSide(occupancy, edge.targetId, edge.targetHandle, edge.type)
   }
 
   return occupancy
 }
 
 export function isSideOccupied(
-  occupancy: Map<string, Set<PhysicalSide>>,
+  occupancy: OccupancyMap,
   nodeId: string,
-  side: PhysicalSide
+  side: PhysicalSide,
+  type?: string,
 ): boolean {
-  return occupancy.get(nodeId)?.has(side) ?? false
+  const sides = occupancy.get(nodeId)
+  if (!sides) return false
+  const types = sides.get(side)
+  if (!types) return false
+  if (type) return types.has(type)
+  return types.size > 0
 }
 
 export function getTimelineReplacementEdgeIds(
@@ -80,12 +98,13 @@ export function isHandlePairAvailable(
   sourceHandle: string,
   targetHandle: string,
   edges: EdgeForHandleAllocation[],
-  ignoreEdgeIds: Iterable<string> = []
+  ignoreEdgeIds: Iterable<string> = [],
+  type?: string,
 ): boolean {
   const occupancy = buildHandleOccupancy(edges, ignoreEdgeIds)
   const sourceSide = sideFromHandle(sourceHandle)
   const targetSide = sideFromHandle(targetHandle)
   if (!sourceSide || !targetSide) return false
-  return !isSideOccupied(occupancy, sourceId, sourceSide) &&
-         !isSideOccupied(occupancy, targetId, targetSide)
+  return !isSideOccupied(occupancy, sourceId, sourceSide, type) &&
+         !isSideOccupied(occupancy, targetId, targetSide, type)
 }

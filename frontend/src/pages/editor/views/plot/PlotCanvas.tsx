@@ -79,6 +79,7 @@ interface PlotCanvasProps {
   onDeleteChapter?: (chapterId: string) => void
   onAddAct?: (name?: string) => Act
   onDeleteAct?: (actId: string) => void
+  onActResize?: (actId: string, width: number, height: number) => void
   selection: SelectionState
   onSelectNode: (type: 'act' | 'chapter', id: string) => void
   onSelectEdge: (edgeId: string) => void
@@ -90,7 +91,7 @@ export default function PlotCanvas({
   chapters, acts, edges,
   onChapterClick, onActClick,
   onAddEdge, onDeleteEdge, onChangeEdgeType, onReconnectEdge,
-  onAddChapter, onDeleteChapter, onAddAct, onDeleteAct,
+  onAddChapter, onDeleteChapter, onAddAct, onDeleteAct, onActResize,
   selection, onSelectNode, onSelectEdge, onClearSelection,
   connectionMode,
 }: PlotCanvasProps) {
@@ -108,7 +109,10 @@ export default function PlotCanvas({
     sortedActs.forEach(act => {
       const chs = chapters.filter(c => c.actId === act.id)
       const count = chs.length
-      const w = Math.max(count * 240 + 80, 300)
+      const calcW = Math.max(count * 240 + 80, 300)
+      const calcH = ACT_H
+      const w = act.width ? Math.max(act.width, calcW) : calcW
+      const h = act.height ? Math.max(act.height, calcH) : calcH
       const actNodeId = `act-${act.id}`
       result.push({
         id: actNodeId,
@@ -119,7 +123,7 @@ export default function PlotCanvas({
         // edge/node clicks inside the visual group depend on events reaching the
         // React Flow edge/node layers. Group blank-area drag/resize is handled
         // by pane coordinate hit tests below.
-        style: { width: w, height: ACT_H, pointerEvents: 'none' },
+        style: { width: w, height: h, pointerEvents: 'none' },
         dragHandle: '.act-drag-handle',
         selectable: false,
       })
@@ -142,7 +146,7 @@ export default function PlotCanvas({
           },
         })
       })
-      y += ACT_H + ACT_GAP
+      y += h + ACT_GAP
     })
     return result
   }, [chapters, sortedActs, orderMap])
@@ -193,14 +197,27 @@ export default function PlotCanvas({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
   const rfRef = useRef<ReactFlowInstance | null>(null)
 
-  // Sync nodes from data without resetting drag positions
+  // Sync nodes from data without resetting drag positions or manual group size
   useEffect(() => {
     setNodes(prev => {
       const prevMap = new Map(prev.map(n => [n.id, n]))
-      return initialNodes.map(n => ({
-        ...n,
-        position: prevMap.get(n.id)?.position ?? n.position,
-      }))
+      return initialNodes.map(n => {
+        const prevNode = prevMap.get(n.id)
+        if (n.type === 'actGroup' && prevNode) {
+          const ns = n.style || {}
+          const ps = prevNode.style || {}
+          return {
+            ...n,
+            position: prevNode.position ?? n.position,
+            style: {
+              ...ns,
+              width: Math.max((ns.width as number) || 300, (ps.width as number) || 300),
+              height: Math.max((ns.height as number) || 220, (ps.height as number) || 220),
+            },
+          }
+        }
+        return { ...n, position: prevNode?.position ?? n.position }
+      })
     })
   }, [initialNodes, setNodes])
   // Sync data edges
@@ -219,11 +236,16 @@ export default function PlotCanvas({
     setNodes(nds => nds.map(n => n.id === id ? { ...n, style: { ...n.style, width: w, height: h } } : n))
   }, [setNodes])
 
+  const handleResizeEnd = useCallback((id: string, w: number, h: number) => {
+    setNodes(nds => nds.map(n => n.id === id ? { ...n, style: { ...n.style, width: w, height: h } } : n))
+    onActResize?.(id.replace('act-', ''), w, h)
+  }, [setNodes, onActResize])
+
   useEffect(() => {
     setNodes(nds => nds.map(n =>
-      n.type === 'actGroup' ? { ...n, data: { ...n.data, onResize: handleResize } } : n
+      n.type === 'actGroup' ? { ...n, data: { ...n.data, onResize: handleResize, onResizeEnd: handleResizeEnd } } : n
     ))
-  }, [handleResize, setNodes])
+  }, [handleResize, handleResizeEnd, setNodes])
 
   const onConnect = useCallback((conn: import('reactflow').Connection) => {
     if (!conn.source || !conn.target || conn.source === conn.target) return
@@ -235,7 +257,7 @@ export default function PlotCanvas({
       ? getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
       : []
 
-    if (!isHandlePairAvailable(conn.source, conn.target, conn.sourceHandle, conn.targetHandle, edges, ignoreEdgeIds)) {
+    if (!isHandlePairAvailable(conn.source, conn.target, conn.sourceHandle, conn.targetHandle, edges, ignoreEdgeIds, edgeType)) {
       addToast('该侧连接点已被占用', 'warning')
       return
     }
@@ -249,12 +271,13 @@ export default function PlotCanvas({
     if (!newConn.sourceHandle || !newConn.targetHandle) return
 
     const domainEdge = edges.find(e => e.id === oldEdge.id)
+    const edgeType = domainEdge?.type ?? 'timeline'
     const ignoreEdgeIds = [oldEdge.id]
-    if (domainEdge?.type === 'timeline') {
+    if (edgeType === 'timeline') {
       ignoreEdgeIds.push(...getTimelineReplacementEdgeIds(edges, newConn.source, newConn.target, oldEdge.id))
     }
 
-    if (!isHandlePairAvailable(newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle, edges, ignoreEdgeIds)) {
+    if (!isHandlePairAvailable(newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle, edges, ignoreEdgeIds, edgeType)) {
       addToast('该侧连接点已被占用', 'warning')
       return
     }
@@ -300,6 +323,9 @@ export default function PlotCanvas({
 
     const rf = rfRef.current
     if (!rf) return
+
+    // Close context menu before preventDefault (which suppresses mousedown)
+    setCtxMenu(null)
 
     const startFlowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
     const currentNodes = rf.getNodes()
@@ -347,6 +373,10 @@ export default function PlotCanvas({
 
     const cleanup = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return
+      if (isResize) {
+        const finalFlowPos = rf.screenToFlowPosition({ x: ev.clientX, y: ev.clientY })
+        onActResize?.(actId, Math.max(300, startWidth + finalFlowPos.x - startFlowPos.x), Math.max(150, startHeight + finalFlowPos.y - startFlowPos.y))
+      }
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', cleanup)
       window.removeEventListener('pointercancel', cleanup)
@@ -355,7 +385,7 @@ export default function PlotCanvas({
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', cleanup)
     window.addEventListener('pointercancel', cleanup)
-  }, [isInteractiveFlowTarget, onActClick, onSelectNode, setNodes])
+  }, [isInteractiveFlowTarget, onActClick, onSelectNode, onActResize, setNodes, setCtxMenu])
 
   const handleActGroupPanePointerMove = useCallback((event: React.PointerEvent) => {
     if (isInteractiveFlowTarget(event.target)) {
@@ -416,14 +446,10 @@ export default function PlotCanvas({
         items: [
           [{ label: '编辑目标', icon: '✎', onClick: () => onChapterClick?.(id) }],
           [{ label: '删除章', icon: '✕', onClick: () => onDeleteChapter?.(id) }],
-          [{ label: '断开时序线', icon: '⊘', onClick: () => {
-            const chEdges = edges.filter(e => e.targetId === id && e.type === 'timeline')
-            chEdges.forEach(e => onDeleteEdge?.(e.id))
-          }}],
         ],
       })
     }
-  }, [onSelectNode, onAddChapter, onDeleteAct, onChapterClick, onDeleteChapter, onDeleteEdge, chapters, edges])
+  }, [onSelectNode, onAddChapter, onDeleteAct, onChapterClick, onDeleteChapter])
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault()

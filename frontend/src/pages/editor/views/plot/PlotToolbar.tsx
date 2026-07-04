@@ -10,7 +10,6 @@ interface PlotToolbarProps {
   onDeleteSelected: () => void
   onRenameAct: () => void
   onEditChapterGoal: () => void
-  onDisconnectTimeline: () => void
   onLayout: () => void
   onExport: () => void
 }
@@ -27,7 +26,7 @@ const MODE_OPTIONS: { value: 'all' | EdgeType; label: string }[] = [
 export default function PlotToolbar({
   selection, selectedActId, connectionMode,
   onAddAct, onAddChapter, onDeleteSelected,
-  onRenameAct, onEditChapterGoal, onDisconnectTimeline,
+  onRenameAct, onEditChapterGoal,
   onConnectionModeChange, onLayout, onExport,
 }: PlotToolbarProps) {
   const show = selection.type
@@ -44,14 +43,11 @@ export default function PlotToolbar({
       {show === 'act' && (<>
         <div className="w-px h-5 bg-gray-700/50 mx-1" />
         <button onClick={onRenameAct} className="px-2.5 py-1 rounded-lg text-xs text-gray-300 hover:bg-blue-600/20 hover:text-blue-400 transition-colors">✎ 重命名</button>
-        <button onClick={onDeleteSelected} className="px-2.5 py-1 rounded-lg text-xs text-red-400 hover:bg-red-600/20 transition-colors">✕ 删除幕</button>
       </>)}
 
       {show === 'chapter' && (<>
         <div className="w-px h-5 bg-gray-700/50 mx-1" />
         <button onClick={onEditChapterGoal} className="px-2.5 py-1 rounded-lg text-xs text-gray-300 hover:bg-blue-600/20 hover:text-blue-400 transition-colors">✎ 编辑目标</button>
-        <button onClick={onDeleteSelected} className="px-2.5 py-1 rounded-lg text-xs text-red-400 hover:bg-red-600/20 transition-colors">✕ 删除章</button>
-        <button onClick={onDisconnectTimeline} className="px-2.5 py-1 rounded-lg text-xs text-amber-400 hover:bg-amber-600/20 transition-colors">⊘ 断开时序</button>
       </>)}
 
       {show === 'edge' && (<>

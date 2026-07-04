@@ -42,27 +42,44 @@ assert.equal(
   true
 )
 
-// Source side occupied
+// Source side occupied (same type)
 const srcOccupied = [
-  { id: 'e1', sourceId: 'source', targetId: 'other', sourceHandle: 's-r', targetHandle: 't-l' },
+  { id: 'e1', sourceId: 'source', targetId: 'other', type: 'timeline', sourceHandle: 's-r', targetHandle: 't-l' },
 ]
 assert.equal(
-  isHandlePairAvailable('source', 'target', 's-r', 't-l', srcOccupied),
+  isHandlePairAvailable('source', 'target', 's-r', 't-l', srcOccupied, [], 'timeline'),
   false
 )
 
-// Target side occupied
+// Target side occupied (same type)
 const tgtOccupied = [
-  { id: 'e1', sourceId: 'other', targetId: 'target', sourceHandle: 's-r', targetHandle: 't-l' },
+  { id: 'e1', sourceId: 'other', targetId: 'target', type: 'timeline', sourceHandle: 's-r', targetHandle: 't-l' },
 ]
 assert.equal(
-  isHandlePairAvailable('source', 'target', 's-r', 't-l', tgtOccupied),
+  isHandlePairAvailable('source', 'target', 's-r', 't-l', tgtOccupied, [], 'timeline'),
   false
 )
 
-// Occupied but ignored
+// Different types can share the same physical side
+const diffTypeEdges = [
+  { id: 'e1', sourceId: 'source', targetId: 'other', type: 'causal', sourceHandle: 's-r', targetHandle: 't-l' },
+]
 assert.equal(
-  isHandlePairAvailable('source', 'target', 's-r', 't-l', srcOccupied, ['e1']),
+  isHandlePairAvailable('source', 'target', 's-r', 't-l', diffTypeEdges, [], 'timeline'),
+  true,
+  'timeline should be able to use s-r side even when causal already uses it'
+)
+
+// Same type on same side is blocked
+assert.equal(
+  isHandlePairAvailable('source', 'target', 's-r', 't-l', diffTypeEdges, [], 'causal'),
+  false,
+  'second causal edge on same side should be blocked'
+)
+
+// Occupied but ignored (for replacement)
+assert.equal(
+  isHandlePairAvailable('source', 'target', 's-r', 't-l', srcOccupied, ['e1'], 'timeline'),
   true
 )
 
@@ -74,13 +91,27 @@ assert.equal(
 
 // buildHandleOccupancy and isSideOccupied
 const edges = [
-  { id: 'e1', sourceId: 'a', targetId: 'b', sourceHandle: 's-r', targetHandle: 't-l' },
+  { id: 'e1', sourceId: 'a', targetId: 'b', type: 'timeline', sourceHandle: 's-r', targetHandle: 't-l' },
 ]
 const occupancy = buildHandleOccupancy(edges)
-assert.equal(isSideOccupied(occupancy, 'a', 'right'), true)
-assert.equal(isSideOccupied(occupancy, 'a', 'left'), false)
-assert.equal(isSideOccupied(occupancy, 'b', 'left'), true)
-assert.equal(isSideOccupied(occupancy, 'b', 'right'), false)
+assert.equal(isSideOccupied(occupancy, 'a', 'right', 'timeline'), true)
+assert.equal(isSideOccupied(occupancy, 'a', 'left', 'timeline'), false)
+assert.equal(isSideOccupied(occupancy, 'b', 'left', 'timeline'), true)
+assert.equal(isSideOccupied(occupancy, 'b', 'right', 'timeline'), false)
+
+// Per-type occupancy isolation
+assert.equal(isSideOccupied(occupancy, 'a', 'right', 'causal'), false, 'causal should not be blocked by timeline')
+assert.equal(isSideOccupied(occupancy, 'a', 'right'), true, 'without type filter, should see timeline occupancy')
+
+// Multiple types on same side
+const multiTypeEdges = [
+  { id: 'e1', sourceId: 'a', targetId: 'b', type: 'timeline', sourceHandle: 's-r', targetHandle: 't-l' },
+  { id: 'e2', sourceId: 'a', targetId: 'c', type: 'causal', sourceHandle: 's-r', targetHandle: 't-r' },
+]
+const multiOccupancy = buildHandleOccupancy(multiTypeEdges)
+assert.equal(isSideOccupied(multiOccupancy, 'a', 'right', 'timeline'), true)
+assert.equal(isSideOccupied(multiOccupancy, 'a', 'right', 'causal'), true)
+assert.equal(isSideOccupied(multiOccupancy, 'a', 'right', 'foreshadow'), false)
 
 // getTimelineReplacementEdgeIds
 const replacementEdges = [

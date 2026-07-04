@@ -28,7 +28,7 @@ export default function EditorShell() {
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
   const [editingScene, setEditingScene] = useState<Scene | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'act'; id: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter'; id: string } | null>(null)
 
   const store = useEditorStore()
   const data = store.data
@@ -48,9 +48,10 @@ export default function EditorShell() {
             onChangeEdgeType={store.changeEdgeType}
             onReconnectEdge={store.reconnectEdge}
             onAddChapter={store.addChapter}
-            onDeleteChapter={store.deleteChapter}
+            onDeleteChapter={(id) => setConfirmDelete({ type: 'chapter', id })}
             onAddAct={store.addAct}
-            onDeleteAct={store.deleteAct}
+            onDeleteAct={(id) => setConfirmDelete({ type: 'act', id })}
+            onActResize={store.resizeAct}
             selection={store.selection}
             onSelectNode={store.selectNode}
             onSelectEdge={store.selectEdge}
@@ -195,13 +196,6 @@ export default function EditorShell() {
                 if (ch) { setSelectedChapter({ ...ch }); store.clearSelection() }
               }
             }}
-            onDisconnectTimeline={() => {
-              if (store.selection.type === 'chapter') {
-                data.edges.filter(e => e.targetId === store.selection.id && e.type === 'timeline')
-                  .forEach(e => store.deleteEdge(e.id))
-              }
-              store.clearSelection()
-            }}
             onLayout={() => {}}
             onExport={handleExport}
           />
@@ -276,9 +270,18 @@ export default function EditorShell() {
     </div>
       <ConfirmDialog
         open={confirmDelete !== null}
-        title="删除幕"
-        message={"确定要删除「" + (data.acts.find(a => a.id === confirmDelete?.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"}
-        onConfirm={() => { if (confirmDelete) store.deleteAct(confirmDelete.id); setConfirmDelete(null) }}
+        title={confirmDelete?.type === 'act' ? '删除幕' : '删除章'}
+        message={
+          confirmDelete?.type === 'act'
+            ? "确定要删除「" + (data.acts.find(a => a.id === confirmDelete.id)?.name ?? '') + "」吗？该幕下的所有章节和连线将一并删除。"
+            : "确定要删除「" + (data.chapters.find(c => c.id === confirmDelete?.id)?.title ?? '') + "」吗？"
+        }
+        onConfirm={() => {
+          if (!confirmDelete) return
+          if (confirmDelete.type === 'act') store.deleteAct(confirmDelete.id)
+          else store.deleteChapter(confirmDelete.id)
+          setConfirmDelete(null)
+        }}
         onCancel={() => setConfirmDelete(null)}
       />
     </ToastProvider>

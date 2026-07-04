@@ -5,6 +5,7 @@ interface ActGroupData {
   label: string
   color: string
   onResize: (id: string, w: number, h: number) => void
+  onResizeEnd: (id: string, w: number, h: number) => void
 }
 
 // Interaction contract for act groups:
@@ -35,8 +36,9 @@ function ActGroupNode({ id, data, selected }: NodeProps<ActGroupData>) {
     const onMove = (ev: PointerEvent) => {
       data.onResize(id, Math.max(300, startW + ev.clientX - startX), Math.max(150, startH + ev.clientY - startY))
     }
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       setResizing(false)
+      data.onResizeEnd(id, Math.max(300, startW + ev.clientX - startX), Math.max(150, startH + ev.clientY - startY))
       el.releasePointerCapture(e.pointerId)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)

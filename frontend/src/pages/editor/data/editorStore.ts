@@ -149,10 +149,18 @@ export function useEditorStore(initialData = MOCK_DATA) {
     })
   }, [reSort])
 
+  const resizeAct = useCallback((actId: string, width: number, height: number) => {
+    setData(d => ({
+      ...d,
+      acts: d.acts.map(a => a.id === actId ? { ...a, width, height } : a),
+    }))
+  }, [])
+
   return {
     data, setData,
     selection, selectNode, selectEdge, clearSelection,
     addAct, addChapter, deleteAct, deleteChapter,
     addEdge, deleteEdge, changeEdgeType, reconnectEdge,
+    resizeAct,
   }
 }

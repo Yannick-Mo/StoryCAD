@@ -71,6 +71,8 @@ export interface Act {
   name: string
   order: number
   color: string
+  width?: number
+  height?: number
 }
 
 export interface Scene {
