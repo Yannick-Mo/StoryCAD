@@ -488,6 +488,7 @@ export default function PlotCanvas({
         fitView
         minZoom={0.3}
         maxZoom={2}
+        connectionRadius={48}
       >
         <style>{`
           /* React Flow's pane/viewport set their own cursor, so the wrapper cursor
