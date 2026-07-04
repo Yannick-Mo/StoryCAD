@@ -9,6 +9,7 @@ import ChapterNode from './ChapterNode'
 import ActGroupNode from './ActGroupNode'
 import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
+import { allocateHandles, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
 import { topologicalSort } from '../../data/orderUtils'
 import EdgePropertyPanel from './EdgePropertyPanel'
 import ContextMenu from './ContextMenu'
@@ -33,14 +34,40 @@ function getAbsPos(node: Node, all: Node[]): { x: number; y: number } {
   return nodeCenter(node.position, NODE_W, NODE_H)
 }
 
+// Act group interaction layering:
+// React Flow renders edge SVGs below node DOM. If an act group DOM element covers
+// the whole group area with pointer events enabled, edge clicks inside the group
+// are swallowed by the group node. Therefore act group node styles keep
+// pointerEvents: 'none' and blank-area group dragging/resizing is implemented by
+// coordinate hit-testing on the pane capture handlers below. Keep edge/node/handle
+// targets excluded in isInteractiveFlowTarget().
+function getActGroupAtPosition(nodes: Node[], position: { x: number; y: number }) {
+  return [...nodes].reverse().find(n => {
+    if (n.type !== 'actGroup') return false
+    const w = (n.style?.width as number) || 300
+    const h = (n.style?.height as number) || 200
+    return position.x >= n.position.x && position.x <= n.position.x + w &&
+           position.y >= n.position.y && position.y <= n.position.y + h
+  })
+}
+
+// Bottom-right resize zone is intentionally coordinate-based instead of DOM-based.
+// A pointer-enabled resize DOM handle would sit in the node layer and can block
+// edge selection near the group corner.
+function isActGroupResizePosition(node: Node, position: { x: number; y: number }) {
+  const w = (node.style?.width as number) || 300
+  const h = (node.style?.height as number) || 200
+  return position.x >= node.position.x + w - 18 && position.y >= node.position.y + h - 18
+}
+
 interface PlotCanvasProps {
   chapters: Chapter[]; acts: Act[]; edges: ChapterEdge[]
   onChapterClick?: (chapterId: string) => void
   onActClick?: (actId: string) => void
-  onAddEdge?: (sourceId: string, targetId: string, type?: EdgeType) => EdgeResult
+  onAddEdge?: (sourceId: string, targetId: string, type?: EdgeType, sourceHandle?: string, targetHandle?: string) => EdgeResult
   onDeleteEdge?: (edgeId: string) => void
   onChangeEdgeType?: (edgeId: string, newType: EdgeType) => boolean
-  onReconnectEdge?: (edgeId: string, newSource?: string, newTarget?: string) => void
+  onReconnectEdge?: (edgeId: string, newSource?: string, newTarget?: string, sourceHandle?: string, targetHandle?: string) => void
   onAddChapter?: (actId: string) => Chapter
   onDeleteChapter?: (chapterId: string) => void
   onAddAct?: (name?: string) => Act
@@ -79,6 +106,10 @@ export default function PlotCanvas({
         type: 'actGroup',
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
+        // Keep the group node transparent to pointer events. Do not remove this:
+        // edge/node clicks inside the visual group depend on events reaching the
+        // React Flow edge/node layers. Group blank-area drag/resize is handled
+        // by pane coordinate hit tests below.
         style: { width: w, height: ACT_H, pointerEvents: 'none' },
         dragHandle: '.act-drag-handle',
         selectable: false,
@@ -108,13 +139,32 @@ export default function PlotCanvas({
   }, [chapters, sortedActs, orderMap])
 
   const rfEdges: Edge[] = useMemo(() => {
+    const displayEdges: ChapterEdge[] = []
+
     return edges.map(e => {
       const srcNode = initialNodes.find(n => n.id === e.sourceId)
       const tgtNode = initialNodes.find(n => n.id === e.targetId)
       if (!srcNode || !tgtNode) return null
       const a = getAbsPos(srcNode, initialNodes)
       const b = getAbsPos(tgtNode, initialNodes)
-      const { sourceHandle, targetHandle } = getBestHandle(a, b)
+
+      let sourceHandle = e.sourceHandle
+      let targetHandle = e.targetHandle
+      if (!sourceHandle || !targetHandle) {
+        const allocation = allocateHandles({
+          sourceId: e.sourceId,
+          targetId: e.targetId,
+          sourcePosition: a,
+          targetPosition: b,
+          edges: displayEdges,
+        })
+        const fallback = getBestHandle(a, b)
+        sourceHandle = allocation?.sourceHandle ?? fallback.sourceHandle
+        targetHandle = allocation?.targetHandle ?? fallback.targetHandle
+      }
+
+      displayEdges.push({ ...e, sourceHandle, targetHandle })
+
       const isTimeline = e.type === 'timeline'
       const isSelected = selection.type === 'edge' && selection.id === e.id
       return {
@@ -144,6 +194,7 @@ export default function PlotCanvas({
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
   const [selectedRfEdge, setSelectedRfEdge] = useState<string | null>(null)
+  const [paneCursor, setPaneCursor] = useState<'default' | 'se-resize'>('default')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
   const rfRef = useRef<ReactFlowInstance | null>(null)
 
@@ -181,14 +232,65 @@ export default function PlotCanvas({
 
   const onConnect = useCallback((conn: import('reactflow').Connection) => {
     if (!conn.source || !conn.target || conn.source === conn.target) return
-    const result = onAddEdge?.(conn.source, conn.target, 'timeline')
+
+    const rf = rfRef.current
+    if (!rf) return
+    const currentNodes = rf.getNodes()
+    const sourceNode = currentNodes.find(n => n.id === conn.source)
+    const targetNode = currentNodes.find(n => n.id === conn.target)
+    if (!sourceNode || !targetNode) return
+
+    const ignoreEdgeIds = getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
+    const allocation = allocateHandles({
+      sourceId: conn.source,
+      targetId: conn.target,
+      sourcePosition: getAbsPos(sourceNode, currentNodes),
+      targetPosition: getAbsPos(targetNode, currentNodes),
+      edges,
+      ignoreEdgeIds,
+    })
+
+    if (!allocation) {
+      addToast('节点连接点已满，无法创建连线', 'warning')
+      return
+    }
+
+    const result = onAddEdge?.(conn.source, conn.target, 'timeline', allocation.sourceHandle, allocation.targetHandle)
     if (result?.cycle) addToast('不能创建环路，操作已取消', 'error')
-  }, [onAddEdge, addToast])
+  }, [edges, onAddEdge, addToast])
 
   const onEdgeUpdate = useCallback((oldEdge: Edge, newConn: import('reactflow').Connection) => {
     if (!newConn.source || !newConn.target) return
-    onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target)
-  }, [onReconnectEdge])
+
+    const rf = rfRef.current
+    if (!rf) return
+    const currentNodes = rf.getNodes()
+    const sourceNode = currentNodes.find(n => n.id === newConn.source)
+    const targetNode = currentNodes.find(n => n.id === newConn.target)
+    if (!sourceNode || !targetNode) return
+
+    const domainEdge = edges.find(e => e.id === oldEdge.id)
+    const ignoreEdgeIds = [oldEdge.id]
+    if (domainEdge?.type === 'timeline') {
+      ignoreEdgeIds.push(...getTimelineReplacementEdgeIds(edges, newConn.source, newConn.target, oldEdge.id))
+    }
+
+    const allocation = allocateHandles({
+      sourceId: newConn.source,
+      targetId: newConn.target,
+      sourcePosition: getAbsPos(sourceNode, currentNodes),
+      targetPosition: getAbsPos(targetNode, currentNodes),
+      edges,
+      ignoreEdgeIds,
+    })
+
+    if (!allocation) {
+      addToast('节点连接点已满，无法创建连线', 'warning')
+      return
+    }
+
+    onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target, allocation.sourceHandle, allocation.targetHandle)
+  }, [edges, onReconnectEdge, addToast])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     if (node.type === 'chapter') {
@@ -206,6 +308,101 @@ export default function PlotCanvas({
     setSelectedRfEdge(edge.id)
     onSelectEdge(edge.id)
   }, [onSelectEdge])
+
+  const isInteractiveFlowTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Element)) return false
+    return Boolean(
+      target.closest('.react-flow__edge') ||
+      target.closest('.react-flow__node') ||
+      target.closest('.react-flow__handle') ||
+      target.closest('.react-flow__edgeupdater') ||
+      target.closest('.nodrag') ||
+      target.closest('[data-interactive="true"]') ||
+      target.closest('button, input, textarea, select, a')
+    )
+  }, [])
+
+  // Capture before React Flow pane panning. Only blank space inside an act group
+  // is intercepted; edges, chapters, handles, resize-disabled DOM, and controls
+  // are explicitly allowed through so their native React Flow handlers still run.
+  const handleActGroupPanePointerDown = useCallback((event: React.PointerEvent) => {
+    if (event.button !== 0 || isInteractiveFlowTarget(event.target)) return
+
+    const rf = rfRef.current
+    if (!rf) return
+
+    const startFlowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const currentNodes = rf.getNodes()
+    const actNode = getActGroupAtPosition(currentNodes, startFlowPos)
+    if (!actNode) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.nativeEvent.stopImmediatePropagation()
+
+    const actId = actNode.id.replace('act-', '')
+    onSelectNode('act', actId)
+    onActClick?.(actId)
+
+    const pointerId = event.pointerId
+    const startPosition = { ...actNode.position }
+    const startWidth = (actNode.style?.width as number) || 300
+    const startHeight = (actNode.style?.height as number) || 200
+    const isResize = isActGroupResizePosition(actNode, startFlowPos)
+
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      const nextFlowPos = rf.screenToFlowPosition({ x: ev.clientX, y: ev.clientY })
+
+      if (isResize) {
+        setNodes(nds => nds.map(n => n.id === actNode.id ? {
+          ...n,
+          style: {
+            ...n.style,
+            width: Math.max(300, startWidth + nextFlowPos.x - startFlowPos.x),
+            height: Math.max(150, startHeight + nextFlowPos.y - startFlowPos.y),
+          },
+        } : n))
+        return
+      }
+
+      setNodes(nds => nds.map(n => n.id === actNode.id ? {
+        ...n,
+        position: {
+          x: startPosition.x + nextFlowPos.x - startFlowPos.x,
+          y: startPosition.y + nextFlowPos.y - startFlowPos.y,
+        },
+      } : n))
+    }
+
+    const cleanup = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', cleanup)
+      window.removeEventListener('pointercancel', cleanup)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', cleanup)
+    window.addEventListener('pointercancel', cleanup)
+  }, [isInteractiveFlowTarget, onActClick, onSelectNode, setNodes])
+
+  const handleActGroupPanePointerMove = useCallback((event: React.PointerEvent) => {
+    if (isInteractiveFlowTarget(event.target)) {
+      setPaneCursor('default')
+      return
+    }
+
+    const rf = rfRef.current
+    if (!rf) {
+      setPaneCursor('default')
+      return
+    }
+
+    const flowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const actNode = getActGroupAtPosition(rf.getNodes(), flowPos)
+    setPaneCursor(actNode && isActGroupResizePosition(actNode, flowPos) ? 'se-resize' : 'default')
+  }, [isInteractiveFlowTarget])
 
   const handlePaneClick = useCallback((event: React.MouseEvent) => {
     setSelectedRfEdge(null)
@@ -308,8 +505,15 @@ export default function PlotCanvas({
   }, [onClearSelection, onAddAct, onSelectNode, onAddChapter, onDeleteAct])
 
   return (
-    <>
+    <div
+      className="h-full w-full"
+      style={{ cursor: paneCursor }}
+      onPointerDownCapture={handleActGroupPanePointerDown}
+      onPointerMove={handleActGroupPanePointerMove}
+      onPointerLeave={() => setPaneCursor('default')}
+    >
       <ReactFlow
+        className={paneCursor === 'se-resize' ? 'resize-cursor' : undefined}
         nodes={nodes}
         edges={rfEdgesState}
         onNodesChange={onNodesChange}
@@ -330,6 +534,16 @@ export default function PlotCanvas({
         minZoom={0.3}
         maxZoom={2}
       >
+        <style>{`
+          /* React Flow's pane/viewport set their own cursor, so the wrapper cursor
+             is not enough. This class is toggled from the same coordinate hit
+             test used for act group resizing. */
+          .resize-cursor .react-flow__pane,
+          .resize-cursor .react-flow__renderer,
+          .resize-cursor .react-flow__viewport {
+            cursor: se-resize !important;
+          }
+        `}</style>
         <Background color="#333" gap={20} />
         <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />
         <MiniMap
@@ -355,6 +569,6 @@ export default function PlotCanvas({
         )}
       </ReactFlow>
       {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
-    </>
+    </div>
   )
 }

@@ -20,7 +20,7 @@ export default function EdgePropertyPanel({ edge, chapters, onClose, onChangeTyp
   if (!edge) return null
 
   return (
-    <div className="absolute right-4 bottom-20 w-64 bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-xl shadow-2xl z-30 p-4">
+    <div className="nopan nodrag absolute right-4 bottom-20 w-64 bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-xl shadow-2xl z-30 p-4">
       <div className="flex items-center justify-between mb-3">
         <h4 className="text-xs font-medium text-gray-300">连线属性</h4>
         <button onClick={onClose} className="text-gray-500 hover:text-white text-sm leading-none">✕</button>

@@ -44,6 +44,8 @@ export interface ChapterEdge {
   targetId: string
   type: EdgeType
   label?: string
+  sourceHandle?: string
+  targetHandle?: string
 }
 
 export interface SelectionState {

@@ -12,6 +12,10 @@ function ChapterNode({ data, selected }: NodeProps<ChapterNodeData>) {
     >
       <Handle type="target" position={Position.Top} id="t-t" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
       <Handle type="target" position={Position.Left} id="t-l" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
+      <Handle type="target" position={Position.Right} id="t-r" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
+      <Handle type="target" position={Position.Bottom} id="t-b" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
+      <Handle type="source" position={Position.Top} id="s-t" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
+      <Handle type="source" position={Position.Left} id="s-l" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
       <Handle type="source" position={Position.Bottom} id="s-b" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
       <Handle type="source" position={Position.Right} id="s-r" className="!w-2.5 !h-2.5 !border-2 !border-gray-900 opacity-0 group-hover:opacity-100 transition-opacity !bg-amber-400" />
 

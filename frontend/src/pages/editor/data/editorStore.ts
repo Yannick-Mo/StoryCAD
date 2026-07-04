@@ -66,7 +66,7 @@ export function useEditorStore(initialData = MOCK_DATA) {
     }
   }, [selection])
 
-  const addEdge = useCallback((sourceId: string, targetId: string, type: EdgeType = 'timeline'): EdgeResult => {
+  const addEdge = useCallback((sourceId: string, targetId: string, type: EdgeType = 'timeline', sourceHandle?: string, targetHandle?: string): EdgeResult => {
     let result: EdgeResult = { edge: null }
     setData(d => {
       if (type === 'timeline') {
@@ -78,11 +78,11 @@ export function useEditorStore(initialData = MOCK_DATA) {
         const filtered = d.edges.filter(e =>
           !(e.type === 'timeline' && (e.sourceId === sourceId || e.targetId === targetId))
         )
-        const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type }
+        const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type, sourceHandle, targetHandle }
         result = { edge: newEdge }
         return { ...d, edges: [...filtered, newEdge], chapters: reSort(d.chapters, [...filtered, newEdge]) }
       }
-      const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type }
+      const newEdge: ChapterEdge = { id: uid(), sourceId, targetId, type, sourceHandle, targetHandle }
       result = { edge: newEdge }
       return { ...d, edges: [...d.edges, newEdge] }
     })
@@ -114,7 +114,7 @@ export function useEditorStore(initialData = MOCK_DATA) {
     return !blocked
   }, [])
 
-  const reconnectEdge = useCallback((edgeId: string, newSource?: string, newTarget?: string) => {
+  const reconnectEdge = useCallback((edgeId: string, newSource?: string, newTarget?: string, sourceHandle?: string, targetHandle?: string) => {
     setData(d => {
       const edge = d.edges.find(e => e.id === edgeId)
       if (!edge) return d
@@ -127,10 +127,25 @@ export function useEditorStore(initialData = MOCK_DATA) {
           e.id === edgeId ||
           !(e.type === 'timeline' && (e.sourceId === source || e.targetId === target))
         )
-        const newEdges = filtered.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e)
+        const newEdges = filtered.map(e => e.id === edgeId ? {
+          ...e,
+          sourceId: source,
+          targetId: target,
+          sourceHandle: sourceHandle ?? e.sourceHandle,
+          targetHandle: targetHandle ?? e.targetHandle,
+        } : e)
         return { ...d, edges: newEdges, chapters: reSort(d.chapters, newEdges) }
       }
-      return { ...d, edges: d.edges.map(e => e.id === edgeId ? { ...e, sourceId: source, targetId: target } : e) }
+      return {
+        ...d,
+        edges: d.edges.map(e => e.id === edgeId ? {
+          ...e,
+          sourceId: source,
+          targetId: target,
+          sourceHandle: sourceHandle ?? e.sourceHandle,
+          targetHandle: targetHandle ?? e.targetHandle,
+        } : e),
+      }
     })
   }, [reSort])
 
