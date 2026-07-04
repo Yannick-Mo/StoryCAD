@@ -1,20 +1,5 @@
 export type PhysicalSide = 'top' | 'right' | 'bottom' | 'left'
 
-export interface Point {
-  x: number
-  y: number
-}
-
-export interface SidePair {
-  sourceSide: PhysicalSide
-  targetSide: PhysicalSide
-}
-
-export interface HandlePair {
-  sourceHandle: string
-  targetHandle: string
-}
-
 export interface EdgeForHandleAllocation {
   id?: string
   sourceId: string
@@ -24,22 +9,6 @@ export interface EdgeForHandleAllocation {
   targetHandle?: string
 }
 
-export interface AllocateHandlesArgs {
-  sourceId: string
-  targetId: string
-  sourcePosition: Point
-  targetPosition: Point
-  edges: EdgeForHandleAllocation[]
-  ignoreEdgeIds?: Iterable<string>
-}
-
-const SIDE_TO_SUFFIX: Record<PhysicalSide, string> = {
-  top: 't',
-  right: 'r',
-  bottom: 'b',
-  left: 'l',
-}
-
 const SUFFIX_TO_SIDE: Record<string, PhysicalSide> = {
   t: 'top',
   r: 'right',
@@ -47,57 +16,10 @@ const SUFFIX_TO_SIDE: Record<string, PhysicalSide> = {
   l: 'left',
 }
 
-const OPPOSING_SIDE_PAIRS: SidePair[] = [
-  { sourceSide: 'right', targetSide: 'left' },
-  { sourceSide: 'bottom', targetSide: 'top' },
-  { sourceSide: 'top', targetSide: 'bottom' },
-  { sourceSide: 'left', targetSide: 'right' },
-]
-
 export function sideFromHandle(handleId?: string | null): PhysicalSide | null {
   if (!handleId) return null
   const suffix = handleId.split('-')[1]
   return suffix ? SUFFIX_TO_SIDE[suffix] ?? null : null
-}
-
-export function sourceHandleForSide(side: PhysicalSide): string {
-  return `s-${SIDE_TO_SUFFIX[side]}`
-}
-
-export function targetHandleForSide(side: PhysicalSide): string {
-  return `t-${SIDE_TO_SUFFIX[side]}`
-}
-
-function dedupeSidePairs(pairs: SidePair[]): SidePair[] {
-  const seen = new Set<string>()
-  const result: SidePair[] = []
-  for (const pair of pairs) {
-    const key = `${pair.sourceSide}:${pair.targetSide}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    result.push(pair)
-  }
-  return result
-}
-
-export function candidateSidePairs(sourcePosition: Point, targetPosition: Point): SidePair[] {
-  const dx = targetPosition.x - sourcePosition.x
-  const dy = targetPosition.y - sourcePosition.y
-  const absDx = Math.abs(dx)
-  const absDy = Math.abs(dy)
-
-  let preferred: SidePair
-  if (absDx >= absDy && dx > 0) {
-    preferred = { sourceSide: 'right', targetSide: 'left' }
-  } else if (absDx >= absDy && dx <= 0) {
-    preferred = { sourceSide: 'left', targetSide: 'right' }
-  } else if (dy > 0) {
-    preferred = { sourceSide: 'bottom', targetSide: 'top' }
-  } else {
-    preferred = { sourceSide: 'top', targetSide: 'bottom' }
-  }
-
-  return dedupeSidePairs([preferred, ...OPPOSING_SIDE_PAIRS])
 }
 
 function addSide(
@@ -152,24 +74,18 @@ export function getTimelineReplacementEdgeIds(
     .map(edge => edge.id!)
 }
 
-export function allocateHandles({
-  sourceId,
-  targetId,
-  sourcePosition,
-  targetPosition,
-  edges,
-  ignoreEdgeIds = [],
-}: AllocateHandlesArgs): HandlePair | null {
+export function isHandlePairAvailable(
+  sourceId: string,
+  targetId: string,
+  sourceHandle: string,
+  targetHandle: string,
+  edges: EdgeForHandleAllocation[],
+  ignoreEdgeIds: Iterable<string> = []
+): boolean {
   const occupancy = buildHandleOccupancy(edges, ignoreEdgeIds)
-
-  for (const pair of candidateSidePairs(sourcePosition, targetPosition)) {
-    if (isSideOccupied(occupancy, sourceId, pair.sourceSide)) continue
-    if (isSideOccupied(occupancy, targetId, pair.targetSide)) continue
-    return {
-      sourceHandle: sourceHandleForSide(pair.sourceSide),
-      targetHandle: targetHandleForSide(pair.targetSide),
-    }
-  }
-
-  return null
+  const sourceSide = sideFromHandle(sourceHandle)
+  const targetSide = sideFromHandle(targetHandle)
+  if (!sourceSide || !targetSide) return false
+  return !isSideOccupied(occupancy, sourceId, sourceSide) &&
+         !isSideOccupied(occupancy, targetId, targetSide)
 }

@@ -9,7 +9,7 @@ import ChapterNode from './ChapterNode'
 import ActGroupNode from './ActGroupNode'
 import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../../types'
 import { getBestHandle } from '../shared/getBestHandle'
-import { allocateHandles, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
+import { isHandlePairAvailable, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
 import { topologicalSort } from '../../data/orderUtils'
 import EdgePropertyPanel from './EdgePropertyPanel'
 import ContextMenu from './ContextMenu'
@@ -139,8 +139,6 @@ export default function PlotCanvas({
   }, [chapters, sortedActs, orderMap])
 
   const rfEdges: Edge[] = useMemo(() => {
-    const displayEdges: ChapterEdge[] = []
-
     return edges.map(e => {
       const srcNode = initialNodes.find(n => n.id === e.sourceId)
       const tgtNode = initialNodes.find(n => n.id === e.targetId)
@@ -148,22 +146,8 @@ export default function PlotCanvas({
       const a = getAbsPos(srcNode, initialNodes)
       const b = getAbsPos(tgtNode, initialNodes)
 
-      let sourceHandle = e.sourceHandle
-      let targetHandle = e.targetHandle
-      if (!sourceHandle || !targetHandle) {
-        const allocation = allocateHandles({
-          sourceId: e.sourceId,
-          targetId: e.targetId,
-          sourcePosition: a,
-          targetPosition: b,
-          edges: displayEdges,
-        })
-        const fallback = getBestHandle(a, b)
-        sourceHandle = allocation?.sourceHandle ?? fallback.sourceHandle
-        targetHandle = allocation?.targetHandle ?? fallback.targetHandle
-      }
-
-      displayEdges.push({ ...e, sourceHandle, targetHandle })
+      const sourceHandle = e.sourceHandle ?? getBestHandle(a, b).sourceHandle
+      const targetHandle = e.targetHandle ?? getBestHandle(a, b).targetHandle
 
       const isTimeline = e.type === 'timeline'
       const isSelected = selection.type === 'edge' && selection.id === e.id
@@ -232,42 +216,22 @@ export default function PlotCanvas({
 
   const onConnect = useCallback((conn: import('reactflow').Connection) => {
     if (!conn.source || !conn.target || conn.source === conn.target) return
-
-    const rf = rfRef.current
-    if (!rf) return
-    const currentNodes = rf.getNodes()
-    const sourceNode = currentNodes.find(n => n.id === conn.source)
-    const targetNode = currentNodes.find(n => n.id === conn.target)
-    if (!sourceNode || !targetNode) return
+    if (!conn.sourceHandle || !conn.targetHandle) return
 
     const ignoreEdgeIds = getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
-    const allocation = allocateHandles({
-      sourceId: conn.source,
-      targetId: conn.target,
-      sourcePosition: getAbsPos(sourceNode, currentNodes),
-      targetPosition: getAbsPos(targetNode, currentNodes),
-      edges,
-      ignoreEdgeIds,
-    })
 
-    if (!allocation) {
-      addToast('节点连接点已满，无法创建连线', 'warning')
+    if (!isHandlePairAvailable(conn.source, conn.target, conn.sourceHandle, conn.targetHandle, edges, ignoreEdgeIds)) {
+      addToast('该侧连接点已被占用', 'warning')
       return
     }
 
-    const result = onAddEdge?.(conn.source, conn.target, 'timeline', allocation.sourceHandle, allocation.targetHandle)
+    const result = onAddEdge?.(conn.source, conn.target, 'timeline', conn.sourceHandle, conn.targetHandle)
     if (result?.cycle) addToast('不能创建环路，操作已取消', 'error')
   }, [edges, onAddEdge, addToast])
 
   const onEdgeUpdate = useCallback((oldEdge: Edge, newConn: import('reactflow').Connection) => {
     if (!newConn.source || !newConn.target) return
-
-    const rf = rfRef.current
-    if (!rf) return
-    const currentNodes = rf.getNodes()
-    const sourceNode = currentNodes.find(n => n.id === newConn.source)
-    const targetNode = currentNodes.find(n => n.id === newConn.target)
-    if (!sourceNode || !targetNode) return
+    if (!newConn.sourceHandle || !newConn.targetHandle) return
 
     const domainEdge = edges.find(e => e.id === oldEdge.id)
     const ignoreEdgeIds = [oldEdge.id]
@@ -275,21 +239,12 @@ export default function PlotCanvas({
       ignoreEdgeIds.push(...getTimelineReplacementEdgeIds(edges, newConn.source, newConn.target, oldEdge.id))
     }
 
-    const allocation = allocateHandles({
-      sourceId: newConn.source,
-      targetId: newConn.target,
-      sourcePosition: getAbsPos(sourceNode, currentNodes),
-      targetPosition: getAbsPos(targetNode, currentNodes),
-      edges,
-      ignoreEdgeIds,
-    })
-
-    if (!allocation) {
-      addToast('节点连接点已满，无法创建连线', 'warning')
+    if (!isHandlePairAvailable(newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle, edges, ignoreEdgeIds)) {
+      addToast('该侧连接点已被占用', 'warning')
       return
     }
 
-    onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target, allocation.sourceHandle, allocation.targetHandle)
+    onReconnectEdge?.(oldEdge.id, newConn.source, newConn.target, newConn.sourceHandle, newConn.targetHandle)
   }, [edges, onReconnectEdge, addToast])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
