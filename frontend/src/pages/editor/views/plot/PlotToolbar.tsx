@@ -1,25 +1,34 @@
-import type { SelectionState } from '../../types'
+import type { SelectionState, EdgeType } from '../../types'
 
 interface PlotToolbarProps {
   selection: SelectionState
   selectedActId: string | null
-  edgeFilter: 'all' | 'timeline' | 'relation'
+  connectionMode: 'all' | EdgeType
+  onConnectionModeChange: (mode: 'all' | EdgeType) => void
   onAddAct: () => void
   onAddChapter: () => void
   onDeleteSelected: () => void
   onRenameAct: () => void
   onEditChapterGoal: () => void
   onDisconnectTimeline: () => void
-  onEdgeFilterChange: (filter: 'all' | 'timeline' | 'relation') => void
   onLayout: () => void
   onExport: () => void
 }
 
+const MODE_OPTIONS: { value: 'all' | EdgeType; label: string }[] = [
+  { value: 'all', label: '全部连线' },
+  { value: 'timeline', label: '时序主线' },
+  { value: 'causal', label: '因果关系' },
+  { value: 'foreshadow', label: '伏笔照应' },
+  { value: 'character', label: '人物关联' },
+  { value: 'theme', label: '主题关联' },
+]
+
 export default function PlotToolbar({
-  selection, selectedActId, edgeFilter,
+  selection, selectedActId, connectionMode,
   onAddAct, onAddChapter, onDeleteSelected,
   onRenameAct, onEditChapterGoal, onDisconnectTimeline,
-  onEdgeFilterChange, onLayout, onExport,
+  onConnectionModeChange, onLayout, onExport,
 }: PlotToolbarProps) {
   const show = selection.type
 
@@ -51,12 +60,12 @@ export default function PlotToolbar({
       </>)}
 
       <div className="w-px h-5 bg-gray-700/50 mx-1" />
-      <select value={edgeFilter} onChange={e => onEdgeFilterChange(e.target.value as any)}
+      <select value={connectionMode} onChange={e => onConnectionModeChange(e.target.value as any)}
         className="bg-transparent text-xs text-gray-400 border border-gray-700 rounded px-1.5 py-1 outline-none cursor-pointer"
       >
-        <option value="all">全部连线</option>
-        <option value="timeline">仅时序</option>
-        <option value="relation">仅关系</option>
+        {MODE_OPTIONS.map(opt => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
       </select>
       <button onClick={onLayout} className="px-2.5 py-1 rounded-lg text-xs text-gray-300 hover:bg-gray-700 transition-colors">◉ 布局</button>
       <div className="w-px h-5 bg-gray-700/50 mx-1" />

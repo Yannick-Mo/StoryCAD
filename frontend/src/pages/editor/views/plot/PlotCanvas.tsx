@@ -22,6 +22,13 @@ const ACT_H = 220
 const ACT_GAP = 32
 const CH_PER_ROW = 6
 
+const EDGE_LABELS: Record<string, string> = {
+  causal: '因果',
+  foreshadow: '伏笔',
+  character: '人物',
+  theme: '主题',
+}
+
 function nodeCenter(pos: { x: number; y: number }, w: number, h: number) {
   return { x: pos.x + w / 2, y: pos.y + h / 2 }
 }
@@ -76,6 +83,7 @@ interface PlotCanvasProps {
   onSelectNode: (type: 'act' | 'chapter', id: string) => void
   onSelectEdge: (edgeId: string) => void
   onClearSelection: () => void
+  connectionMode: 'all' | EdgeType
 }
 
 export default function PlotCanvas({
@@ -84,6 +92,7 @@ export default function PlotCanvas({
   onAddEdge, onDeleteEdge, onChangeEdgeType, onReconnectEdge,
   onAddChapter, onDeleteChapter, onAddAct, onDeleteAct,
   selection, onSelectNode, onSelectEdge, onClearSelection,
+  connectionMode,
 }: PlotCanvasProps) {
   const { addToast } = useToast()
   const sortedActs = useMemo(() => [...acts].sort((a, b) => a.order - b.order), [acts])
@@ -139,7 +148,9 @@ export default function PlotCanvas({
   }, [chapters, sortedActs, orderMap])
 
   const rfEdges: Edge[] = useMemo(() => {
-    return edges.map(e => {
+    const visible = connectionMode === 'all' ? edges : edges.filter(e => e.type === connectionMode)
+
+    return visible.map(e => {
       const srcNode = initialNodes.find(n => n.id === e.sourceId)
       const tgtNode = initialNodes.find(n => n.id === e.targetId)
       if (!srcNode || !tgtNode) return null
@@ -169,11 +180,11 @@ export default function PlotCanvas({
           type: MarkerType.ArrowClosed,
           color: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
         },
-        label: e.type !== 'timeline' ? (e.label || e.type) : undefined,
+        label: e.type !== 'timeline' ? (e.label || EDGE_LABELS[e.type]) : undefined,
         labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
       }
     }).filter(Boolean) as Edge[]
-  }, [edges, initialNodes, selection])
+  }, [edges, initialNodes, selection, connectionMode])
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
@@ -218,16 +229,20 @@ export default function PlotCanvas({
     if (!conn.source || !conn.target || conn.source === conn.target) return
     if (!conn.sourceHandle || !conn.targetHandle) return
 
-    const ignoreEdgeIds = getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
+    const edgeType = connectionMode === 'all' ? 'timeline' : connectionMode
+
+    const ignoreEdgeIds = edgeType === 'timeline'
+      ? getTimelineReplacementEdgeIds(edges, conn.source, conn.target)
+      : []
 
     if (!isHandlePairAvailable(conn.source, conn.target, conn.sourceHandle, conn.targetHandle, edges, ignoreEdgeIds)) {
       addToast('该侧连接点已被占用', 'warning')
       return
     }
 
-    const result = onAddEdge?.(conn.source, conn.target, 'timeline', conn.sourceHandle, conn.targetHandle)
+    const result = onAddEdge?.(conn.source, conn.target, edgeType, conn.sourceHandle, conn.targetHandle)
     if (result?.cycle) addToast('不能创建环路，操作已取消', 'error')
-  }, [edges, onAddEdge, addToast])
+  }, [edges, onAddEdge, addToast, connectionMode])
 
   const onEdgeUpdate = useCallback((oldEdge: Edge, newConn: import('reactflow').Connection) => {
     if (!newConn.source || !newConn.target) return

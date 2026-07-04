@@ -17,7 +17,7 @@ import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { ToastProvider } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
-import type { Chapter, Scene } from '../types'
+import type { Chapter, Scene, EdgeType } from '../types'
 import { getCompletedChain } from '../data/orderUtils'
 
 export default function EditorShell() {
@@ -26,7 +26,7 @@ export default function EditorShell() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [selectedActId, setSelectedActId] = useState<string | null>(null)
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null)
-  const [edgeFilter, setEdgeFilter] = useState<'all' | 'timeline' | 'relation'>('all')
+  const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
   const [editingScene, setEditingScene] = useState<Scene | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act'; id: string } | null>(null)
 
@@ -55,6 +55,7 @@ export default function EditorShell() {
             onSelectNode={store.selectNode}
             onSelectEdge={store.selectEdge}
             onClearSelection={store.clearSelection}
+            connectionMode={connectionMode}
           />
         )
       case 'narrative-char':
@@ -169,7 +170,8 @@ export default function EditorShell() {
           <PlotToolbar
             selection={store.selection}
             selectedActId={selectedActId}
-            edgeFilter={edgeFilter}
+            connectionMode={connectionMode}
+            onConnectionModeChange={setConnectionMode}
             onAddAct={() => store.addAct()}
             onAddChapter={() => selectedActId && store.addChapter(selectedActId)}
             onDeleteSelected={() => {
@@ -200,7 +202,6 @@ export default function EditorShell() {
               }
               store.clearSelection()
             }}
-            onEdgeFilterChange={setEdgeFilter}
             onLayout={() => {}}
             onExport={handleExport}
           />
