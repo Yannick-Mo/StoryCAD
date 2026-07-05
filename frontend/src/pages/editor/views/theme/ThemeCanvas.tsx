@@ -1,62 +1,72 @@
-import { useMemo, useCallback } from 'react'
-import ReactFlow, { Background, type Node, type Edge, type NodeTypes } from 'reactflow'
-import 'reactflow/dist/style.css'
-import ThemeNode from './ThemeNode'
-import type { ThemeItem } from '../../types'
-import { getBestHandle, nodeCenter } from '../shared/getBestHandle'
+import { useCallback } from 'react'
+import type { ThemeItem, Chapter } from '../../types'
 
-const nodeTypes: NodeTypes = { theme: ThemeNode }
-const RADIUS = 140
+interface ThemeCanvasProps {
+  themes: ThemeItem[]
+  chapters: Chapter[]
+  selected: { themeIndex: number; chapterIndex: number } | null
+  onSelect: (themeIndex: number, chapterIndex: number) => void
+}
 
-interface ThemeCanvasProps { themes: ThemeItem[] }
-
-export default function ThemeCanvas({ themes }: ThemeCanvasProps) {
-  const initialNodes: Node[] = useMemo(() =>
-    themes.map((t, i) => {
-      const angle = (2 * Math.PI * i) / themes.length - Math.PI / 2
-      return {
-        id: `t${i}`,
-        type: 'theme',
-        position: { x: 250 + RADIUS * Math.cos(angle), y: 160 + RADIUS * Math.sin(angle) },
-        data: { name: t.name, color: t.color, connections: t.connections },
-      }
-    }), [themes])
-
-  const edges: Edge[] = useMemo(() =>
-    themes.flatMap((t, i) =>
-      t.connections.map(targetName => {
-        const j = themes.findIndex(th => th.name === targetName)
-        if (j === -1) return []
-        const src = initialNodes[i]
-        const tgt = initialNodes[j]
-        if (!src || !tgt) return []
-        const a = nodeCenter(src.position, 120, 40)
-        const b = nodeCenter(tgt.position, 120, 40)
-        const { sourceHandle, targetHandle } = getBestHandle(a, b)
-        return [{
-          id: `te${i}-${j}`,
-          source: `t${i}`,
-          target: `t${j}`,
-          sourceHandle,
-          targetHandle,
-          type: 'bezier',
-          style: { stroke: '#666', strokeWidth: 1 },
-        }]
-      }).flat()
-    ), [themes, initialNodes])
-
-  const onConnect = useCallback(() => {}, [])
+export default function ThemeCanvas({ themes, chapters, selected, onSelect }: ThemeCanvasProps) {
+  const handleCellClick = useCallback((themeIdx: number, chIdx: number) => {
+    onSelect(themeIdx, chIdx)
+  }, [onSelect])
 
   return (
-    <ReactFlow
-      nodes={initialNodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      onConnect={onConnect}
-      defaultEdgeOptions={{ type: 'bezier' }}
-      fitView minZoom={0.3} maxZoom={2}
-    >
-      <Background color="#333" gap={20} />
-    </ReactFlow>
+    <div className="h-full w-full overflow-auto p-4">
+      {/* Legend */}
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        {themes.map((t, i) => (
+          <div key={t.name} className="flex items-center gap-1.5 text-xs">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: t.color }} />
+            <span style={{ color: t.color }}>#{t.name}</span>
+            <span className="text-gray-600">— {t.proposition.slice(0, 20)}...</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Matrix */}
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left py-2 px-3 text-xs text-gray-500 font-medium border-b border-gray-800 sticky left-0 bg-gray-950 z-10">章节</th>
+              {themes.map(t => (
+                <th key={t.name} className="text-center py-2 px-4 text-xs font-medium border-b border-gray-800" style={{ color: t.color }}>
+                  #{t.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {chapters.map((ch, chIdx) => (
+              <tr key={ch.id} className="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors">
+                <td className="py-2.5 px-3 sticky left-0 bg-gray-950/90">
+                  <div className="text-sm text-gray-200 truncate max-w-[140px]">{ch.title}</div>
+                  <div className="text-[10px] text-gray-600">{ch.wordCount > 0 ? `${ch.wordCount} 字` : '未开始'}</div>
+                </td>
+                {themes.map((t, tIdx) => {
+                  const isChecked = t.chapterIndices.includes(chIdx)
+                  const isSel = selected?.themeIndex === tIdx && selected?.chapterIndex === chIdx
+                  return (
+                    <td
+                      key={t.name}
+                      onClick={() => handleCellClick(tIdx, chIdx)}
+                      className={`text-center py-2.5 px-4 cursor-pointer transition-colors ${isSel ? 'bg-blue-600/10' : ''}`}
+                    >
+                      <div
+                        className={`w-5 h-5 rounded mx-auto transition-all ${isChecked ? 'scale-100 opacity-100' : 'scale-75 opacity-20'}`}
+                        style={{ backgroundColor: isChecked ? t.color : '#374151' }}
+                      />
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }

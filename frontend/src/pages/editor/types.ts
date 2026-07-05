@@ -132,6 +132,8 @@ export interface RhythmPoint {
 export interface ThemeItem {
   name: string
   color: string
+  proposition: string
+  chapterIndices: number[]
   connections: string[]
 }
 
@@ -203,4 +205,5 @@ export interface EffectNodeData {
 export interface ThemeNodeData {
   name: string
   color: string
+  connections: string[]
 }

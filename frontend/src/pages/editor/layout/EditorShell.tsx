@@ -13,6 +13,7 @@ import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import RhythmCanvas from '../views/rhythm/RhythmCanvas'
 import RhythmDetail from '../views/rhythm/RhythmDetail'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
+import ThemeDetail from '../views/theme/ThemeDetail'
 import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
@@ -35,6 +36,7 @@ export default function EditorShell() {
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
   const [selectedRhythmIndex, setSelectedRhythmIndex] = useState<number | null>(null)
+  const [selectedTheme, setSelectedTheme] = useState<{ themeIndex: number; chapterIndex: number } | null>(null)
 
   const store = useEditorStore()
   const data = store.data
@@ -90,7 +92,7 @@ export default function EditorShell() {
       case 'narrative-rhythm':
         return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} />
       case 'narrative-theme':
-        return <ThemeCanvas themes={data.themes} />
+        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} />
       default:
         return renderInfoView()
     }
@@ -305,6 +307,23 @@ export default function EditorShell() {
                 act={act}
                 wordCount={ch?.wordCount ?? 0}
                 onClose={() => setSelectedRhythmIndex(null)}
+              />
+            )
+          })()
+        )}
+
+        {/* Theme detail panel */}
+        {views.activeViewId === 'narrative-theme' && selectedTheme && (
+          (() => {
+            const theme = data.themes[selectedTheme.themeIndex]
+            if (!theme) return null
+            const ch = data.chapters[selectedTheme.chapterIndex]
+            return (
+              <ThemeDetail
+                theme={theme}
+                chapter={ch}
+                onClose={() => setSelectedTheme(null)}
+                onSaveNote={() => {}}
               />
             )
           })()
