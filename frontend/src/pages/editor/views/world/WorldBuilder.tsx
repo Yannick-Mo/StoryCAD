@@ -124,8 +124,6 @@ export default function WorldBuilder({
           <RelationshipGraph
             factions={factions}
             relations={factionRelations}
-            onAddRelation={onAddFactionRelation}
-            onDeleteRelation={onDeleteFactionRelation}
           />
         )}
       </div>
