@@ -1,7 +1,8 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import ReactFlow, { Background, Controls, Handle, Position, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type { Faction, FactionRelation } from '../../types'
+import ContextMenu from '../plot/ContextMenu'
 
 const RELATION_COLORS: Record<string, string> = {
   alliance: '#22c55e',
@@ -39,6 +40,8 @@ interface RelationshipGraphProps {
 }
 
 export default function RelationshipGraph({ factions, relations, onDeleteRelation }: RelationshipGraphProps) {
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; onClick: () => void }[][] } | null>(null)
+
   const nodes: Node[] = useMemo(() =>
     factions.map((f, i) => ({
       id: f.id,
@@ -52,26 +55,49 @@ export default function RelationshipGraph({ factions, relations, onDeleteRelatio
       id: r.id,
       source: r.sourceId,
       target: r.targetId,
-      type: 'smoothstep',
+      type: 'default',
       label: RELATION_LABELS[r.type],
       style: { stroke: RELATION_COLORS[r.type], strokeWidth: 2 },
       markerEnd: { type: MarkerType.ArrowClosed, color: RELATION_COLORS[r.type] },
       labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
     })), [relations])
 
-  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-    const shouldDelete = confirm(`删除关系 "${edge.label}"？`)
-    if (shouldDelete) onDeleteRelation(edge.id)
-  }, [onDeleteRelation])
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault()
+    const rel = relations.find(r => r.id === edge.id)
+    if (!rel) return
+    setCtxMenu({
+      x: event.clientX, y: event.clientY,
+      items: [
+        [{ label: '删除关系', icon: '✕', onClick: () => onDeleteRelation(edge.id) }],
+      ],
+    })
+  }, [relations, onDeleteRelation])
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    setCtxMenu({
+      x: event.clientX, y: event.clientY,
+      items: [
+        [{ label: '新建关系', icon: '+', onClick: () => {} }],
+      ],
+    })
+  }, [])
+
+  const onPaneClick = useCallback(() => {
+    setCtxMenu(null)
+  }, [])
 
   return (
     <div className="flex-1">
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onEdgeClick={onEdgeClick}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'smoothstep' }}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onPaneContextMenu={onPaneContextMenu}
+        onPaneClick={onPaneClick}
+        defaultEdgeOptions={{ type: 'default' }}
         fitView minZoom={0.3} maxZoom={2}
         nodesDraggable={false}
         nodesConnectable={false}
@@ -79,6 +105,7 @@ export default function RelationshipGraph({ factions, relations, onDeleteRelatio
         <Background color="#333" gap={20} />
         <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />
       </ReactFlow>
+      {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
       {/* Legend */}
       <div className="absolute bottom-4 left-4 bg-gray-900/90 border border-gray-700/50 rounded-xl px-3 py-2 flex gap-3 text-[10px]">
         {Object.entries(RELATION_LABELS).map(([key, label]) => (
@@ -87,8 +114,6 @@ export default function RelationshipGraph({ factions, relations, onDeleteRelatio
             <span className="text-gray-400">{label}</span>
           </div>
         ))}
-        <div className="text-gray-600 mx-1">|</div>
-        <span className="text-gray-600">点击连线删除</span>
       </div>
     </div>
   )
