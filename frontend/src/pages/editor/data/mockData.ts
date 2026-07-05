@@ -98,9 +98,39 @@ export const MOCK_DATA: EditorMockData = {
     },
   ],
   characters: [
-    { id: 'c1', name: '林渊', role: 'protagonist', relations: [{ targetId: 'c2', type: '信任裂痕' }, { targetId: 'c3', type: '敌对' }] },
-    { id: 'c2', name: '苏绛', role: 'ally', relations: [{ targetId: 'c1', type: '信任裂痕' }, { targetId: 'c3', type: '暗中保护' }] },
-    { id: 'c3', name: '沈寒舟', role: 'antagonist', relations: [{ targetId: 'c1', type: '敌对' }, { targetId: 'c2', type: '暗中保护' }] },
+    {
+      id: 'c1', name: '林渊', role: 'protagonist',
+      personality: '沉稳冷静，善于观察，内心重情但外表疏离。对真相有近乎偏执的追求，不轻易相信他人。',
+      appearance: '二十五岁上下，身形修长，面容清瘦，眼窝略深透着一股倦意。惯穿深青色长衫，腰间别一把无鞘短刃。',
+      background: '孤儿出身，被师父沈寒舟收养并训练成为探事人。三年前苏家灭门案是他心中未解的结。',
+      motivation: '查明苏家灭门真相，为师父（沈寒舟）洗清嫌疑，同时保护唯一的线索人苏绛。',
+      relations: [
+        { id: 'cr1', targetId: 'c2', type: '信任裂痕', description: '林渊与苏绛因灭门案的共同调查而结盟，但双方各自隐瞒着关键信息，信任如履薄冰。林渊既需要她的线索，又怀疑她的动机。' },
+        { id: 'cr2', targetId: 'c3', type: '敌对', description: '林渊视沈寒舟为灭门案幕后黑手，师徒之情已被恨意取代。但动手的那一刻，他发现自己下不了死手——有些羁绊比真相更难割舍。' },
+      ],
+    },
+    {
+      id: 'c2', name: '苏绛', role: 'ally',
+      personality: '外柔内刚，心思缜密，有着不为人知的坚韧。表面温和从容，实则背负着家族血仇独自走了很远。',
+      appearance: '二十出头，一袭青衣，乌发如瀑仅用一根玉簪挽起。眼角有一颗泪痣，笑意浅淡却总像藏着心事。',
+      background: '苏家灭门案唯一幸存者。父亲临死前将真相的钥匙——一枚碎玉牌——塞进她手中，从此她隐姓埋名，暗中追查。',
+      motivation: '为家族洗冤，找到灭门案真正的幕后主使，同时保护林渊不被他自己的复仇心吞噬。',
+      relations: [
+        { id: 'cr3', targetId: 'c1', type: '信任裂痕', description: '苏绛选择将玉牌交给林渊，是赌他对真相的执着。但她不敢把所有实情告诉他——包括沈寒舟在那晚的真正角色。' },
+        { id: 'cr4', targetId: 'c3', type: '暗中保护', description: '苏绛知道沈寒舟也在追查同一件事，暗中与他有过数次接触。两人之间的关系比林渊想象中更复杂——是同谋，亦是对手。' },
+      ],
+    },
+    {
+      id: 'c3', name: '沈寒舟', role: 'antagonist',
+      personality: '深沉如海，喜怒不形于色。行事果决，手段狠辣，但从不做无意义的杀戮。他信奉「结果正义」，为大局愿意背负所有骂名。',
+      appearance: '四十来岁，鬓角微霜，一袭墨色锦袍。手指修长如文人，但掌心布满剑茧。眼神锐利如鹰，嘴角永远挂着一丝若有若无的笑意。',
+      background: '曾是江湖最负盛名的探事人，林渊的师父。三年前苏家灭门那晚他确实在场——但不是去杀人，而是去救人，只是没来得及。',
+      motivation: '保护林渊不让他卷进更大的是非，同时独自追查灭门案背后指向朝堂的更大阴谋。他宁可作为「坏人」被林渊恨着，也不愿徒弟送命。',
+      relations: [
+        { id: 'cr5', targetId: 'c1', type: '敌对', description: '沈寒舟故意引林渊追查自己，想通过这种方式让徒弟在安全距离内逐步接近真相。他甘愿扮演复仇目标，因为真正的敌人远比林渊想象的更危险。' },
+        { id: 'cr6', targetId: 'c2', type: '暗中保护', description: '沈寒舟与苏绛暗中协作已有一年。他提供资源和情报，苏绛负责接近林渊。两人都是为同一个目的——保护林渊，同时揭露灭门案的幕后势力。' },
+      ],
+    },
   ],
   causalities: [
     { id: 'ca1', cause: '密信被截', effect: '盟友猜忌' },

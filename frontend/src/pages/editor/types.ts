@@ -95,11 +95,22 @@ export interface Chapter {
   scenes: Scene[]
 }
 
+export interface CharacterRelation {
+  id: string
+  targetId: string
+  type: string
+  description: string
+}
+
 export interface Character {
   id: string
   name: string
   role: string
-  relations: { targetId: string; type: string }[]
+  personality: string
+  appearance: string
+  background: string
+  motivation: string
+  relations: CharacterRelation[]
 }
 
 export interface Causality {
@@ -174,7 +185,7 @@ export interface ChapterNodeData {
 export interface CharacterNodeData {
   name: string
   role: string
-  relations: { targetId: string; type: string }[]
+  relations: CharacterRelation[]
 }
 
 export interface CauseNodeData {
