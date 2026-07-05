@@ -317,7 +317,7 @@ export default function EditorShell() {
           (() => {
             const theme = data.themes[selectedTheme.themeIndex]
             if (!theme) return null
-            const ch = data.chapters[selectedTheme.chapterIndex]
+            const ch = selectedTheme.chapterIndex >= 0 ? data.chapters[selectedTheme.chapterIndex] : undefined
             return (
               <ThemeDetail
                 theme={theme}
