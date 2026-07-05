@@ -1,64 +1,175 @@
-import { useMemo, useCallback } from 'react'
-import ReactFlow, { Background, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
+import { useMemo, useCallback, useEffect, useState, useRef } from 'react'
+import ReactFlow, {
+  Background, Controls,
+  type Node, type Edge, type NodeTypes, type ReactFlowInstance,
+  useNodesState, useEdgesState, MarkerType,
+} from 'reactflow'
 import 'reactflow/dist/style.css'
 import CharacterNode from './CharacterNode'
-import type { Character } from '../../types'
-import { getBestHandle, nodeCenter } from '../shared/getBestHandle'
+import ContextMenu from '../plot/ContextMenu'
+import type { Character, CharacterRelation } from '../../types'
+import { getBestHandle } from '../shared/getBestHandle'
 
 const nodeTypes: NodeTypes = { character: CharacterNode }
 
-const POSITIONS: Record<number, { x: number; y: number }> = {
-  0: { x: 150, y: 200 },
-  1: { x: 450, y: 200 },
-  2: { x: 300, y: 80 },
+interface CharCanvasProps {
+  characters: Character[]
+  selection: { type: 'character' | 'relation' | null; id: string | null }
+  onSelectCharacter: (id: string) => void
+  onSelectRelation: (sourceId: string, relationId: string) => void
+  onClearSelection: () => void
+  onAddCharacter: () => void
+  onDeleteCharacter: (id: string) => void
+  onAddRelation: (sourceId: string, targetId: string, sourceHandle: string, targetHandle: string) => void
+  onDeleteRelation: (characterId: string, relationId: string) => void
 }
 
-interface CharCanvasProps { characters: Character[] }
+const NODE_W = 176
+const NODE_H = 72
 
-export default function CharCanvas({ characters }: CharCanvasProps) {
-  const nodes: Node[] = useMemo(() =>
+function nodeCenter(pos: { x: number; y: number }) {
+  return { x: pos.x + NODE_W / 2, y: pos.y + NODE_H / 2 }
+}
+
+export default function CharCanvas({
+  characters, selection,
+  onSelectCharacter, onSelectRelation, onClearSelection,
+  onAddCharacter, onDeleteCharacter,
+  onAddRelation, onDeleteRelation,
+}: CharCanvasProps) {
+  const rfRef = useRef<ReactFlowInstance | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
+
+  const initialNodes: Node[] = useMemo(() =>
     characters.map((ch, i) => ({
       id: ch.id,
       type: 'character',
-      position: POSITIONS[i] ?? { x: i * 200, y: 150 },
+      position: { x: 60 + (i % 3) * 300, y: 100 + Math.floor(i / 3) * 220 },
       data: { name: ch.name, role: ch.role, relations: ch.relations },
     })), [characters])
 
-  const edges: Edge[] = useMemo(() =>
-    characters.flatMap(ch =>
-      ch.relations.map((rel, i) => {
-        const src = nodes.find(n => n.id === ch.id)
-        const tgt = nodes.find(n => n.id === rel.targetId)
-        if (!src || !tgt) return []
-        const a = nodeCenter(src.position, 120, 40)
-        const b = nodeCenter(tgt.position, 120, 40)
+  const initialEdges: Edge[] = useMemo(() => {
+    const nodes = initialNodes
+    const result: Edge[] = []
+    const nodeMap = new Map(nodes.map(n => [n.id, n]))
+
+    for (const ch of characters) {
+      for (const rel of ch.relations) {
+        const src = nodeMap.get(ch.id)
+        const tgt = nodeMap.get(rel.targetId)
+        if (!src || !tgt) continue
+        const a = nodeCenter(src.position)
+        const b = nodeCenter(tgt.position)
         const { sourceHandle, targetHandle } = getBestHandle(a, b)
-        return [{
-          id: `e-${ch.id}-${rel.targetId}-${i}`,
+        const isSelected = selection.type === 'relation' && selection.id === `${ch.id}|${rel.id}`
+        result.push({
+          id: `e-${ch.id}-${rel.id}`,
           source: ch.id,
           target: rel.targetId,
           sourceHandle,
           targetHandle,
           type: 'bezier',
           label: rel.type,
-          style: { stroke: '#8a8a8a' },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#8a8a8a' },
-        }]
-      }).flat()
-    ), [characters, nodes])
+          selected: isSelected,
+          style: { stroke: isSelected ? '#60a5fa' : '#8a8a8a', strokeWidth: isSelected ? 2 : 1.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? '#60a5fa' : '#8a8a8a' },
+        })
+      }
+    }
+    return result
+  }, [characters, initialNodes, selection])
 
-  const onConnect = useCallback(() => {}, [])
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+
+  useEffect(() => {
+    setNodes(prev => {
+      const prevMap = new Map(prev.map(n => [n.id, n]))
+      return initialNodes.map(n => ({ ...n, position: prevMap.get(n.id)?.position ?? n.position }))
+    })
+  }, [initialNodes, setNodes])
+
+  useEffect(() => { setEdges(initialEdges) }, [initialEdges, setEdges])
+
+  const onConnect = useCallback((conn: import('reactflow').Connection) => {
+    if (!conn.source || !conn.target || conn.source === conn.target) return
+    if (!conn.sourceHandle || !conn.targetHandle) return
+    onAddRelation(conn.source, conn.target, conn.sourceHandle, conn.targetHandle)
+  }, [onAddRelation])
+
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    onSelectCharacter(node.id)
+  }, [onSelectCharacter])
+
+  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    onSelectRelation(edge.source, edge.id.replace(`e-${edge.source}-`, ''))
+  }, [onSelectRelation])
+
+  const onPaneClick = useCallback(() => {
+    onClearSelection()
+  }, [onClearSelection])
+
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
+    event.preventDefault()
+    onSelectCharacter(node.id)
+    setCtxMenu({
+      x: event.clientX, y: event.clientY,
+      items: [
+        [{ label: '新建角色', icon: '+', onClick: onAddCharacter }],
+        [{ label: '删除角色', icon: '✕', onClick: () => onDeleteCharacter(node.id) }],
+      ],
+    })
+  }, [onSelectCharacter, onAddCharacter, onDeleteCharacter])
+
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault()
+    const relationId = edge.id.replace(`e-${edge.source}-`, '')
+    onSelectRelation(edge.source, relationId)
+    setCtxMenu({
+      x: event.clientX, y: event.clientY,
+      items: [
+        [{ label: '删除连线', icon: '✕', onClick: () => onDeleteRelation(edge.source, relationId) }],
+      ],
+    })
+  }, [onSelectRelation, onDeleteRelation])
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    setCtxMenu({
+      x: event.clientX, y: event.clientY,
+      items: [
+        [{ label: '新建角色', icon: '+', onClick: onAddCharacter }],
+      ],
+    })
+  }, [onAddCharacter])
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      onConnect={onConnect}
-      defaultEdgeOptions={{ type: 'bezier' }}
-      fitView minZoom={0.3} maxZoom={2}
-    >
-      <Background color="#333" gap={20} />
-    </ReactFlow>
+    <div className="h-full w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
+        onPaneClick={onPaneClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onPaneContextMenu={onPaneContextMenu}
+        nodeTypes={nodeTypes}
+        defaultEdgeOptions={{ type: 'bezier' }}
+        onInit={(instance) => { rfRef.current = instance }}
+        deleteKeyCode="Delete"
+        fitView
+        minZoom={0.3}
+        maxZoom={2}
+        connectionRadius={48}
+      >
+        <Background color="#333" gap={20} />
+        <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />
+      </ReactFlow>
+      {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
+    </div>
   )
 }

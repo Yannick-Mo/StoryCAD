@@ -8,6 +8,8 @@ import ChapterDetail from '../views/plot/ChapterDetail'
 import ActDetail from '../views/plot/ActDetail'
 import EdgeDetail from '../views/plot/EdgeDetail'
 import CharCanvas from '../views/character/CharCanvas'
+import CharacterDetail from '../views/character/CharacterDetail'
+import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import RhythmCanvas from '../views/rhythm/RhythmCanvas'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
@@ -29,6 +31,8 @@ export default function EditorShell() {
   const [connectionMode, setConnectionMode] = useState<'all' | EdgeType>('all')
   const [editingScene, setEditingScene] = useState<Scene | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter'; id: string } | null>(null)
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
+  const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
 
   const store = useEditorStore()
   const data = store.data
@@ -68,7 +72,19 @@ export default function EditorShell() {
           />
         )
       case 'narrative-char':
-        return <CharCanvas characters={data.characters} />
+        return (
+          <CharCanvas
+            characters={data.characters}
+            selection={{ type: selectedCharacterId ? 'character' : selectedRelation ? 'relation' : null, id: selectedCharacterId ?? (selectedRelation ? `${selectedRelation.sourceId}|${selectedRelation.relationId}` : null) }}
+            onSelectCharacter={(id) => { setSelectedCharacterId(id); setSelectedRelation(null) }}
+            onSelectRelation={(sourceId, relationId) => { setSelectedRelation({ sourceId, relationId }); setSelectedCharacterId(null) }}
+            onClearSelection={() => { setSelectedCharacterId(null); setSelectedRelation(null) }}
+            onAddCharacter={() => { const ch = store.addCharacter(); setSelectedCharacterId(ch.id) }}
+            onDeleteCharacter={(id) => { store.deleteCharacter(id); setSelectedCharacterId(null) }}
+            onAddRelation={(sourceId, targetId) => { store.addRelation(sourceId, targetId) }}
+            onDeleteRelation={(characterId, relationId) => { store.deleteRelation(characterId, relationId); setSelectedRelation(null) }}
+          />
+        )
       case 'narrative-rhythm':
         return <RhythmCanvas rhythms={data.rhythms} />
       case 'narrative-theme':
@@ -244,6 +260,32 @@ export default function EditorShell() {
                 store.clearSelection()
               }}
             />
+          ) : null
+        )}
+
+        {/* Character detail panels */}
+        {views.activeViewId === 'narrative-char' && (
+          selectedCharacterId ? (
+            <CharacterDetail
+              character={data.characters.find(c => c.id === selectedCharacterId)!}
+              onClose={() => setSelectedCharacterId(null)}
+            />
+          ) : selectedRelation ? (
+            (() => {
+              const srcChar = data.characters.find(c => c.id === selectedRelation.sourceId)
+              const rel = srcChar?.relations.find(r => r.id === selectedRelation.relationId)
+              const tgtChar = rel ? data.characters.find(c => c.id === rel.targetId) : undefined
+              if (!srcChar || !rel || !tgtChar) return null
+              return (
+                <CharacterEdgeDetail
+                  source={srcChar}
+                  target={tgtChar}
+                  relation={rel}
+                  onClose={() => setSelectedRelation(null)}
+                  onDelete={() => { store.deleteRelation(selectedRelation.sourceId, selectedRelation.relationId); setSelectedRelation(null) }}
+                />
+              )
+            })()
           ) : null
         )}
 

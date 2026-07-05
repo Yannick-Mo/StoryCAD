@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import type { Act, Chapter, ChapterEdge, EdgeType, EdgeResult, SelectionState } from '../types'
+import type { Act, Chapter, ChapterEdge, CharacterRelation, EdgeType, EdgeResult, SelectionState } from '../types'
 import { MOCK_DATA } from './mockData'
 import { topologicalSort, wouldCreateCycle, hasIncomingTimeline, hasOutgoingTimeline, getOutgoingTimeline } from './orderUtils'
 
@@ -156,11 +156,53 @@ export function useEditorStore(initialData = MOCK_DATA) {
     }))
   }, [])
 
+  const addCharacter = useCallback((name?: string) => {
+    const newChar = {
+      id: uid(), name: name ?? `新角色 ${data.characters.length + 1}`, role: 'ally',
+      personality: '', appearance: '', background: '', motivation: '', relations: [],
+    }
+    setData(d => ({ ...d, characters: [...d.characters, newChar] }))
+    return newChar
+  }, [data.characters.length])
+
+  const deleteCharacter = useCallback((charId: string) => {
+    setData(d => ({
+      ...d,
+      characters: d.characters.filter(c => c.id !== charId).map(c => ({
+        ...c,
+        relations: c.relations.filter(r => r.targetId !== charId),
+      })),
+    }))
+    setSelection({ type: null, id: null })
+  }, [])
+
+  const addRelation = useCallback((sourceId: string, targetId: string) => {
+    const newRel: CharacterRelation = { id: uid(), targetId, type: '关联', description: '' }
+    setData(d => ({
+      ...d,
+      characters: d.characters.map(c =>
+        c.id === sourceId ? { ...c, relations: [...c.relations, newRel] } : c
+      ),
+    }))
+    return newRel
+  }, [])
+
+  const deleteRelation = useCallback((characterId: string, relationId: string) => {
+    setData(d => ({
+      ...d,
+      characters: d.characters.map(c =>
+        c.id === characterId ? { ...c, relations: c.relations.filter(r => r.id !== relationId) } : c
+      ),
+    }))
+    setSelection({ type: null, id: null })
+  }, [])
+
   return {
     data, setData,
     selection, selectNode, selectEdge, clearSelection,
     addAct, addChapter, deleteAct, deleteChapter,
     addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
+    addCharacter, deleteCharacter, addRelation, deleteRelation,
   }
 }
