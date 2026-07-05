@@ -98,14 +98,17 @@ export default function CharCanvas({
   }, [onAddRelation])
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    setCtxMenu(null)
     onSelectCharacter(node.id)
   }, [onSelectCharacter])
 
   const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    setCtxMenu(null)
     onSelectRelation(edge.source, edge.id.replace(`e-${edge.source}-`, ''))
   }, [onSelectRelation])
 
   const onPaneClick = useCallback(() => {
+    setCtxMenu(null)
     onClearSelection()
   }, [onClearSelection])
 
