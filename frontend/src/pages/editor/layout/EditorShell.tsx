@@ -62,7 +62,7 @@ export default function EditorShell() {
       case 'narrative-char':
         return <CharCanvas characters={data.characters} />
       case 'narrative-causality':
-        return <CausalityCanvas causalities={data.causalities} />
+        return <CausalityCanvas chapters={data.chapters} acts={data.acts} edges={data.edges} causalities={data.causalities} onChapterClick={handleChapterClick} />
       case 'narrative-rhythm':
         return <RhythmCanvas rhythms={data.rhythms} />
       case 'narrative-theme':
