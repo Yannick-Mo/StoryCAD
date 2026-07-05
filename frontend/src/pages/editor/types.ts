@@ -16,7 +16,6 @@ export const VIEWS: ViewDef[] = [
   // Narrative
   { id: 'narrative-plot', label: '🎬 情节幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-char', label: '👥 人物幕布', pillar: 'narrative', type: 'canvas' },
-  { id: 'narrative-causality', label: '🔗 因果幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-rhythm', label: '📈 节奏幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-theme', label: '🎭 主题幕布', pillar: 'narrative', type: 'canvas' },
   // Experience

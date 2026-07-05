@@ -8,7 +8,6 @@ import ChapterDetail from '../views/plot/ChapterDetail'
 import ActDetail from '../views/plot/ActDetail'
 import EdgeDetail from '../views/plot/EdgeDetail'
 import CharCanvas from '../views/character/CharCanvas'
-import CausalityCanvas from '../views/causality/CausalityCanvas'
 import RhythmCanvas from '../views/rhythm/RhythmCanvas'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
@@ -70,8 +69,6 @@ export default function EditorShell() {
         )
       case 'narrative-char':
         return <CharCanvas characters={data.characters} />
-      case 'narrative-causality':
-        return <CausalityCanvas chapters={data.chapters} acts={data.acts} edges={data.edges} causalities={data.causalities} onChapterClick={handleChapterClick} />
       case 'narrative-rhythm':
         return <RhythmCanvas rhythms={data.rhythms} />
       case 'narrative-theme':
