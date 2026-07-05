@@ -6,6 +6,7 @@ import PlotCanvas from '../views/plot/PlotCanvas'
 import PlotToolbar from '../views/plot/PlotToolbar'
 import ChapterDetail from '../views/plot/ChapterDetail'
 import ActDetail from '../views/plot/ActDetail'
+import EdgeDetail from '../views/plot/EdgeDetail'
 import CharCanvas from '../views/character/CharCanvas'
 import CausalityCanvas from '../views/causality/CausalityCanvas'
 import RhythmCanvas from '../views/rhythm/RhythmCanvas'
@@ -33,6 +34,10 @@ export default function EditorShell() {
   const store = useEditorStore()
   const data = store.data
 
+  const selectedEdge = store.selection.type === 'edge'
+    ? data.edges.find(edge => edge.id === store.selection.id) ?? null
+    : null
+
   const renderCanvas = () => {
     switch (views.activeViewId) {
       case 'narrative-plot':
@@ -54,7 +59,11 @@ export default function EditorShell() {
             onActResize={store.resizeAct}
             selection={store.selection}
             onSelectNode={store.selectNode}
-            onSelectEdge={store.selectEdge}
+            onSelectEdge={(edgeId: string) => {
+              setSelectedActId(null)
+              setSelectedChapter(null)
+              store.selectEdge(edgeId)
+            }}
             onClearSelection={store.clearSelection}
             connectionMode={connectionMode}
           />
@@ -201,7 +210,7 @@ export default function EditorShell() {
           />
         )}
 
-        {/* Chapter/Act detail panel */}
+        {/* Chapter/Act/Edge detail panel */}
         {views.activeViewId === 'narrative-plot' && (
           selectedActId ? (
             <ActDetail
@@ -222,6 +231,21 @@ export default function EditorShell() {
               onSceneSave={handleSceneSave}
               onChapterSave={handleChapterGoalSave}
               onOpenSceneEditor={(scene) => setEditingScene(scene)}
+            />
+          ) : selectedEdge && selectedEdge.type !== 'timeline' ? (
+            <EdgeDetail
+              edge={selectedEdge}
+              chapters={data.chapters}
+              acts={data.acts}
+              onClose={store.clearSelection}
+              onChangeType={(edgeId, newType) => {
+                const changed = store.changeEdgeType(edgeId, newType)
+                if (changed && newType === 'timeline') store.clearSelection()
+              }}
+              onDelete={(edgeId) => {
+                store.deleteEdge(edgeId)
+                store.clearSelection()
+              }}
             />
           ) : null
         )}
