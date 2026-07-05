@@ -1,5 +1,5 @@
 import { useMemo, useCallback } from 'react'
-import ReactFlow, { Background, Controls, type Node, type Edge, type NodeTypes, useNodesState, useEdgesState, MarkerType } from 'reactflow'
+import ReactFlow, { Background, Controls, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type { Faction, FactionRelation } from '../../types'
 
@@ -37,53 +37,42 @@ interface RelationshipGraphProps {
 }
 
 export default function RelationshipGraph({ factions, relations, onDeleteRelation }: RelationshipGraphProps) {
-  const initialNodes: Node[] = useMemo(() =>
+  const nodes: Node[] = useMemo(() =>
     factions.map((f, i) => ({
       id: f.id,
       type: 'factionNode',
-      position: {
-        x: 200 + (i % 3) * 280,
-        y: 100 + Math.floor(i / 3) * 180,
-      },
+      position: { x: 200 + (i % 3) * 280, y: 100 + Math.floor(i / 3) * 180 },
       data: { label: f.name },
     })), [factions])
 
-  const initialEdges: Edge[] = useMemo(() =>
+  const edges: Edge[] = useMemo(() =>
     relations.map(r => ({
       id: r.id,
       source: r.sourceId,
       target: r.targetId,
-      type: 'bezier',
+      type: 'smoothstep',
       label: RELATION_LABELS[r.type],
       style: { stroke: RELATION_COLORS[r.type], strokeWidth: 2 },
       markerEnd: { type: MarkerType.ArrowClosed, color: RELATION_COLORS[r.type] },
       labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
     })), [relations])
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
-
   const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     const shouldDelete = confirm(`删除关系 "${edge.label}"？`)
     if (shouldDelete) onDeleteRelation(edge.id)
   }, [onDeleteRelation])
-
-  // Sync
-  useMemo(() => { setNodes(initialNodes) }, [initialNodes, setNodes])
-  useMemo(() => { setEdges(initialEdges) }, [initialEdges, setEdges])
 
   return (
     <div className="flex-1">
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         onEdgeClick={onEdgeClick}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'bezier' }}
+        defaultEdgeOptions={{ type: 'smoothstep' }}
         fitView minZoom={0.3} maxZoom={2}
-        nodesDraggable
+        nodesDraggable={false}
+        nodesConnectable={false}
       >
         <Background color="#333" gap={20} />
         <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />
