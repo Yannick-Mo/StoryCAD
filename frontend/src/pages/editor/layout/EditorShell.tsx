@@ -15,7 +15,6 @@ import RhythmDetail from '../views/rhythm/RhythmDetail'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import ThemeDetail from '../views/theme/ThemeDetail'
 import WorldBuilder from '../views/world/WorldBuilder'
-import { RulesView, HistoryView } from '../views/info/InfoViews'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import { useEditorViews } from '../hooks/useEditorViews'
@@ -114,8 +113,6 @@ export default function EditorShell() {
           onDeleteFactionRelation={store.deleteFactionRelation}
         />
       )
-      case 'world-rules': return <RulesView data={data.rules} />
-      case 'world-history': return <HistoryView data={data.history} />
       default: return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
     }
   }

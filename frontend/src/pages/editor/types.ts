@@ -11,8 +11,6 @@ export interface ViewDef {
 export const VIEWS: ViewDef[] = [
   // World
   { id: 'world-map', label: '🗺️ 地图与势力', pillar: 'world', type: 'info' },
-  { id: 'world-rules', label: '⚛️ 规则体系', pillar: 'world', type: 'info' },
-  { id: 'world-history', label: '📜 历史年表', pillar: 'world', type: 'info' },
   // Narrative
   { id: 'narrative-plot', label: '🎬 情节幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-char', label: '👥 人物幕布', pillar: 'narrative', type: 'canvas' },
@@ -181,8 +179,6 @@ export interface EditorMockData {
   rhythms: RhythmPoint[]
   themes: ThemeItem[]
   world: WorldInfo
-  rules: string[]
-  history: string[]
 }
 
 // React Flow node data types

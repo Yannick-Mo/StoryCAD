@@ -178,6 +178,4 @@ export const MOCK_DATA: EditorMockData = {
       { id: 'fr6', sourceId: 'fac4', targetId: 'fac3', type: 'trade', description: '散修联盟与妖族有私下贸易，交换灵药与海产。' },
     ],
   },
-  rules: ['灵基 → 凝脉 → 神游', '万物皆可修炼', '煞气入体则堕魔'],
-  history: ['三千年前·神魔之约', '千年前·苏家灭门', '三月前·玉牌重现'],
 }
