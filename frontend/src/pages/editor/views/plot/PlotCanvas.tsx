@@ -295,14 +295,17 @@ export default function PlotCanvas({
     }
   }, [onSelectNode, onChapterClick, onActClick])
 
+  const edgesRef = useRef(edges)
+  edgesRef.current = edges
+
   const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-    const domainEdge = edges.find(item => item.id === edge.id)
+    const domainEdge = edgesRef.current.find(item => item.id === edge.id)
     if (!domainEdge || domainEdge.type === 'timeline') {
       onClearSelection()
       return
     }
     onSelectEdge(edge.id)
-  }, [edges, onClearSelection, onSelectEdge])
+  }, [onClearSelection, onSelectEdge])
 
   const isInteractiveFlowTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) return false
