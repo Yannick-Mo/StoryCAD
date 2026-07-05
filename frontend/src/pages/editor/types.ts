@@ -1,5 +1,5 @@
 // View system
-export type Pillar = 'world' | 'narrative' | 'experience' | 'creation'
+export type Pillar = 'world' | 'narrative'
 
 export interface ViewDef {
   id: string
@@ -18,20 +18,11 @@ export const VIEWS: ViewDef[] = [
   { id: 'narrative-char', label: '👥 人物幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-rhythm', label: '📈 节奏幕布', pillar: 'narrative', type: 'canvas' },
   { id: 'narrative-theme', label: '🎭 主题幕布', pillar: 'narrative', type: 'canvas' },
-  // Experience
-  { id: 'experience-info', label: '👁️ 信息释放', pillar: 'experience', type: 'info' },
-  { id: 'experience-pov', label: '🎯 POV策略', pillar: 'experience', type: 'info' },
-  // Creation
-  { id: 'creation-inspo', label: '💡 灵感碎片', pillar: 'creation', type: 'info' },
-  { id: 'creation-kanban', label: '📋 进度看板', pillar: 'creation', type: 'info' },
-  { id: 'creation-log', label: '📓 版本日志', pillar: 'creation', type: 'info' },
 ]
 
 export const PILLAR_VIEWS: Record<Pillar, ViewDef[]> = {
   world: VIEWS.filter(v => v.pillar === 'world'),
   narrative: VIEWS.filter(v => v.pillar === 'narrative'),
-  experience: VIEWS.filter(v => v.pillar === 'experience'),
-  creation: VIEWS.filter(v => v.pillar === 'creation'),
 }
 
 // Edge types
@@ -142,21 +133,6 @@ export interface WorldInfo {
   regions: string[]
 }
 
-export interface InfoControl {
-  topic: string
-  revealed: boolean
-}
-
-export interface PovInfo {
-  character: string
-  percentage: number
-}
-
-export interface KanbanItem {
-  stage: string
-  count: number
-}
-
 export interface EditorMockData {
   projectTitle: string
   acts: Act[]
@@ -169,11 +145,6 @@ export interface EditorMockData {
   world: WorldInfo
   rules: string[]
   history: string[]
-  infoControls: InfoControl[]
-  pov: PovInfo[]
-  inspirations: string[]
-  kanban: KanbanItem[]
-  changelog: string[]
 }
 
 // React Flow node data types
@@ -192,14 +163,6 @@ export interface CharacterNodeData {
   name: string
   role: string
   relations: CharacterRelation[]
-}
-
-export interface CauseNodeData {
-  label: string
-}
-
-export interface EffectNodeData {
-  label: string
 }
 
 export interface ThemeNodeData {

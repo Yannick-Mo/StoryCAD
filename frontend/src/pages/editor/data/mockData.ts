@@ -154,29 +154,4 @@ export const MOCK_DATA: EditorMockData = {
   world: { name: '苍玄大陆', regions: ['人界', '魔渊', '妖森', '神遗之地'] },
   rules: ['灵基 → 凝脉 → 神游', '万物皆可修炼', '煞气入体则堕魔'],
   history: ['三千年前·神魔之约', '千年前·苏家灭门', '三月前·玉牌重现'],
-  infoControls: [
-    { topic: '主角身世', revealed: true },
-    { topic: '反派动机', revealed: false },
-    { topic: '灭门真相', revealed: false },
-  ],
-  pov: [
-    { character: '林渊', percentage: 60 },
-    { character: '苏绛', percentage: 25 },
-    { character: '沈寒舟', percentage: 15 },
-  ],
-  inspirations: [
-    '雨夜，一把无鞘的剑',
-    '破碎的玉牌暗藏地图',
-    '湖心亭的棋局暗语',
-  ],
-  kanban: [
-    { stage: '草稿', count: 4 },
-    { stage: '修改', count: 1 },
-    { stage: '定稿', count: 1 },
-  ],
-  changelog: [
-    '3天前删除感情线分支',
-    '1周前新增支线：魔渊密道',
-    '2周前调整章节顺序',
-  ],
 }

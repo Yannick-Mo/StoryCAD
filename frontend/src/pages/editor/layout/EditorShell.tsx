@@ -14,7 +14,7 @@ import RhythmCanvas from '../views/rhythm/RhythmCanvas'
 import RhythmDetail from '../views/rhythm/RhythmDetail'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import ThemeDetail from '../views/theme/ThemeDetail'
-import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
+import { MapView, RulesView, HistoryView } from '../views/info/InfoViews'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import { useEditorViews } from '../hooks/useEditorViews'
@@ -103,11 +103,6 @@ export default function EditorShell() {
       case 'world-map': return <MapView data={data.world} />
       case 'world-rules': return <RulesView data={data.rules} />
       case 'world-history': return <HistoryView data={data.history} />
-      case 'experience-info': return <InfoControlView data={data.infoControls} />
-      case 'experience-pov': return <PovView data={data.pov} />
-      case 'creation-inspo': return <InspirationView data={data.inspirations} />
-      case 'creation-kanban': return <KanbanView data={data.kanban} />
-      case 'creation-log': return <ChangelogView data={data.changelog} />
       default: return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
     }
   }
