@@ -14,7 +14,8 @@ import RhythmCanvas from '../views/rhythm/RhythmCanvas'
 import RhythmDetail from '../views/rhythm/RhythmDetail'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import ThemeDetail from '../views/theme/ThemeDetail'
-import { MapView, RulesView, HistoryView } from '../views/info/InfoViews'
+import WorldBuilder from '../views/world/WorldBuilder'
+import { RulesView, HistoryView } from '../views/info/InfoViews'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import { useEditorViews } from '../hooks/useEditorViews'
@@ -100,7 +101,19 @@ export default function EditorShell() {
 
   const renderInfoView = () => {
     switch (views.activeViewId) {
-      case 'world-map': return <MapView data={data.world} />
+      case 'world-map': return (
+        <WorldBuilder
+          continents={data.world.continents}
+          regions={data.world.regions}
+          factions={data.world.factions}
+          factionRelations={data.world.factionRelations}
+          characters={data.characters.map(c => ({ id: c.id, name: c.name }))}
+          onSaveRegion={store.saveRegion}
+          onSaveFaction={store.saveFaction}
+          onAddFactionRelation={store.addFactionRelation}
+          onDeleteFactionRelation={store.deleteFactionRelation}
+        />
+      )
       case 'world-rules': return <RulesView data={data.rules} />
       case 'world-history': return <HistoryView data={data.history} />
       default: return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>

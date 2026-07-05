@@ -128,9 +128,47 @@ export interface ThemeItem {
   connections: string[]
 }
 
-export interface WorldInfo {
+export interface Continent {
+  id: string
   name: string
-  regions: string[]
+  description: string
+}
+
+export interface Region {
+  id: string
+  name: string
+  continentId: string
+  description: string
+  climate: string
+  ruler: string
+  capital: string
+  resources: string[]
+  characterIds: string[]
+}
+
+export interface Faction {
+  id: string
+  name: string
+  territory: string[]
+  leader: string
+  goal: string
+  allies: string[]
+  enemies: string[]
+}
+
+export interface FactionRelation {
+  id: string
+  sourceId: string
+  targetId: string
+  type: 'alliance' | 'conflict' | 'trade' | 'vassal' | 'encroach'
+  description: string
+}
+
+export interface WorldInfo {
+  continents: Continent[]
+  regions: Region[]
+  factions: Faction[]
+  factionRelations: FactionRelation[]
 }
 
 export interface EditorMockData {

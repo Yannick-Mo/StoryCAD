@@ -151,7 +151,33 @@ export const MOCK_DATA: EditorMockData = {
     { name: '背叛', color: '#9b5de5', proposition: '背叛的本质是什么——是忠诚的对立面，还是另一种形式的保护？沈寒舟的"背叛"是否另有隐情？', chapterIndices: [3, 4], connections: ['牺牲'] },
     { name: '救赎', color: '#00b4d8', proposition: '救赎能否通过复仇实现？如果真相本身是对过去的否定，知道真相到底是解脱还是新的囚笼？', chapterIndices: [0, 4, 5], connections: ['自由'] },
   ],
-  world: { name: '苍玄大陆', regions: ['人界', '魔渊', '妖森', '神遗之地'] },
+  world: {
+    continents: [
+      { id: 'cont1', name: '苍玄大陆', description: '主舞台，人族与魔族千年对峙的中心。灵气充沛但煞气暗涌，各方势力在此角逐。' },
+    ],
+    regions: [
+      { id: 'reg1', name: '苍玄城', continentId: 'cont1', description: '大陆枢纽，四方商旅云集，消息流通最快。城下有未被探明的古遗迹。', climate: '温带', ruler: '皇朝', capital: '苍玄城', resources: ['灵石', '玄铁', '古遗迹'], characterIds: ['c1', 'c2', 'c3'] },
+      { id: 'reg2', name: '北荒冰原', continentId: 'cont1', description: '极北苦寒之地，人烟罕至。传说冰层下封印着上古魔神。', climate: '极寒', ruler: '无主之地', capital: '-', resources: ['寒铁', '冰晶'], characterIds: [] },
+      { id: 'reg3', name: '魔渊裂隙', continentId: 'cont1', description: '大陆东部的深渊裂口，煞气源头。魔君的老巢，人族禁地。', climate: '荒芜', ruler: '魔君', capital: '暗影要塞', resources: ['煞晶', '魔铁'], characterIds: [] },
+      { id: 'reg4', name: '妖森', continentId: 'cont1', description: '南部原始森林，古木参天。妖族聚集地，与人界有古老盟约。', climate: '亚热带', ruler: '妖皇', capital: '翡翠城', resources: ['灵药', '灵兽'], characterIds: [] },
+      { id: 'reg5', name: '神遗之地', continentId: 'cont1', description: '大陆中心废墟，传说神魔大战遗址。残存禁制和上古兵器。', climate: '多变', ruler: '无', capital: '-', resources: ['远古遗物', '神纹碎片'], characterIds: [] },
+      { id: 'reg6', name: '西海群岛', continentId: 'cont1', description: '西海之外的群岛，海盗与隐士的天堂。传说有龙族遗迹。', climate: '海洋性', ruler: '散修联盟', capital: '珍珠港', resources: ['珍珠', '龙骨'], characterIds: [] },
+    ],
+    factions: [
+      { id: 'fac1', name: '皇朝', territory: ['reg1'], leader: '未知（待揭示）', goal: '维持大陆秩序，压制魔渊扩张', allies: ['妖皇'], enemies: ['魔君'] },
+      { id: 'fac2', name: '魔君', territory: ['reg3'], leader: '魔君·阎煞', goal: '扩张煞气领域，打通上古封印', allies: [], enemies: ['皇朝', '妖皇'] },
+      { id: 'fac3', name: '妖皇', territory: ['reg4'], leader: '妖皇·青木', goal: '守护妖族存续，维护与人界的古老盟约', allies: ['皇朝'], enemies: ['魔君'] },
+      { id: 'fac4', name: '散修联盟', territory: ['reg6'], leader: '盟主·海老', goal: '在势力夹缝中维持中立，掌控海上贸易', allies: [], enemies: [] },
+    ],
+    factionRelations: [
+      { id: 'fr1', sourceId: 'fac1', targetId: 'fac2', type: 'conflict', description: '持续千年的宿敌。魔渊试图吞噬苍玄，皇朝历代派兵镇守裂隙。' },
+      { id: 'fr2', sourceId: 'fac1', targetId: 'fac3', type: 'alliance', description: '千年前人妖两族签订和平盟约，共抗魔渊。近年关系因资源争端趋于紧张。' },
+      { id: 'fr3', sourceId: 'fac1', targetId: 'fac4', type: 'trade', description: '皇朝通过散修联盟获取海上资源，联盟在皇朝庇护下免受魔渊侵扰。' },
+      { id: 'fr4', sourceId: 'fac2', targetId: 'fac3', type: 'conflict', description: '魔渊扩张威胁妖森生态，妖族视魔君为生存之敌。' },
+      { id: 'fr5', sourceId: 'fac2', targetId: 'fac4', type: 'encroach', description: '魔君暗中扶持海盗势力，意图切断皇朝的海上补给线，威胁散修联盟的利益。' },
+      { id: 'fr6', sourceId: 'fac4', targetId: 'fac3', type: 'trade', description: '散修联盟与妖族有私下贸易，交换灵药与海产。' },
+    ],
+  },
   rules: ['灵基 → 凝脉 → 神游', '万物皆可修炼', '煞气入体则堕魔'],
   history: ['三千年前·神魔之约', '千年前·苏家灭门', '三月前·玉牌重现'],
 }

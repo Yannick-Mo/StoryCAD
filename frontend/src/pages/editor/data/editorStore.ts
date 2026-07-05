@@ -197,6 +197,35 @@ export function useEditorStore(initialData = MOCK_DATA) {
     setSelection({ type: null, id: null })
   }, [])
 
+  const saveRegion = useCallback((region: import('../types').Region) => {
+    setData(d => ({
+      ...d,
+      world: { ...d.world, regions: d.world.regions.map(r => r.id === region.id ? region : r) },
+    }))
+  }, [])
+
+  const saveFaction = useCallback((faction: import('../types').Faction) => {
+    setData(d => ({
+      ...d,
+      world: { ...d.world, factions: d.world.factions.map(f => f.id === faction.id ? faction : f) },
+    }))
+  }, [])
+
+  const addFactionRelation = useCallback((sourceId: string, targetId: string, type: string) => {
+    const newRel: import('../types').FactionRelation = { id: uid(), sourceId, targetId, type: type as any, description: '' }
+    setData(d => ({
+      ...d,
+      world: { ...d.world, factionRelations: [...d.world.factionRelations, newRel] },
+    }))
+  }, [])
+
+  const deleteFactionRelation = useCallback((id: string) => {
+    setData(d => ({
+      ...d,
+      world: { ...d.world, factionRelations: d.world.factionRelations.filter(r => r.id !== id) },
+    }))
+  }, [])
+
   return {
     data, setData,
     selection, selectNode, selectEdge, clearSelection,
@@ -204,5 +233,6 @@ export function useEditorStore(initialData = MOCK_DATA) {
     addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
+    saveRegion, saveFaction, addFactionRelation, deleteFactionRelation,
   }
 }
