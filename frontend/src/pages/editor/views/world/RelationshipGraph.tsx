@@ -1,5 +1,5 @@
 import { useMemo, useCallback } from 'react'
-import ReactFlow, { Background, Controls, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
+import ReactFlow, { Background, Controls, Handle, Position, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type { Faction, FactionRelation } from '../../types'
 
@@ -22,7 +22,9 @@ const RELATION_LABELS: Record<string, string> = {
 function FactionNode({ data }: { data: { label: string } }) {
   return (
     <div className="bg-gray-800 border-2 border-gray-600 rounded-xl px-4 py-2 shadow-lg cursor-pointer hover:-translate-y-0.5 transition-all select-none">
+      <Handle type="target" position={Position.Left} className="!bg-gray-500 !w-2 !h-2" />
       <span className="text-sm font-medium text-amber-100">{data.label}</span>
+      <Handle type="source" position={Position.Right} className="!bg-gray-500 !w-2 !h-2" />
     </div>
   )
 }
