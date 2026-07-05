@@ -11,7 +11,6 @@ import type { Chapter, Act, ChapterEdge, EdgeType, EdgeResult, SelectionState } 
 import { getBestHandle } from '../shared/getBestHandle'
 import { isHandlePairAvailable, getTimelineReplacementEdgeIds } from '../../data/handleAllocation'
 import { topologicalSort } from '../../data/orderUtils'
-import EdgePropertyPanel from './EdgePropertyPanel'
 import ContextMenu from './ContextMenu'
 import { useToast } from '../../components/Toast'
 
@@ -192,7 +191,6 @@ export default function PlotCanvas({
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [rfEdgesState, setRfEdges, onEdgesChange] = useEdgesState([])
-  const [selectedRfEdge, setSelectedRfEdge] = useState<string | null>(null)
   const [paneCursor, setPaneCursor] = useState<'default' | 'se-resize'>('default')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
   const rfRef = useRef<ReactFlowInstance | null>(null)
@@ -298,9 +296,13 @@ export default function PlotCanvas({
   }, [onSelectNode, onChapterClick, onActClick])
 
   const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-    setSelectedRfEdge(edge.id)
+    const domainEdge = edges.find(item => item.id === edge.id)
+    if (!domainEdge || domainEdge.type === 'timeline') {
+      onClearSelection()
+      return
+    }
     onSelectEdge(edge.id)
-  }, [onSelectEdge])
+  }, [edges, onClearSelection, onSelectEdge])
 
   const isInteractiveFlowTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) return false
@@ -405,7 +407,6 @@ export default function PlotCanvas({
   }, [isInteractiveFlowTarget])
 
   const handlePaneClick = useCallback((event: React.MouseEvent) => {
-    setSelectedRfEdge(null)
     const rf = rfRef.current
     if (!rf) return
     const flowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -549,21 +550,6 @@ export default function PlotCanvas({
           className="!bg-gray-900 !border-gray-700"
         />
 
-        {selectedRfEdge && (
-          <EdgePropertyPanel
-            edge={edges.find(e => e.id === selectedRfEdge) ?? null}
-            chapters={chapters}
-            onClose={() => setSelectedRfEdge(null)}
-            onChangeType={(edgeId, newType) => {
-              onChangeEdgeType?.(edgeId, newType)
-              setSelectedRfEdge(null)
-            }}
-            onDelete={(edgeId) => {
-              onDeleteEdge?.(edgeId)
-              setSelectedRfEdge(null)
-            }}
-          />
-        )}
       </ReactFlow>
       {ctxMenu && <ContextMenu {...ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>
