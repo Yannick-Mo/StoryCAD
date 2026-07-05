@@ -14,14 +14,15 @@ function runForceSimulation(
   width: number,
   height: number,
 ) {
+  if (nodes.length === 0) return
   const reps: { x: number; y: number }[] = nodes.map(() => ({ x: 0, y: 0 }))
   const attrs: { x: number; y: number }[] = nodes.map(() => ({ x: 0, y: 0 }))
   const vel: { x: number; y: number }[] = nodes.map(() => ({ x: 0, y: 0 }))
-  const alpha = { current: 1 }
+  let alpha = 1
   const alphaMin = 0.001
   const decay = 0.99
 
-  for (let iter = 0; iter < 200 && alpha.current > alphaMin; iter++) {
+  for (let iter = 0; iter < 200 && alpha > alphaMin; iter++) {
     // Repulsion (all pairs)
     for (let i = 0; i < nodes.length; i++) {
       reps[i].x = 0; reps[i].y = 0
@@ -55,8 +56,8 @@ function runForceSimulation(
 
     // Apply forces
     for (let i = 0; i < nodes.length; i++) {
-      vel[i].x = (vel[i].x + (reps[i].x + attrs[i].x) * alpha.current) * 0.5
-      vel[i].y = (vel[i].y + (reps[i].y + attrs[i].y) * alpha.current) * 0.5
+      vel[i].x = (vel[i].x + (reps[i].x + attrs[i].x) * alpha) * 0.5
+      vel[i].y = (vel[i].y + (reps[i].y + attrs[i].y) * alpha) * 0.5
       nodes[i].x += vel[i].x
       nodes[i].y += vel[i].y
     }
@@ -69,7 +70,7 @@ function runForceSimulation(
       n.y += (height / 2 - cy) * 0.01
     }
 
-    alpha.current *= decay
+    alpha *= decay
   }
 }
 
@@ -90,12 +91,19 @@ export default function CausalityCanvas({
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
+    let raf: number | null = null
     const ro = new ResizeObserver(entries => {
-      const { width, height } = entries[0].contentRect
-      setDim({ w: Math.max(width - 240, 400), h: Math.max(height, 400) })
+      if (raf) cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const { width, height } = entries[0].contentRect
+        setDim({ w: Math.max(width - 240, 400), h: Math.max(height, 400) })
+      })
     })
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
   }, [])
 
   const actMap = useMemo(() => new Map(acts.map(a => [a.id, a])), [acts])
