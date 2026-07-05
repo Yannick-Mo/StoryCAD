@@ -1,5 +1,5 @@
-import { useMemo, useState, useCallback } from 'react'
-import ReactFlow, { Background, Controls, Handle, Position, type Node, type Edge, type NodeTypes, MarkerType } from 'reactflow'
+import { useMemo, useState, useCallback, useEffect } from 'react'
+import ReactFlow, { Background, Controls, Handle, Position, type Node, type Edge, type NodeTypes, MarkerType, useNodesState } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type { Faction, FactionRelation } from '../../types'
 import ContextMenu from '../plot/ContextMenu'
@@ -42,7 +42,7 @@ interface RelationshipGraphProps {
 export default function RelationshipGraph({ factions, relations, onDeleteRelation }: RelationshipGraphProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; onClick: () => void }[][] } | null>(null)
 
-  const nodes: Node[] = useMemo(() =>
+  const initialNodes: Node[] = useMemo(() =>
     factions.map((f, i) => ({
       id: f.id,
       type: 'factionNode',
@@ -61,6 +61,10 @@ export default function RelationshipGraph({ factions, relations, onDeleteRelatio
       markerEnd: { type: MarkerType.ArrowClosed, color: RELATION_COLORS[r.type] },
       labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
     })), [relations])
+
+  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState(initialNodes)
+  const factionKey = factions.map(f => f.id).join(',')
+  useEffect(() => { setFlowNodes(initialNodes) }, [factionKey, setFlowNodes])
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     event.preventDefault()
@@ -91,15 +95,16 @@ export default function RelationshipGraph({ factions, relations, onDeleteRelatio
   return (
     <div className="flex-1">
       <ReactFlow
-        nodes={nodes}
+        nodes={flowNodes}
         edges={edges}
+        onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         onPaneClick={onPaneClick}
         defaultEdgeOptions={{ type: 'default' }}
         fitView minZoom={0.3} maxZoom={2}
-        nodesDraggable={false}
+        nodesDraggable
         nodesConnectable={false}
       >
         <Background color="#333" gap={20} />
