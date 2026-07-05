@@ -168,6 +168,7 @@ export default function CharCanvas({
         minZoom={0.3}
         maxZoom={2}
         connectionRadius={48}
+        proOptions={{ hideAttribution: true }}
       >
         <Background color="#333" gap={20} />
         <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />

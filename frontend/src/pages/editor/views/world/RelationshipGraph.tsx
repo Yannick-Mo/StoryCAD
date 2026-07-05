@@ -72,6 +72,7 @@ export default function RelationshipGraph({ factions, relations }: RelationshipG
         fitView minZoom={0.3} maxZoom={2}
         nodesDraggable
         nodesConnectable={false}
+        proOptions={{ hideAttribution: true }}
       >
         <Background color="#333" gap={20} />
         <Controls className="!bg-gray-800 !border-gray-700 !rounded-lg" />
