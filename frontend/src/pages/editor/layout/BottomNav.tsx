@@ -30,7 +30,7 @@ export default function BottomNav({
     <div className="relative">
       {subPanelOpen && (
         <>
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2">
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
             <div className="flex gap-1 bg-gray-800/95 backdrop-blur-xl border border-gray-700 rounded-2xl px-3 py-2 shadow-2xl">
               {pillarViews.map(v => (
                 <button
