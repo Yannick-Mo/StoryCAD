@@ -458,14 +458,14 @@ export default function PlotCanvas({
     setCtxMenu({
       x: event.clientX, y: event.clientY,
       items: [
-        [{ label: '删除连线', icon: '✕', onClick: () => onDeleteEdge?.(edge.id) }],
+        [{ label: '删除连线', icon: '✕', onClick: () => { onDeleteEdge?.(edge.id); onClearSelection() } }],
         [
           { label: '改为时序', icon: '→', onClick: () => onChangeEdgeType?.(edge.id, 'timeline') },
           { label: '改为因果', icon: '⚡', onClick: () => onChangeEdgeType?.(edge.id, 'causal') },
         ],
       ],
     })
-  }, [onSelectEdge, onDeleteEdge, onChangeEdgeType])
+  }, [onSelectEdge, onDeleteEdge, onChangeEdgeType, onClearSelection])
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
