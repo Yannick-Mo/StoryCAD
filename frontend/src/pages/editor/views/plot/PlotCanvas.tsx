@@ -300,7 +300,7 @@ export default function PlotCanvas({
 
   const handleEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     const domainEdge = edgesRef.current.find(item => item.id === edge.id)
-    if (!domainEdge || domainEdge.type === 'timeline') {
+    if (!domainEdge) {
       onClearSelection()
       return
     }
