@@ -3,8 +3,6 @@ import type { Pillar } from '../types'
 const PILLARS: { key: Pillar; icon: string; label: string }[] = [
   { key: 'world', icon: '🌍', label: '世界' },
   { key: 'narrative', icon: '📖', label: '叙事' },
-  { key: 'experience', icon: '❤️', label: '体验' },
-  { key: 'creation', icon: '⚙️', label: '创作' },
 ]
 
 interface SubOption {
