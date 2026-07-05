@@ -155,7 +155,7 @@ export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType
   const sourceIndex = source ? chapters.findIndex(chapter => chapter.id === source.id) : -1
   const targetIndex = target ? chapters.findIndex(chapter => chapter.id === target.id) : -1
   const distance = sourceIndex >= 0 && targetIndex >= 0 ? Math.abs(targetIndex - sourceIndex) : null
-  const crossesActs = source && target ? source.actId !== target.actId : false
+  const structureLabel = source && target ? (source.actId !== target.actId ? '跨幕' : '同幕') : '-'
 
   return (
     <div className="absolute right-0 top-0 h-full w-96 bg-gray-900/95 backdrop-blur-xl border-l border-gray-800 z-20 flex flex-col shadow-2xl">
@@ -185,7 +185,7 @@ export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType
             <div className="text-[10px] text-gray-600 mt-0.5">距离</div>
           </div>
           <div className="bg-gray-800/40 border border-gray-700/50 rounded-lg p-2 text-center">
-            <div className="text-xs text-gray-300">{crossesActs ? '跨幕' : '同幕'}</div>
+            <div className="text-xs text-gray-300">{structureLabel}</div>
             <div className="text-[10px] text-gray-600 mt-0.5">结构</div>
           </div>
           <div className="bg-gray-800/40 border border-gray-700/50 rounded-lg p-2 text-center">
