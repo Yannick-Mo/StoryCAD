@@ -11,6 +11,7 @@ import CharCanvas from '../views/character/CharCanvas'
 import CharacterDetail from '../views/character/CharacterDetail'
 import CharacterEdgeDetail from '../views/character/CharacterEdgeDetail'
 import RhythmCanvas from '../views/rhythm/RhythmCanvas'
+import RhythmDetail from '../views/rhythm/RhythmDetail'
 import ThemeCanvas from '../views/theme/ThemeCanvas'
 import { MapView, RulesView, HistoryView, InfoControlView, PovView, InspirationView, KanbanView, ChangelogView } from '../views/info/InfoViews'
 import PreviewModal from '../modals/PreviewModal'
@@ -33,6 +34,7 @@ export default function EditorShell() {
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'act' | 'chapter'; id: string } | null>(null)
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
+  const [selectedRhythmIndex, setSelectedRhythmIndex] = useState<number | null>(null)
 
   const store = useEditorStore()
   const data = store.data
@@ -86,7 +88,7 @@ export default function EditorShell() {
           />
         )
       case 'narrative-rhythm':
-        return <RhythmCanvas rhythms={data.rhythms} />
+        return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} />
       case 'narrative-theme':
         return <ThemeCanvas themes={data.themes} />
       default:
@@ -287,6 +289,25 @@ export default function EditorShell() {
               )
             })()
           ) : null
+        )}
+
+        {/* Rhythm detail panel */}
+        {views.activeViewId === 'narrative-rhythm' && selectedRhythmIndex !== null && (
+          (() => {
+            const point = data.rhythms[selectedRhythmIndex]
+            if (!point) return null
+            const ch = data.chapters[point.chapterIndex]
+            const act = ch ? data.acts.find(a => a.id === ch.actId) : undefined
+            return (
+              <RhythmDetail
+                point={point}
+                chapter={ch}
+                act={act}
+                wordCount={ch?.wordCount ?? 0}
+                onClose={() => setSelectedRhythmIndex(null)}
+              />
+            )
+          })()
         )}
 
         <ActionButtons

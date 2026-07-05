@@ -123,6 +123,10 @@ export interface RhythmPoint {
   chapterIndex: number
   intensity: number
   label: string
+  action: number
+  suspense: number
+  emotion: number
+  humor: number
 }
 
 export interface ThemeItem {
@@ -194,12 +198,6 @@ export interface CauseNodeData {
 
 export interface EffectNodeData {
   label: string
-}
-
-export interface RhythmNodeData {
-  label: string
-  intensity: number
-  chapterIndex: number
 }
 
 export interface ThemeNodeData {

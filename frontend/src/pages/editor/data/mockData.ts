@@ -138,12 +138,12 @@ export const MOCK_DATA: EditorMockData = {
     { id: 'ca3', cause: '内鬼泄密', effect: '行动失败' },
   ],
   rhythms: [
-    { chapterIndex: 0, intensity: 3, label: '开场' },
-    { chapterIndex: 1, intensity: 4, label: '推进' },
-    { chapterIndex: 2, intensity: 5, label: '上升' },
-    { chapterIndex: 3, intensity: 6, label: '小高潮' },
-    { chapterIndex: 4, intensity: 7, label: '转折' },
-    { chapterIndex: 5, intensity: 9, label: '高潮' },
+    { chapterIndex: 0, intensity: 5, label: '雨夜来客', action: 6, suspense: 7, emotion: 3, humor: 1 },
+    { chapterIndex: 1, intensity: 4, label: '密室发现', action: 3, suspense: 6, emotion: 4, humor: 2 },
+    { chapterIndex: 2, intensity: 6, label: '接头疑云', action: 5, suspense: 8, emotion: 5, humor: 1 },
+    { chapterIndex: 3, intensity: 8, label: '湖心对峙', action: 7, suspense: 6, emotion: 9, humor: 1 },
+    { chapterIndex: 4, intensity: 7, label: '寒舟暗影', action: 8, suspense: 9, emotion: 5, humor: 0 },
+    { chapterIndex: 5, intensity: 9, label: '终极对决', action: 10, suspense: 8, emotion: 9, humor: 0 },
   ],
   themes: [
     { name: '自由', color: '#d4a373', connections: ['牺牲'] },
