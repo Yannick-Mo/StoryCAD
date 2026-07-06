@@ -43,9 +43,9 @@ export default function ProjectListPage() {
       <AnnouncementBanner />
       <div className="max-w-5xl mx-auto px-6 pb-12">
         <HeroSection />
+        <CreateCards onCreateClick={() => setCreateOpen(true)} />
         <StatsRow projectCount={projects.length} />
         <ProjectGrid projects={projects} searchQuery={searchQuery} loading={loading} onDeleteProject={handleDelete} />
-        <CreateCards onCreateClick={() => setCreateOpen(true)} />
         <TemplateGrid />
         <Footer />
       </div>
