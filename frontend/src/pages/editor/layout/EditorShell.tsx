@@ -220,10 +220,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 store.clearSelection()
               }}
               onRenameAct={() => {
-                if (store.selection.type === 'act') {
+                if (store.selection?.type === 'act') {
                   const act = data.acts.find(a => a.id === store.selection.id)
                   const name = prompt('重命名幕：', act?.name)
-                  if (name && act) { act.name = name; setData({ ...data }) }
+                  if (name && act) { store.updateAct(act.id, { name }) }
                 }
                 store.clearSelection()
               }}

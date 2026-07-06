@@ -1,0 +1,118 @@
+import { useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { FilePlus2, FolderUp, X } from "lucide-react"
+import { createProject } from "../../api/auth"
+
+interface Props {
+  open: boolean
+  onClose: () => void
+}
+
+export default function CreateProjectDialog({ open, onClose }: Props) {
+  const [mode, setMode] = useState<"pick" | "empty">("pick")
+  const [title, setTitle] = useState("")
+  const [busy, setBusy] = useState(false)
+  const navigate = useNavigate()
+
+  if (!open) return null
+
+  async function handleCreateEmpty() {
+    if (!title.trim()) return
+    setBusy(true)
+    try {
+      const result = await createProject(title.trim())
+      navigate(`/projects/${result.id}`)
+    } catch {
+      setBusy(false)
+    }
+  }
+
+  function handleBack() {
+    setMode("pick")
+    setTitle("")
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="bg-gray-900 rounded-2xl p-8 w-full max-w-lg shadow-2xl border border-gray-800"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {mode === "pick" && (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-100">创建新项目</h2>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <button
+                onClick={() => setMode("empty")}
+                className="w-full flex items-center gap-5 p-5 rounded-xl bg-gray-800 border border-gray-700 hover:border-blue-500/50 hover:bg-gray-800/80 transition-all text-left group"
+              >
+                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <FilePlus2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="font-bold text-gray-100 mb-0.5">空项目</div>
+                  <div className="text-sm text-gray-500">从空白开始，自由创作</div>
+                </div>
+              </button>
+              <button
+                disabled
+                className="w-full flex items-center gap-5 p-5 rounded-xl bg-gray-800/50 border border-gray-800 text-left opacity-50 cursor-not-allowed"
+              >
+                <div className="w-12 h-12 rounded-full bg-yellow-500/10 text-yellow-400 flex items-center justify-center shrink-0">
+                  <FolderUp className="w-6 h-6" />
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-gray-500 mb-0.5">从素材创建</div>
+                  <div className="text-sm text-gray-600">通过文档或大纲导入</div>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-400">即将推出</span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {mode === "empty" && (
+          <>
+            <div className="flex items-center gap-3 mb-6">
+              <button onClick={handleBack} className="text-gray-500 hover:text-gray-300 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <h2 className="text-xl font-bold text-gray-100">新建空项目</h2>
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm text-gray-400 mb-2">项目名称</label>
+              <input
+                autoFocus
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateEmpty()}
+                placeholder="输入项目名称..."
+                className="w-full px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={handleBack}
+                className="px-5 py-2.5 rounded-xl text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                返回
+              </button>
+              <button
+                onClick={handleCreateEmpty}
+                disabled={!title.trim() || busy}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {busy ? "创建中..." : "创建项目"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -8,6 +8,10 @@ interface ActDetailProps {
   onSelectChapter: (chapterId: string) => void
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
+  onUpdateAct: (id: string, updates: Partial<Pick<Act, 'name' | 'color'>>) => void
+  onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
+  onAddChapter: (actId: string) => void
+  onDeleteScene: (chapterId: string, sceneId: string) => void
 }
 
 const STATUS_OPTIONS = [
@@ -16,7 +20,7 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ActDetail({ act, chapters, onClose, onSelectChapter, onSceneSave, onOpenSceneEditor }: ActDetailProps) {
+export default function ActDetail({ act, chapters, onClose, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene }: ActDetailProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
@@ -43,22 +47,54 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
 
   return (
     <div className="absolute right-0 top-0 h-full w-96 bg-gray-900/95 backdrop-blur-xl border-l border-gray-800 z-20 flex flex-col shadow-2xl">
-      <div className="p-4 border-b border-gray-800" style={{ borderLeft: `3px solid ${act.color}` }}>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-medium text-amber-100">{act.name}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+      {/* Header */}
+      <div className="p-4 border-b border-gray-800 space-y-2" style={{ borderLeft: `3px solid ${act.color}` }}>
+        <div className="flex items-center justify-between gap-2">
+          <input
+            value={act.name}
+            onChange={e => onUpdateAct(act.id, { name: e.target.value })}
+            className="font-medium text-amber-100 bg-transparent border-b border-transparent focus:border-amber-600/50 outline-none flex-1"
+          />
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={act.color}
+              onChange={e => onUpdateAct(act.id, { color: e.target.value })}
+              className="w-16 bg-transparent text-[10px] text-gray-400 border-b border-transparent focus:border-amber-600/50 outline-none font-mono text-center"
+            />
+            <span className="w-4 h-4 rounded-full border border-gray-700 shrink-0" style={{ backgroundColor: act.color }} />
+            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
+          </div>
         </div>
-        <div className="flex items-center gap-3 text-xs text-gray-500">
-          <span>{chapters.length} 章</span>
-          <span>{totalScenes} 场</span>
-          <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
-          <span className="text-gray-600">
-            {chapters.filter(c => c.status === 'final').length}/{chapters.length} 完成
-          </span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 text-[10px] text-gray-500">
+            <span>{chapters.length} 章</span>
+            <span>{totalScenes} 场</span>
+            <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
+            <span>{chapters.filter(c => c.status === 'final').length}/{chapters.length} 完成</span>
+          </div>
+          <button
+            onClick={() => onAddChapter(act.id)}
+            className="text-[10px] px-2 py-1 rounded bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 transition-colors"
+          >
+            + 添加章节
+          </button>
         </div>
       </div>
 
+      {/* Chapter list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        {chapters.length === 0 && (
+          <div className="text-center py-12">
+            <div className="text-gray-600 text-sm mb-3">该幕暂无章节</div>
+            <button
+              onClick={() => onAddChapter(act.id)}
+              className="px-4 py-2 rounded-lg bg-amber-600/20 text-amber-400 text-sm hover:bg-amber-600/30 transition-colors"
+            >
+              + 创建首个章节
+            </button>
+          </div>
+        )}
         {chapters.map(ch => {
           const isExpanded = expandedId === ch.id
           return (
@@ -86,15 +122,54 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
                 <div className="px-3 pb-3 space-y-2 border-t border-gray-700/30 pt-2">
                   {ch.scenes.map(scene => (
                     <div key={scene.id} className="bg-gray-800/60 border border-gray-700/40 rounded-lg p-2.5">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-gray-300">{scene.title}</span>
-                        <span className="text-[10px] text-gray-600">{scene.wordCount > 0 ? `${scene.wordCount}字` : '空'}</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={scene.title}
+                          onChange={e => onUpdateScene(ch.id, scene.id, { title: e.target.value })}
+                          className="bg-transparent text-xs font-medium text-gray-300 outline-none border-b border-transparent focus:border-amber-600/50 flex-1"
+                        />
+                        <button
+                          onClick={() => onDeleteScene(ch.id, scene.id)}
+                          className="text-gray-600 hover:text-red-400 transition-colors text-[10px] px-1 shrink-0"
+                          title="删除场景"
+                        >✕</button>
                       </div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-gray-600 mb-1.5">
-                        <span>🎭 {scene.povCharacter}</span>
-                        <span>📍 {scene.setting}</span>
-                        <span>⏰ {scene.time}</span>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-gray-600 mb-1.5">
+                        <span className="flex items-center gap-1">
+                          🎭
+                          <input
+                            value={scene.povCharacter}
+                            onChange={e => onUpdateScene(ch.id, scene.id, { povCharacter: e.target.value })}
+                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-16"
+                            placeholder="POV"
+                          />
+                        </span>
+                        <span className="flex items-center gap-1">
+                          📍
+                          <input
+                            value={scene.setting}
+                            onChange={e => onUpdateScene(ch.id, scene.id, { setting: e.target.value })}
+                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
+                            placeholder="场景"
+                          />
+                        </span>
+                        <span className="flex items-center gap-1">
+                          ⏰
+                          <input
+                            value={scene.time}
+                            onChange={e => onUpdateScene(ch.id, scene.id, { time: e.target.value })}
+                            className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
+                            placeholder="时间"
+                          />
+                        </span>
                       </div>
+                      <textarea
+                        value={scene.summary}
+                        onChange={e => onUpdateScene(ch.id, scene.id, { summary: e.target.value })}
+                        placeholder="梗概..."
+                        className="w-full bg-transparent text-[11px] text-gray-400 italic outline-none resize-none border-b border-transparent focus:border-amber-600/50 mb-1.5 leading-relaxed"
+                        rows={1}
+                      />
                       {editSceneId === scene.id ? (
                         <div className="space-y-1.5">
                           <textarea
@@ -137,9 +212,6 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
             </div>
           )
         })}
-        {chapters.length === 0 && (
-          <div className="text-center text-gray-600 text-sm py-8">该幕暂无章节</div>
-        )}
       </div>
     </div>
   )

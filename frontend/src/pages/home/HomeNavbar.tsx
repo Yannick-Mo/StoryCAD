@@ -1,16 +1,15 @@
-import { useState, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import { Search, Plus } from "lucide-react"
-import { createProject } from "../../api/client"
+import { useEffect } from "react"
+import { Search, Plus, LogOut } from "lucide-react"
+import { useAuth } from "../../context/AuthContext"
 
 interface HomeNavbarProps {
   searchQuery: string
   onSearchChange: (val: string) => void
+  onCreateClick: () => void
 }
 
-export default function HomeNavbar({ searchQuery, onSearchChange }: HomeNavbarProps) {
-  const [creating, setCreating] = useState(false)
-  const navigate = useNavigate()
+export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick }: HomeNavbarProps) {
+  const { user, logout } = useAuth()
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -22,19 +21,6 @@ export default function HomeNavbar({ searchQuery, onSearchChange }: HomeNavbarPr
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [])
-
-  async function handleCreate() {
-    if (creating) return
-    const title = prompt("请输入项目名称：")
-    if (!title?.trim()) return
-    setCreating(true)
-    try {
-      const result = await createProject(title.trim())
-      navigate(`/projects/${result.id}`)
-    } catch {
-      setCreating(false)
-    }
-  }
 
   return (
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-xl border-b border-gray-800 px-6 h-14 flex items-center gap-4">
@@ -56,15 +42,21 @@ export default function HomeNavbar({ searchQuery, onSearchChange }: HomeNavbarPr
         />
       </div>
       <button
-        onClick={handleCreate}
-        disabled={creating}
-        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-full transition-all hover:shadow-lg hover:shadow-blue-600/30 active:scale-95"
+        onClick={onCreateClick}
+        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-full transition-all hover:shadow-lg hover:shadow-blue-600/30 active:scale-95"
       >
         <Plus className="w-4 h-4" />
         新建项目
       </button>
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center text-white text-xs font-bold shrink-0 cursor-pointer hover:scale-105 transition-transform border-2 border-transparent hover:border-blue-400">
-        柳
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-400 hidden sm:block">{user?.username || user?.email}</span>
+        <button
+          onClick={logout}
+          className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-all"
+          title="退出登录"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </nav>
   )

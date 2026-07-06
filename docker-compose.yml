@@ -9,21 +9,21 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-
-  neo4j:
-    image: neo4j:5
-    ports:
-      - "7687:7687"
-      - "7474:7474"
-    environment:
-      NEO4J_AUTH: neo4j/password
-    volumes:
-      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
@@ -31,9 +31,10 @@ services:
       - "8000:8000"
     env_file: .env
     depends_on:
-      - db
-      - redis
-      - neo4j
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./backend/app:/app/app
 
@@ -44,11 +45,9 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
-      - ./frontend/node_modules:/app/node_modules
     depends_on:
       - backend
-    entrypoint: sh -c "chmod +x /app/node_modules/.bin/vite && exec /app/node_modules/.bin/vite --host 0.0.0.0"
+    entrypoint: sh -c "exec npx vite --host 0.0.0.0"
 
 volumes:
   pgdata:
-  neo4j_data:

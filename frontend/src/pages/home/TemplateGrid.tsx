@@ -1,6 +1,15 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { createProject } from "../../api/client"
+import { createProject } from "../../api/auth"
+import { createEntity } from "../../api/editor"
+
+const ACT_COUNTS: Record<string, number> = {
+  '三幕式': 3,
+  '四幕结构': 4,
+  '英雄之旅': 3,
+  '救猫咪节拍表': 3,
+  '网文爽文节奏': 5,
+}
 
 const TEMPLATES = [
   { icon: "🐱", name: "救猫咪节拍表", desc: "15 个节拍，适合商业类型片与强情节小说", color: "bg-pink-500/10 text-pink-400" },
@@ -16,11 +25,13 @@ export default function TemplateGrid() {
 
   async function handleClick(template: string) {
     if (creating) return
-    const title = prompt(`请输入项目名称（${template}）：`)
-    if (!title?.trim()) return
     setCreating(true)
     try {
-      const result = await createProject(title.trim())
+      const result = await createProject(`未命名 - ${template}`)
+      const actCount = ACT_COUNTS[template] ?? 3
+      for (let i = 0; i < actCount; i++) {
+        await createEntity(result.id, 'acts', { name: `第 ${i + 1} 幕`, sort_order: i + 1, color: ['#f97316', '#8b5cf6', '#06b6d4', '#ec4899', '#10b981'][i % 5] })
+      }
       navigate(`/projects/${result.id}`)
     } catch {
       setCreating(false)
@@ -33,9 +44,9 @@ export default function TemplateGrid() {
         <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2">
           <span>📚</span> 推荐叙事模板
         </h2>
-        <a href="/templates" className="text-xs text-blue-400 hover:opacity-75 transition-opacity no-underline">
-          浏览全部模板 →
-        </a>
+        <span className="text-xs text-blue-400 opacity-50">
+          浏览全部模板
+        </span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
         {TEMPLATES.map((t) => (

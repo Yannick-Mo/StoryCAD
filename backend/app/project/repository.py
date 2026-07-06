@@ -10,8 +10,8 @@ class ProjectRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, title: str = "Untitled", description: str = "") -> Project:
-        project = Project(title=title, description=description)
+    async def create(self, title: str, description: str, owner_id: uuid.UUID) -> Project:
+        project = Project(title=title, description=description, owner_id=owner_id)
         self.db.add(project)
         await self.db.commit()
         await self.db.refresh(project)
@@ -21,9 +21,10 @@ class ProjectRepository:
         result = await self.db.execute(select(Project).where(Project.id == project_id))
         return result.scalar_one_or_none()
 
-    async def list_projects(self, page: int = 1, size: int = 20) -> list[Project]:
+    async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20) -> list[Project]:
         result = await self.db.execute(
-            select(Project).order_by(desc(Project.created_at))
+            select(Project).where(Project.owner_id == owner_id)
+            .order_by(desc(Project.created_at))
             .offset((page - 1) * size).limit(size)
         )
         return result.scalars().all()

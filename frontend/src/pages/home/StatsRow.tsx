@@ -1,4 +1,4 @@
-import { FolderOpen, FileText, LayoutList, Link2 } from "lucide-react"
+import { FolderOpen } from "lucide-react"
 
 interface StatsRowProps {
   projectCount: number
@@ -7,9 +7,6 @@ interface StatsRowProps {
 export default function StatsRow({ projectCount }: StatsRowProps) {
   const stats = [
     { icon: FolderOpen, color: "bg-blue-500/10 text-blue-400", label: "进行中项目", value: projectCount.toString() },
-    { icon: FileText, color: "bg-yellow-500/10 text-yellow-400", label: "总规划字数", value: `${projectCount * 17}万字` },
-    { icon: LayoutList, color: "bg-green-500/10 text-green-400", label: "已规划章节", value: Math.round(projectCount * 17 * 10000 / 4000).toString() },
-    { icon: Link2, color: "bg-pink-500/10 text-pink-400", label: "追踪伏笔", value: Math.round(projectCount * 17 * 0.44).toString() },
   ]
 
   return (

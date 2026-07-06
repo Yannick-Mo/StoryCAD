@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, Integer, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -13,13 +13,15 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(255), default="Untitled Project")
     description = Column(Text, default="")
     genre = Column(String(100), default="")
     status = Column(String(20), default="init")
     workflow_stage = Column(String(30), default="init")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    global_settings = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     versions = relationship("ProjectVersion", back_populates="project", order_by="ProjectVersion.version.desc()", cascade="all, delete-orphan")
 
@@ -31,7 +33,7 @@ class ProjectVersion(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
     version = Column(Integer, default=1)
     snapshot = Column(JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
 
     project = relationship("Project", back_populates="versions")
 
@@ -44,5 +46,5 @@ class ProjectConfig(Base):
     total_words = Column(Integer, default=100000)
     template_type = Column(String(50), default="four_act")
     target_audience = Column(String(100), default="")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))

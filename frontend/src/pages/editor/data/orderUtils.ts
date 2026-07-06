@@ -23,8 +23,10 @@ export function topologicalSort(chapters: { id: string }[], edges: ChapterEdge[]
   }
 
   const result: string[] = []
-  while (queue.length > 0) {
-    const id = queue.shift()!
+  let idx = 0
+  while (idx < queue.length) {
+    const id = queue[idx]
+    idx++
     result.push(id)
     for (const next of adj.get(id) ?? []) {
       const nd = (inDeg.get(next) ?? 1) - 1
@@ -86,26 +88,30 @@ export function getIncomingTimeline(edges: ChapterEdge[], nodeId: string): Chapt
   return edges.find(e => e.type === 'timeline' && e.targetId === nodeId)
 }
 
-export function getCompletedChain(chapters: Chapter[], edges: ChapterEdge[], acts: Act[]): Chapter[] {
+export function getCompletedChain(chapters: Chapter[], edges: ChapterEdge[], acts: Act[]): Chapter[][] {
   const sortedActs = [...acts].sort((a, b) => a.order - b.order)
   if (sortedActs.length === 0) return []
 
   const ordered = topologicalSort(chapters, edges)
   const chMap = new Map(chapters.map(c => [c.id, c]))
-  const head = ordered.find(id => chMap.has(id))
-  if (!head) return []
+  const heads = ordered.filter(id => chMap.has(id) && !hasIncomingTimeline(edges, id))
+  if (heads.length === 0) return []
 
   const outgoingMap = new Map<string, ChapterEdge>()
   for (const e of edges) {
     if (e.type === 'timeline') outgoingMap.set(e.sourceId, e)
   }
 
-  const result: Chapter[] = []
-  let currentId: string | undefined = head
-  while (currentId && chMap.has(currentId)) {
-    result.push(chMap.get(currentId)!)
-    const edge = outgoingMap.get(currentId)
-    currentId = edge?.targetId
+  const chains: Chapter[][] = []
+  for (const head of heads) {
+    const chain: Chapter[] = []
+    let currentId: string | undefined = head
+    while (currentId && chMap.has(currentId)) {
+      chain.push(chMap.get(currentId)!)
+      const edge = outgoingMap.get(currentId)
+      currentId = edge?.targetId
+    }
+    chains.push(chain)
   }
-  return result
+  return chains
 }

@@ -183,7 +183,7 @@ export default function PlotCanvas({
           type: MarkerType.ArrowClosed,
           color: isSelected ? (isTimeline ? '#fbbf24' : '#60a5fa') : (isTimeline ? '#d4a373' : '#6b7280'),
         },
-        label: e.type !== 'timeline' ? (e.label || EDGE_LABELS[e.type]) : undefined,
+        label: e.type !== 'timeline' ? (e.label ? (e.label.length > 20 ? e.label.slice(0, 20) + '…' : e.label) : EDGE_LABELS[e.type]) : undefined,
         labelStyle: { fontSize: 10, fill: '#9ca3af', background: '#1f2937', padding: '2px 6px', borderRadius: 4 },
       }
     }).filter(Boolean) as Edge[]

@@ -68,7 +68,7 @@ function ActGroupNode({ id, data, selected }: NodeProps<ActGroupData>) {
           detects the bottom-right hit area by coordinates so this marker does not
           cover edges or chapter nodes. */}
       <div
-        className={`nodrag absolute bottom-0 right-0 w-4 h-4 cursor-se-resize pointer-events-none transition-opacity ${hover || resizing ? 'opacity-100' : 'opacity-0'}`}
+        className={`nodrag absolute bottom-0 right-0 w-4 h-4 cursor-se-resize transition-opacity ${hover || resizing ? 'opacity-100' : 'opacity-0'}`}
         onPointerDown={onPointerDown}
       >
         <svg viewBox="0 0 16 16" className="w-full h-full" style={{ color: data.color }}>

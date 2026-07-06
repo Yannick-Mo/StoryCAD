@@ -162,7 +162,7 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
           <h4 className="text-sm font-medium text-amber-100">
             {MODE_LABELS[mode]}
           </h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg"></button>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg">✕</button>
         </div>
 
         <details className="text-xs text-gray-500">

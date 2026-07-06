@@ -40,28 +40,77 @@ export default function CharCanvas({
   const rfRef = useRef<ReactFlowInstance | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; icon?: string; disabled?: boolean; onClick: () => void }[][] } | null>(null)
 
-  const initialNodes: Node[] = useMemo(() =>
-    characters.map((ch, i) => ({
-      id: ch.id,
-      type: 'character',
-      position: { x: 60 + (i % 3) * 300, y: 100 + Math.floor(i / 3) * 220 },
-      data: { name: ch.name, role: ch.role, relations: ch.relations },
-    })), [characters])
+  const selectedCharId = selection.type === 'character' ? selection.id : null
 
-  const initialEdges: Edge[] = useMemo(() => {
-    const nodes = initialNodes
-    const result: Edge[] = []
-    const nodeMap = new Map(nodes.map(n => [n.id, n]))
-
+  const connectedIds = useMemo(() => {
+    if (!selectedCharId) return new Set<string>()
+    const ids = new Set<string>([selectedCharId])
     for (const ch of characters) {
       for (const rel of ch.relations) {
+        if (ch.id === selectedCharId) ids.add(rel.targetId)
+        if (rel.targetId === selectedCharId) ids.add(ch.id)
+      }
+    }
+    return ids
+  }, [characters, selectedCharId])
+
+  const visibleNodes: Node[] = useMemo(() =>
+    characters
+      .filter(ch => !selectedCharId || connectedIds.has(ch.id))
+      .map((ch, i) => ({
+        id: ch.id,
+        type: 'character',
+        position: { x: 60 + (i % 3) * 300, y: 100 + Math.floor(i / 3) * 220 },
+        data: { name: ch.name, role: ch.role, relations: ch.relations },
+      })),
+  [characters, selectedCharId, connectedIds])
+
+  const visibleEdges: Edge[] = useMemo(() => {
+    if (!selectedCharId) {
+      // Normal mode: show all edges
+      const nodes = visibleNodes
+      const result: Edge[] = []
+      const nodeMap = new Map(nodes.map(n => [n.id, n]))
+      for (const ch of characters) {
+        for (const rel of ch.relations) {
+          const src = nodeMap.get(ch.id)
+          const tgt = nodeMap.get(rel.targetId)
+          if (!src || !tgt) continue
+          const a = nodeCenter(src.position)
+          const b = nodeCenter(tgt.position)
+          const { sourceHandle, targetHandle } = getBestHandle(a, b)
+          const isSelected = selection.type === 'relation' && selection.id === `${ch.id}|${rel.id}`
+          result.push({
+            id: `e-${ch.id}-${rel.id}`,
+            source: ch.id,
+            target: rel.targetId,
+            sourceHandle,
+            targetHandle,
+            type: 'bezier',
+            label: (rel.label || rel.type).slice(0, 20) + ((rel.label || rel.type).length > 20 ? '…' : ''),
+            selected: isSelected,
+            style: { stroke: isSelected ? '#60a5fa' : '#8a8a8a', strokeWidth: isSelected ? 2 : 1.5 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? '#60a5fa' : '#8a8a8a' },
+          })
+        }
+      }
+      return result
+    }
+
+    // Focus mode: only edges connected to selected character
+    const nodes = visibleNodes
+    const result: Edge[] = []
+    const nodeMap = new Map(nodes.map(n => [n.id, n]))
+    for (const ch of characters) {
+      if (ch.id !== selectedCharId && !connectedIds.has(ch.id)) continue
+      for (const rel of ch.relations) {
+        if (ch.id !== selectedCharId && rel.targetId !== selectedCharId) continue
         const src = nodeMap.get(ch.id)
         const tgt = nodeMap.get(rel.targetId)
         if (!src || !tgt) continue
         const a = nodeCenter(src.position)
         const b = nodeCenter(tgt.position)
         const { sourceHandle, targetHandle } = getBestHandle(a, b)
-        const isSelected = selection.type === 'relation' && selection.id === `${ch.id}|${rel.id}`
         result.push({
           id: `e-${ch.id}-${rel.id}`,
           source: ch.id,
@@ -69,27 +118,27 @@ export default function CharCanvas({
           sourceHandle,
           targetHandle,
           type: 'bezier',
-          label: rel.type,
-          selected: isSelected,
-          style: { stroke: isSelected ? '#60a5fa' : '#8a8a8a', strokeWidth: isSelected ? 2 : 1.5 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? '#60a5fa' : '#8a8a8a' },
+          label: (rel.label || rel.type).slice(0, 20) + ((rel.label || rel.type).length > 20 ? '…' : ''),
+          selected: false,
+          style: { stroke: '#fbbf24', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#fbbf24' },
         })
       }
     }
     return result
-  }, [characters, initialNodes, selection])
+  }, [characters, visibleNodes, selection, selectedCharId, connectedIds])
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+  const [nodes, setNodes, onNodesChange] = useNodesState(visibleNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(visibleEdges)
 
   useEffect(() => {
     setNodes(prev => {
       const prevMap = new Map(prev.map(n => [n.id, n]))
-      return initialNodes.map(n => ({ ...n, position: prevMap.get(n.id)?.position ?? n.position }))
+      return visibleNodes.map(n => ({ ...n, position: prevMap.get(n.id)?.position ?? n.position }))
     })
-  }, [initialNodes, setNodes])
+  }, [visibleNodes, setNodes])
 
-  useEffect(() => { setEdges(initialEdges) }, [initialEdges, setEdges])
+  useEffect(() => { setEdges(visibleEdges) }, [visibleEdges, setEdges])
 
   const onConnect = useCallback((conn: import('reactflow').Connection) => {
     if (!conn.source || !conn.target || conn.source === conn.target) return

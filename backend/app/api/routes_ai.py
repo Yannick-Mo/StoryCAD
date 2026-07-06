@@ -1,9 +1,10 @@
 # backend/app/api/routes_ai.py
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
+from app.api.rate_limiter import rate_limiter
 from app.project.service import ProjectService
 from app.agent.orchestrator import AgentOrchestrator
 
@@ -19,11 +20,15 @@ router = APIRouter(prefix="/api/projects/{project_id}", tags=["ai"])
 
 @router.post("/ai/generate")
 async def ai_generate(
+    request: Request,
     project_id: uuid.UUID,
     payload: AiGenerateRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    if not rate_limiter.check(f"ai_generate:{current_user['id']}", max_attempts=10, window=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     svc = ProjectService(db)
     project = await svc.get_project(project_id, uuid.UUID(current_user["id"]))
     if not project:

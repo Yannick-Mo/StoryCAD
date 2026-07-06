@@ -5,12 +5,8 @@ engine = create_async_engine(settings.database_url, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-async def get_db() -> AsyncSession:
-    async with async_session() as session:
-        yield session
-
-
 async def init_db():
     from app.project.models import Base
+    from app.user.models import User
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

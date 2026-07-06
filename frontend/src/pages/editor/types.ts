@@ -1,27 +1,16 @@
 // View system
-export type Pillar = 'world' | 'narrative'
-
 export interface ViewDef {
   id: string
   label: string
-  pillar: Pillar
-  type: 'canvas' | 'info'
+  icon: string
 }
 
 export const VIEWS: ViewDef[] = [
-  // World
-  { id: 'world-map', label: '🗺️ 地图与势力', pillar: 'world', type: 'info' },
-  // Narrative
-  { id: 'narrative-plot', label: '🎬 情节幕布', pillar: 'narrative', type: 'canvas' },
-  { id: 'narrative-char', label: '👥 人物幕布', pillar: 'narrative', type: 'canvas' },
-  { id: 'narrative-rhythm', label: '📈 节奏幕布', pillar: 'narrative', type: 'canvas' },
-  { id: 'narrative-theme', label: '🎭 主题幕布', pillar: 'narrative', type: 'canvas' },
+  { id: 'narrative-plot', label: '情节', icon: '🎬' },
+  { id: 'narrative-char', label: '人物', icon: '👥' },
+  { id: 'narrative-rhythm', label: '节奏', icon: '📈' },
+  { id: 'narrative-theme', label: '主题', icon: '🎭' },
 ]
-
-export const PILLAR_VIEWS: Record<Pillar, ViewDef[]> = {
-  world: VIEWS.filter(v => v.pillar === 'world'),
-  narrative: VIEWS.filter(v => v.pillar === 'narrative'),
-}
 
 // Edge types
 export type EdgeType = 'timeline' | 'causal' | 'foreshadow' | 'character' | 'theme'
@@ -65,6 +54,7 @@ export interface Act {
 
 export interface Scene {
   id: string
+  chapter_id: string
   title: string
   povCharacter: string
   setting: string
@@ -88,6 +78,7 @@ export interface CharacterRelation {
   id: string
   targetId: string
   type: string
+  label: string
   description: string
 }
 
@@ -100,12 +91,6 @@ export interface Character {
   background: string
   motivation: string
   relations: CharacterRelation[]
-}
-
-export interface Causality {
-  id: string
-  cause: string
-  effect: string
 }
 
 export interface RhythmPoint {
@@ -126,59 +111,15 @@ export interface ThemeItem {
   connections: string[]
 }
 
-export interface Continent {
-  id: string
-  name: string
-  description: string
-}
-
-export interface Region {
-  id: string
-  name: string
-  continentId: string
-  description: string
-  climate: string
-  ruler: string
-  capital: string
-  resources: string[]
-  characterIds: string[]
-}
-
-export interface Faction {
-  id: string
-  name: string
-  territory: string[]
-  leader: string
-  goal: string
-  allies: string[]
-  enemies: string[]
-}
-
-export interface FactionRelation {
-  id: string
-  sourceId: string
-  targetId: string
-  type: 'alliance' | 'conflict' | 'trade' | 'vassal' | 'encroach'
-  description: string
-}
-
-export interface WorldInfo {
-  continents: Continent[]
-  regions: Region[]
-  factions: Faction[]
-  factionRelations: FactionRelation[]
-}
-
 export interface EditorMockData {
   projectTitle: string
   acts: Act[]
   chapters: Chapter[]
   edges: ChapterEdge[]
   characters: Character[]
-  causalities: Causality[]
   rhythms: RhythmPoint[]
   themes: ThemeItem[]
-  world: WorldInfo
+  globalSettings: string
 }
 
 // React Flow node data types

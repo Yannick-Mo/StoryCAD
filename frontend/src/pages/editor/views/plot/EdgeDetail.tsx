@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Act, Chapter, ChapterEdge, EdgeType } from '../../types'
 
 interface EdgeDetailProps {
@@ -7,14 +8,13 @@ interface EdgeDetailProps {
   onClose: () => void
   onChangeType: (edgeId: string, newType: EdgeType) => void
   onDelete: (edgeId: string) => void
+  onUpdateEdge: (id: string, updates: Partial<Pick<ChapterEdge, 'label'>>) => void
 }
 
 const EDGE_TYPE_OPTIONS: { value: EdgeType; label: string }[] = [
   { value: 'timeline', label: '时序主线' },
   { value: 'causal', label: '因果关系' },
   { value: 'foreshadow', label: '伏笔照应' },
-  { value: 'character', label: '人物关联' },
-  { value: 'theme', label: '主题关联' },
 ]
 
 const EDGE_TITLES: Record<EdgeType, string> = {
@@ -23,13 +23,6 @@ const EDGE_TITLES: Record<EdgeType, string> = {
   foreshadow: '伏笔照应',
   character: '人物关联',
   theme: '主题关联',
-}
-
-const EMPTY_NOTES: Record<Exclude<EdgeType, 'timeline'>, string> = {
-  causal: '说明这个事件如何推动后续结果。',
-  foreshadow: '说明这里埋下了什么，以及后续如何回收。',
-  character: '说明两章之间的人物关系如何变化。',
-  theme: '说明两章共享、呼应或对照的主题命题。',
 }
 
 const STATUS_LABELS: Record<Chapter['status'], string> = {
@@ -75,16 +68,20 @@ function ChapterCard({ label, chapter, act }: { label: string; chapter?: Chapter
   )
 }
 
-function TypeSpecificContent({ edge, source, target }: { edge: ChapterEdge; source?: Chapter; target?: Chapter }) {
-  if (edge.type === 'timeline') return null
-
+function TypeSpecificContent({ edge, source, target, onUpdateEdge }: {
+  edge: ChapterEdge
+  source?: Chapter
+  target?: Chapter
+  onUpdateEdge: (id: string, updates: Partial<Pick<ChapterEdge, 'label'>>) => void
+}) {
   const sourcePovs = getPovNames(source)
   const targetPovs = getPovNames(target)
   const sharedPovs = sourcePovs.filter(name => targetPovs.includes(name))
   const allPovs = unique([...sharedPovs, ...sourcePovs, ...targetPovs])
   const sourceFirstSummary = source?.scenes[0]?.summary
   const targetFirstSummary = target?.scenes[0]?.summary
-  const note = edge.label || EMPTY_NOTES[edge.type]
+
+  const note = edge.label || ''
 
   if (edge.type === 'foreshadow') {
     return (
@@ -99,7 +96,13 @@ function TypeSpecificContent({ edge, source, target }: { edge: ChapterEdge; sour
         </section>
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-1">伏笔说明</div>
-          <p className="text-xs text-gray-300 leading-relaxed">{note}</p>
+          <textarea
+            value={note}
+            onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+            placeholder="说明这里埋下了什么，以及后续如何回收..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
         </section>
       </div>
     )
@@ -118,7 +121,13 @@ function TypeSpecificContent({ edge, source, target }: { edge: ChapterEdge; sour
         </section>
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-1">关系变化</div>
-          <p className="text-xs text-gray-300 leading-relaxed">{note}</p>
+          <textarea
+            value={note}
+            onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+            placeholder="说明两章之间的人物关系如何变化..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
         </section>
       </div>
     )
@@ -129,7 +138,13 @@ function TypeSpecificContent({ edge, source, target }: { edge: ChapterEdge; sour
       <div className="space-y-3">
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-1">主题说明</div>
-          <p className="text-xs text-gray-300 leading-relaxed">{note}</p>
+          <textarea
+            value={note}
+            onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+            placeholder="说明两章共享、呼应或对照的主题命题..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
         </section>
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-1">目标对照</div>
@@ -142,12 +157,18 @@ function TypeSpecificContent({ edge, source, target }: { edge: ChapterEdge; sour
   return (
     <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
       <div className="text-[10px] text-gray-500 mb-1">因果内容</div>
-      <p className="text-xs text-gray-300 leading-relaxed">{note}</p>
+      <textarea
+        value={note}
+        onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+        placeholder="说明这个事件如何推动后续结果..."
+        className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+        rows={3}
+      />
     </section>
   )
 }
 
-export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType, onDelete }: EdgeDetailProps) {
+export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType, onDelete, onUpdateEdge }: EdgeDetailProps) {
   const source = chapters.find(chapter => chapter.id === edge.sourceId)
   const target = chapters.find(chapter => chapter.id === edge.targetId)
   const sourceAct = getAct(acts, source)
@@ -194,7 +215,17 @@ export default function EdgeDetail({ edge, chapters, acts, onClose, onChangeType
           </div>
         </div>
 
-        <TypeSpecificContent edge={edge} source={source} target={target} />
+        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
+          <div className="text-[10px] text-gray-500 mb-1">连线标签</div>
+          <input
+            value={edge.label}
+            onChange={e => onUpdateEdge(edge.id, { label: e.target.value })}
+            placeholder="显示在画布上的标签文字"
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-amber-600"
+          />
+        </section>
+
+        <TypeSpecificContent edge={edge} source={source} target={target} onUpdateEdge={onUpdateEdge} />
 
         <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3 space-y-3">
           <div>
