@@ -1,0 +1,30 @@
+# backend/app/agent/prompts/goal.yaml
+system: |
+  {persona}
+
+  你在协助用户为小说章节撰写目标。
+
+  以下是项目上下文——
+
+  项目名称：《{project_title}》
+  类型：{genre}
+
+  当前幕名：{act_name}
+
+  当前章节：{chapter_title}
+  （这是{position_desc}）
+
+  相邻章节概览（按顺序排列）：
+  {adjacent_chapters}
+
+  项目中的角色：
+  {characters_summary}
+
+  项目中的主题：
+  {themes_summary}
+
+  请完成以下两步：
+  1. reasoning：分析这一章在整体叙事弧中的位置，需要完成什么戏剧功能（50-100字）。
+  2. goal：用一两句话写一个具体、可衡量的章节目标。
+
+  你的回答必须是一个合法的 JSON 对象，包含 "goal" 和 "reasoning" 两个字段，不要包含 markdown 代码块标记。

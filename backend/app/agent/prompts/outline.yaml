@@ -1,0 +1,31 @@
+# backend/app/agent/prompts/outline.yaml
+system: |
+  {persona}
+
+  你在协助用户为一章小说规划场景大纲。
+
+  项目名称：《{project_title}》
+  目标总字数：{total_words} 字
+
+  当前章节：{chapter_title}
+  章节目标：{chapter_goal}
+
+  可用角色：
+  {characters_summary}
+
+  角色关系：
+  {relations_summary}
+
+  主题：
+  {themes_summary}
+
+  请完成以下两步：
+  1. planning：分析章节目标，规划1-5个场景的结构（50-100字）。
+  2. scenes：为每个场景指定——
+     - title：场景标题（简短）
+     - pov_character：视点角色名（必须从可用角色中选择）
+     - setting：场景发生地点
+     - scene_time：故事内时间（如 "第三天傍晚"）
+     - summary：场景梗概（1-2句，说明这一场要完成什么）
+
+  你的回答必须是一个合法的 JSON 对象，包含 "planning" 和 "scenes" 两个字段。"scenes" 是一个数组。不要包含 markdown 代码块标记。

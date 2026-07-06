@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 
 
@@ -11,6 +12,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="StoryCAD", version="0.2.0", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health():
@@ -18,24 +27,14 @@ async def health():
 
 
 def register_routers():
+    from app.api.routes_auth import router as auth_router
+    app.include_router(auth_router)
     from app.api.routes_project import router as project_router
     app.include_router(project_router)
-    from app.api.routes_analysis import router as analysis_router
-    app.include_router(analysis_router)
-    from app.api.routes_character import router as character_router
-    app.include_router(character_router)
-    from app.api.routes_world import router as world_router
-    app.include_router(world_router)
-    from app.api.routes_story import router as story_router
-    app.include_router(story_router)
-    from app.api.routes_validation import router as validation_router
-    app.include_router(validation_router)
-    from app.api.routes_knowledge_graph import router as kg_router
-    app.include_router(kg_router)
-    from app.api.routes_orchestrator import router as orchestrator_router
-    app.include_router(orchestrator_router)
-    from app.api.routes_export import router as export_router
-    app.include_router(export_router)
+    from app.api.routes_storycad import router as storycad_router
+    app.include_router(storycad_router)
+    from app.api.routes_ai import router as ai_router
+    app.include_router(ai_router)
 
 
 register_routers()

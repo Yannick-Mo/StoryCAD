@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { Chapter, Scene } from '../../types'
+import AiAssistModal from '../../modals/AiAssistModal'
+import type { SceneOutlineItem } from '../../../api/ai'
 
 interface ChapterDetailProps {
   chapter: Chapter | null
@@ -7,6 +9,11 @@ interface ChapterDetailProps {
   onSceneSave: (chapterId: string, sceneId: string, content: string) => void
   onChapterSave: (chapterId: string, goal: string) => void
   onOpenSceneEditor?: (scene: Scene) => void
+  onUpdateChapter: (id: string, updates: Partial<Pick<Chapter, 'title' | 'status'>>) => void
+  onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
+  onAddScene: (chapterId: string) => Scene
+  onDeleteScene: (chapterId: string, sceneId: string) => void
+  projectId?: string
 }
 
 const STATUS_OPTIONS = [
@@ -15,10 +22,11 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor }: ChapterDetailProps) {
+export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId }: ChapterDetailProps) {
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editGoal, setEditGoal] = useState('')
+  const [aiMode, setAiMode] = useState<'goal' | 'outline' | 'writing' | null>(null)
 
   if (!chapter) return null
 
@@ -36,88 +44,233 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
     }
   }
 
+  const handleAddScene = () => {
+    const sc = onAddScene(chapter.id)
+    setEditSceneId(sc.id)
+    setEditContent('')
+  }
+
   return (
     <div className="absolute right-0 top-0 h-full w-96 bg-gray-900/95 backdrop-blur-xl border-l border-gray-800 z-20 flex flex-col shadow-2xl">
       {/* Header */}
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-medium text-amber-100">{chapter.title}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
-        </div>
-        <input
-          value={editGoal || chapter.goal}
-          onChange={e => setEditGoal(e.target.value)}
-          onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal || chapter.goal) }}
-          placeholder="本章目标..."
-          className="w-full bg-transparent text-xs text-gray-400 placeholder-gray-600 outline-none border-b border-transparent focus:border-amber-600/50 pb-0.5"
-        />
-        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-          <span>{chapter.scenes.length} 场</span>
-          <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-            chapter.status === 'final' ? 'bg-green-900/30 text-green-400' :
-            chapter.status === 'revising' ? 'bg-amber-900/30 text-amber-400' :
-            'bg-gray-800 text-gray-400'
-          }`}>
-            {STATUS_OPTIONS.find(s => s.value === chapter.status)?.label}
-          </span>
+      <div className="p-4 border-b border-gray-800 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                value={chapter.title}
+                onChange={e => onUpdateChapter(chapter.id, { title: e.target.value })}
+                className="flex-1 bg-transparent font-medium text-amber-100 outline-none border-b border-transparent focus:border-amber-600/50"
+              />
+              <select
+                value={chapter.status}
+                onChange={e => onUpdateChapter(chapter.id, { status: e.target.value as Chapter['status'] })}
+                className={`px-1.5 py-0.5 rounded text-[10px] outline-none border border-transparent focus:border-amber-600/50 ${
+                  chapter.status === 'final' ? 'bg-green-900/30 text-green-400' :
+                  chapter.status === 'revising' ? 'bg-amber-900/30 text-amber-400' :
+                  'bg-gray-800 text-gray-400'
+                }`}
+              >
+                {STATUS_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value} className="bg-gray-900 text-gray-300">{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-gray-500">
+              <span>{chapter.scenes.length} 场</span>
+              <span>{totalWords > 0 ? `${totalWords} 字` : '未开始'}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none shrink-0">✕</button>
         </div>
       </div>
 
-      {/* Scene list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {chapter.scenes.map(scene => (
-          <div key={scene.id} className="bg-gray-800/60 border border-gray-700/50 rounded-xl overflow-hidden">
-            <div className="p-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium text-gray-200">{scene.title}</span>
-                <span className="text-[10px] text-gray-500">{scene.wordCount > 0 ? `${scene.wordCount} 字` : '空'}</span>
-              </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500 mb-2">
-                <span>🎭 {scene.povCharacter}</span>
-                <span>📍 {scene.setting}</span>
-                <span>⏰ {scene.time}</span>
-              </div>
-              <div className="text-[11px] text-gray-400 italic mb-2 line-clamp-2">{scene.summary}</div>
-              {editSceneId === scene.id ? (
-                <div className="space-y-2">
-                  <textarea
-                    value={editContent}
-                    onChange={e => setEditContent(e.target.value)}
-                    className="w-full h-32 bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 font-mono leading-relaxed"
-                    placeholder="在这里写小说正文..."
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={saveScene} className="px-3 py-1 rounded-lg bg-amber-600 text-xs font-medium text-black hover:bg-amber-500 transition-colors">保存</button>
-                    <button onClick={() => setEditSceneId(null)} className="px-3 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
+      <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {/* Goal section */}
+        <section className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-3">
+          <div className="text-[10px] text-gray-500 mb-1.5">📝 本章目标</div>
+          <textarea
+            value={editGoal || chapter.goal}
+            onChange={e => setEditGoal(e.target.value)}
+            onBlur={() => { if (editGoal !== chapter.goal) onChapterSave(chapter.id, editGoal || chapter.goal) }}
+            placeholder="写一段话概括本章要完成什么..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed"
+            rows={3}
+          />
+        </section>
+
+        {/* Scenes section */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-gray-500">🎬 场景 ({chapter.scenes.length})</span>
+            <button
+              onClick={handleAddScene}
+              className="text-[10px] px-2 py-1 rounded bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 transition-colors"
+            >
+              + 添加场景
+            </button>
+          </div>
+
+          {chapter.scenes.length === 0 ? (
+            <div className="text-center py-8 bg-gray-800/20 border border-dashed border-gray-700/50 rounded-xl">
+              <div className="text-gray-600 text-xs mb-3">暂无场景，添加第一个场景开始创作</div>
+              <button
+                onClick={handleAddScene}
+                className="px-4 py-2 rounded-lg bg-amber-600/20 text-amber-400 text-sm hover:bg-amber-600/30 transition-colors"
+              >
+                + 创建场景
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {chapter.scenes.map(scene => (
+                <div key={scene.id} className="bg-gray-800/60 border border-gray-700/50 rounded-xl overflow-hidden">
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <input
+                        value={scene.title}
+                        onChange={e => onUpdateScene(chapter.id, scene.id, { title: e.target.value })}
+                        className="flex-1 bg-transparent text-sm font-medium text-gray-200 outline-none border-b border-transparent focus:border-amber-600/50"
+                      />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-gray-500">{scene.wordCount > 0 ? `${scene.wordCount} 字` : '空'}</span>
+                        <button
+                          onClick={() => onDeleteScene(chapter.id, scene.id)}
+                          className="text-gray-600 hover:text-red-400 transition-colors text-[10px]"
+                          title="删除场景"
+                        >✕</button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500">
+                      <span className="flex items-center gap-1">
+                        🎭
+                        <input
+                          value={scene.povCharacter}
+                          onChange={e => onUpdateScene(chapter.id, scene.id, { povCharacter: e.target.value })}
+                          className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-16"
+                          placeholder="POV"
+                        />
+                      </span>
+                      <span className="flex items-center gap-1">
+                        📍
+                        <input
+                          value={scene.setting}
+                          onChange={e => onUpdateScene(chapter.id, scene.id, { setting: e.target.value })}
+                          className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
+                          placeholder="场景"
+                        />
+                      </span>
+                      <span className="flex items-center gap-1">
+                        ⏰
+                        <input
+                          value={scene.time}
+                          onChange={e => onUpdateScene(chapter.id, scene.id, { time: e.target.value })}
+                          className="bg-transparent outline-none border-b border-transparent focus:border-amber-600/50 w-20"
+                          placeholder="时间"
+                        />
+                      </span>
+                    </div>
+                    <textarea
+                      value={scene.summary}
+                      onChange={e => onUpdateScene(chapter.id, scene.id, { summary: e.target.value })}
+                      placeholder="梗概..."
+                      className="w-full bg-transparent text-[11px] text-gray-400 italic outline-none resize-none border-b border-transparent focus:border-amber-600/50 leading-relaxed"
+                      rows={1}
+                    />
+                    {editSceneId === scene.id ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={editContent}
+                          onChange={e => setEditContent(e.target.value)}
+                          className="w-full h-32 bg-gray-950 border border-gray-700 rounded-lg p-2 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 font-mono leading-relaxed"
+                          placeholder="在这里写小说正文..."
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={saveScene} className="px-3 py-1 rounded-lg bg-amber-600 text-xs font-medium text-black hover:bg-amber-500 transition-colors">保存</button>
+                          <button onClick={() => setEditSceneId(null)} className="px-3 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => startEdit(scene)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                          scene.content
+                            ? 'bg-gray-950/50 text-gray-400 hover:bg-gray-800 border border-gray-800'
+                            : 'bg-gray-800/30 text-gray-600 hover:bg-gray-700 border border-dashed border-gray-700'
+                        }`}
+                      >
+                        {scene.content
+                          ? <span className="line-clamp-3 font-mono leading-relaxed">{scene.content}</span>
+                          : '✏️ 点击开始写作...'}
+                      </button>
+                    )}
+                    {editSceneId !== scene.id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onOpenSceneEditor?.(scene) }}
+                        className="w-full px-2 py-1 rounded text-[10px] text-gray-600 hover:text-gray-400 hover:bg-gray-700/50 transition-colors text-center"
+                      >
+                        全屏编辑 ↗
+                      </button>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => startEdit(scene)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
-                    scene.content
-                      ? 'bg-gray-950/50 text-gray-400 hover:bg-gray-800 border border-gray-800'
-                      : 'bg-gray-800/30 text-gray-600 hover:bg-gray-700 border border-dashed border-gray-700'
-                  }`}
-                >
-                  {scene.content
-                    ? <span className="line-clamp-3 font-mono leading-relaxed">{scene.content}</span>
-                    : '✏️ 点击开始写作...'}
-                </button>
-              )}
-              {editSceneId !== scene.id && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onOpenSceneEditor?.(scene) }}
-                  className="w-full mt-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:text-gray-400 hover:bg-gray-700/50 transition-colors text-center"
-                >
-                  全屏编辑 ↗
-                </button>
-              )}
+              ))}
             </div>
+          )}
+        </section>
+
+        {/* AI Assist section */}
+        <section className="bg-gray-800/20 border border-gray-700/30 rounded-xl p-3">
+          <div className="text-[10px] text-gray-500 mb-2">🤖 AI 辅助</div>
+          <div className="flex flex-col gap-1.5">
+            <button
+              onClick={() => setAiMode('goal')}
+              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
+            >
+              ✨ 生成章节目标
+            </button>
+            <button
+              onClick={() => setAiMode('outline')}
+              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
+            >
+              ✨ 生成场景大纲
+            </button>
+            <button
+              onClick={() => setAiMode('writing')}
+              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
+            >
+              ✍️ 辅助写作
+            </button>
           </div>
-        ))}
+        </section>
       </div>
+
+      {/* AI Modal */}
+      {aiMode && projectId && (
+        <AiAssistModal
+          mode={aiMode}
+          projectId={projectId}
+          chapter={chapter}
+          onClose={() => setAiMode(null)}
+          onApplyGoal={(goal) => {
+            onChapterSave(chapter.id, goal)
+            setAiMode(null)
+          }}
+          onApplyOutlines={(outlines) => {
+            outlines.forEach((sc) => {
+              const newScene = onAddScene(chapter.id)
+              onUpdateScene(chapter.id, newScene.id, {
+                title: sc.title,
+                povCharacter: sc.pov_character,
+                setting: sc.setting,
+                time: sc.scene_time,
+                summary: sc.summary,
+              })
+            })
+            setAiMode(null)
+          }}
+        />
+      )}
     </div>
   )
 }
