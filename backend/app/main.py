@@ -35,6 +35,8 @@ def register_routers():
     app.include_router(storycad_router)
     from app.api.routes_ai import router as ai_router
     app.include_router(ai_router)
+    from app.api.routes_ai import material_router
+    app.include_router(material_router)
 
 
 register_routers()

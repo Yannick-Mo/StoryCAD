@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { FilePlus2, FolderUp, X } from "lucide-react"
 import { createProject } from "../../api/auth"
+import { createFromMaterial, type ProgressEvent } from "../../api/ai"
 
 interface Props {
   open: boolean
@@ -9,9 +10,12 @@ interface Props {
 }
 
 export default function CreateProjectDialog({ open, onClose }: Props) {
-  const [mode, setMode] = useState<"pick" | "empty">("pick")
+  const [mode, setMode] = useState<"pick" | "empty" | "material">("pick")
   const [title, setTitle] = useState("")
   const [busy, setBusy] = useState(false)
+  const [materialText, setMaterialText] = useState("")
+  const [aiSteps, setAiSteps] = useState<ProgressEvent[]>([])
+  const [aiGenerating, setAiGenerating] = useState(false)
   const navigate = useNavigate()
 
   if (!open) return null
@@ -30,6 +34,35 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
   function handleBack() {
     setMode("pick")
     setTitle("")
+  }
+
+  function handleStartMaterial() {
+    setMode("material")
+    setTitle("")
+    setMaterialText("")
+    setAiSteps([])
+    setAiGenerating(false)
+  }
+
+  function handleCreateFromMaterial() {
+    if (!materialText.trim() || !title.trim()) return
+    setAiGenerating(true)
+    setAiSteps([])
+    const events: ProgressEvent[] = []
+    createFromMaterial(
+      { title: title.trim(), material: materialText.trim() },
+      (evt) => {
+        events.push(evt)
+        setAiSteps([...events])
+      },
+      (projectId) => {
+        navigate(`/projects/${projectId}`)
+      },
+      (msg) => {
+        alert(msg)
+        setAiGenerating(false)
+      },
+    )
   }
 
   return (
@@ -60,17 +93,16 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                 </div>
               </button>
               <button
-                disabled
-                className="w-full flex items-center gap-5 p-5 rounded-xl bg-gray-800/50 border border-gray-800 text-left opacity-50 cursor-not-allowed"
+                onClick={handleStartMaterial}
+                className="w-full flex items-center gap-5 p-5 rounded-xl bg-gray-800 border border-gray-700 hover:border-yellow-500/50 hover:bg-gray-800/80 transition-all text-left group"
               >
-                <div className="w-12 h-12 rounded-full bg-yellow-500/10 text-yellow-400 flex items-center justify-center shrink-0">
+                <div className="w-12 h-12 rounded-full bg-yellow-500/10 text-yellow-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                   <FolderUp className="w-6 h-6" />
                 </div>
                 <div className="flex-1">
-                  <div className="font-bold text-gray-500 mb-0.5">从素材创建</div>
-                  <div className="text-sm text-gray-600">通过文档或大纲导入</div>
+                  <div className="font-bold text-gray-100 mb-0.5">从素材创建</div>
+                  <div className="text-sm text-gray-500">粘贴故事创意，AI 自动搭建项目框架</div>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-400">即将推出</span>
               </button>
             </div>
           </>
@@ -110,6 +142,90 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                 {busy ? "创建中..." : "创建项目"}
               </button>
             </div>
+          </>
+        )}
+
+        {mode === "material" && !aiGenerating && aiSteps.length === 0 && (
+          <>
+            <div className="flex items-center gap-3 mb-6">
+              <button onClick={() => setMode("pick")} className="text-gray-500 hover:text-gray-300 transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <h2 className="text-xl font-bold text-gray-100">从素材创建</h2>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-2">项目名称</label>
+              <input
+                autoFocus
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="输入项目名称..."
+                className="w-full px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-yellow-500/50 transition-colors"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm text-gray-400 mb-2">
+                创作素材 <span className="text-gray-600">（粘贴你的故事创意、角色设定、情节大纲...）</span>
+              </label>
+              <textarea
+                value={materialText}
+                onChange={e => setMaterialText(e.target.value)}
+                placeholder="例如：一个退隐杀手在边境小镇收到养女被绑架的消息，被迫重出江湖。小镇上所有人都藏着秘密，而他必须在三天内找到女儿..."
+                className="w-full h-40 px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-yellow-500/50 transition-colors resize-none"
+                maxLength={5000}
+              />
+              <div className="text-right text-[10px] text-gray-600 mt-1">{materialText.length}/5000</div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setMode("pick")} className="px-5 py-2.5 rounded-xl text-gray-400 hover:text-gray-200 transition-colors">返回</button>
+              <button
+                onClick={handleCreateFromMaterial}
+                disabled={!title.trim() || !materialText.trim()}
+                className="px-6 py-2.5 rounded-xl bg-yellow-600 text-white font-bold hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                AI 分析与生成
+              </button>
+            </div>
+          </>
+        )}
+
+        {mode === "material" && (aiGenerating || aiSteps.length > 0) && (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-100">AI 正在生成项目框架...</h2>
+              <button onClick={() => navigate("/")} className="text-gray-500 hover:text-white text-lg">✕</button>
+            </div>
+            <div className="space-y-2 mb-6">
+              {["analyze_material", "plan_structure", "design_characters", "build_settings", "validate"].map(step => {
+                const evt = aiSteps.find(e => e.step === step)
+                const labels: Record<string, string> = {
+                  analyze_material: "分析素材",
+                  plan_structure: "规划结构",
+                  design_characters: "设计角色",
+                  build_settings: "生成世界观",
+                  validate: "校验结果",
+                }
+                const icon = evt ? "✓" : aiSteps.length > 0 && aiSteps[aiSteps.length - 1].step === step ? "⏳" : "○"
+                const active = !!evt
+                return (
+                  <div key={step} className={`flex items-start gap-3 p-2 rounded-lg ${active ? 'bg-gray-800/60' : ''}`}>
+                    <span className={`text-sm w-5 ${active ? 'text-green-400' : 'text-gray-600'}`}>{icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm ${active ? 'text-gray-200' : 'text-gray-600'}`}>{labels[step]}</div>
+                      {evt?.preview && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">{evt.preview}</div>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {!aiSteps.find(e => e.step === "done") && !aiSteps.find(e => e.step === "error") && (
+              <div className="text-center text-sm text-gray-500 animate-pulse">
+                {aiSteps.length >= 5 ? "正在写入项目数据..." : "AI 思考中..."}
+              </div>
+            )}
+            {aiSteps.find(e => e.step === "done") && (
+              <div className="text-center text-sm text-green-400">项目创建完成！正在跳转...</div>
+            )}
           </>
         )}
       </div>
