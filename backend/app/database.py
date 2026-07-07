@@ -6,7 +6,4 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 async def init_db():
-    from app.project.models import Base
-    from app.user.models import User
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    pass
