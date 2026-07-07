@@ -142,6 +142,8 @@ async def get_entity(
     result = await repo.get_entity(model_class, entity_id)
     if not result:
         raise HTTPException(status_code=404, detail="Entity not found")
+    if result.get("project_id") != str(project_id):
+        raise HTTPException(status_code=404, detail="Entity not found")
     return result
 
 
@@ -158,8 +160,13 @@ async def update_entity(
     model_class = ENTITY_MAP.get(entity_type)
     if not model_class:
         raise HTTPException(status_code=400, detail=f"Unknown entity type: {entity_type}")
-    payload["id"] = str(entity_id)
     repo = await _get_repo(db)
+    entity = await repo.get_entity(model_class, entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    if entity.get("project_id") != str(project_id):
+        raise HTTPException(status_code=404, detail="Entity not found")
+    payload["id"] = str(entity_id)
     result = await repo.update_entity(model_class, payload)
     if not result:
         raise HTTPException(status_code=404, detail="Entity not found")
@@ -180,6 +187,11 @@ async def delete_entity(
     if not model_class:
         raise HTTPException(status_code=400, detail=f"Unknown entity type: {entity_type}")
     repo = await _get_repo(db)
+    entity = await repo.get_entity(model_class, entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    if entity.get("project_id") != str(project_id):
+        raise HTTPException(status_code=404, detail="Entity not found")
     ok = await repo.delete_entity(model_class, entity_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Entity not found")
