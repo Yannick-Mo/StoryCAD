@@ -6,7 +6,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     jwt_secret_key: str = ""
     jwt_expire_hours: int = 24
-    deepseek_api_key: str = ""
+
+    # LLM configuration
+    deepseek_api_key: str = ""      # deprecated, use llm_api_key
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com/v1"
+    llm_model: str = "deepseek-chat"
 
     class Config:
         env_file = ".env"

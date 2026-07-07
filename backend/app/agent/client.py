@@ -5,9 +5,9 @@ from app.config import settings
 
 class LLMClient:
     def __init__(self):
-        self.api_key = settings.deepseek_api_key
-        self.base_url = "https://api.deepseek.com/v1"
-        self.model = "deepseek-chat"
+        self.api_key = settings.llm_api_key or settings.deepseek_api_key
+        self.base_url = settings.llm_base_url.rstrip("/")
+        self.model = settings.llm_model
 
     async def chat(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096) -> str:
         async with httpx.AsyncClient(timeout=120.0) as client:
