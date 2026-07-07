@@ -64,7 +64,7 @@ async def get_scene_content(
 ):
     await _check_project_owner(project_id, current_user, db)
     repo = await _get_repo(db)
-    content = await repo.get_scene_content(scene_id)
+    content = await repo.get_scene_content(scene_id, project_id)
     return {"scene_id": str(scene_id), "content": content or ""}
 
 
@@ -80,7 +80,9 @@ async def save_scene_content(
     repo = await _get_repo(db)
     content = payload.get("content", "")
     word_count = len(content.split())
-    await repo.save_scene_content(scene_id, project_id, content)
+    ok = await repo.save_scene_content(scene_id, project_id, content)
+    if ok is None:
+        raise HTTPException(status_code=404, detail="Scene not found")
     await db.execute(
         Scene.__table__.update().where(Scene.id == scene_id).values(word_count=word_count)
     )

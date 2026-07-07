@@ -139,7 +139,13 @@ class StoryCADRepository:
     # Scene content (separate, lazy-loaded)
     # ============================================================
 
-    async def get_scene_content(self, scene_id: uuid.UUID) -> str | None:
+    async def get_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID) -> str | None:
+        # Verify scene belongs to project before returning content
+        scene = await self.db.execute(
+            select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id)
+        )
+        if not scene.scalar_one_or_none():
+            return None
         result = await self.db.execute(
             select(SceneContent).where(SceneContent.scene_id == scene_id)
         )
@@ -147,6 +153,12 @@ class StoryCADRepository:
         return sc.content if sc else None
 
     async def save_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID, content: str):
+        # Verify scene belongs to project
+        scene = await self.db.execute(
+            select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id)
+        )
+        if not scene.scalar_one_or_none():
+            return None
         result = await self.db.execute(
             select(SceneContent).where(SceneContent.scene_id == scene_id)
         )
@@ -155,7 +167,8 @@ class StoryCADRepository:
             sc.content = content
         else:
             self.db.add(SceneContent(scene_id=scene_id, project_id=project_id, content=content))
-        await self.db.commit()
+        await self.db.flush()
+        return True
 
     # ============================================================
     # Per-entity CRUD
