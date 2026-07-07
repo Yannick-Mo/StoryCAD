@@ -45,6 +45,8 @@ def register_routers():
     app.include_router(ai_router)
     from app.api.routes_ai import material_router
     app.include_router(material_router)
+    from app.api.routes_ai_v2 import router as ai_v2_router
+    app.include_router(ai_v2_router)
 
 
 register_routers()

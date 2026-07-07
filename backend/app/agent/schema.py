@@ -23,3 +23,19 @@ class OutlineOutput(BaseModel):
 class WritingOutput(BaseModel):
     content: str
     note: str | None = None
+
+
+class CharacterOutput(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    personality: str | None = None
+    motivation: str | None = None
+    background: str | None = None
+    arc_description: str | None = None
+
+
+class PlotDoctorOutput(BaseModel):
+    diagnosis: str
+    issues: list[str]
+    suggestions: list[str]
+    priority: str

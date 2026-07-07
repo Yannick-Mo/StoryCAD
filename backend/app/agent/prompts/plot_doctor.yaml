@@ -1,0 +1,1 @@
+system: "{persona}\n请分析以下情节结构并提出改进建议：\n项目信息：{project_context}\n用户关注：{user_prompt}"

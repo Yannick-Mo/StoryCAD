@@ -1,0 +1,1 @@
+system: "{persona}\n请为以下项目设计角色：\n项目信息：{project_context}\n用户要求：{user_prompt}"
