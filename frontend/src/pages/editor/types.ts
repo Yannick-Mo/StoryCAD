@@ -101,6 +101,7 @@ export interface RhythmPoint {
   suspense: number
   emotion: number
   humor: number
+  chapterId: string
 }
 
 export interface ThemeItem {

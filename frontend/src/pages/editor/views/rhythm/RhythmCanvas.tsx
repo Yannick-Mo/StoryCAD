@@ -1,5 +1,6 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import type { RhythmPoint, Chapter, Act } from '../../types'
+import { RhythmEditPanel } from './RhythmEditPanel'
 
 interface RhythmCanvasProps {
   rhythms: RhythmPoint[]
@@ -7,6 +8,7 @@ interface RhythmCanvasProps {
   acts: Act[]
   selectedIndex: number | null
   onSelectChapter: (index: number) => void
+  onSaveRhythm: (chapterId: string, values: { action: number; suspense: number; emotion: number; humor: number; intensity: number }) => void
 }
 
 const BAR_W = 40
@@ -26,7 +28,8 @@ function paceNote(words: number, intensity: number): string {
   return '适中'
 }
 
-export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, onSelectChapter }: RhythmCanvasProps) {
+export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, onSelectChapter, onSaveRhythm }: RhythmCanvasProps) {
+  const [editChapter, setEditChapter] = useState<{ id: string; title: string; values: any } | null>(null)
   const totalW = Math.max(rhythms.length * (BAR_W + GAP) + PAD_L + PAD_R, 400)
 
   const actBoundaries = useMemo(() => {
@@ -51,8 +54,15 @@ export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, o
   }, [rhythms])
 
   const handleBarClick = useCallback((index: number) => {
+    const r = rhythms[index]
+    const ch = chapters[r.chapterIndex]
+    setEditChapter({
+      id: r.chapterId,
+      title: ch?.title || r.label,
+      values: { action: r.action, suspense: r.suspense, emotion: r.emotion, humor: r.humor, intensity: r.intensity },
+    })
     onSelectChapter(index)
-  }, [onSelectChapter])
+  }, [rhythms, chapters, onSelectChapter])
 
   return (
     <div className="h-full w-full flex flex-col overflow-auto p-4">
@@ -165,6 +175,18 @@ export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, o
           </tbody>
         </table>
       </div>
+
+      {editChapter && (
+        <RhythmEditPanel
+          chapterTitle={editChapter.title}
+          initialValues={editChapter.values}
+          onSave={(values) => {
+            onSaveRhythm(editChapter.id, values)
+            setEditChapter(null)
+          }}
+          onClose={() => setEditChapter(null)}
+        />
+      )}
     </div>
   )
 }
