@@ -72,10 +72,31 @@ async def _generate_one_chapter(
 
 
 async def generate_all_scenes(state: MaterialState) -> dict:
+    sem = asyncio.Semaphore(5)
+
+    async def _generate_one(
+        act_idx: int,
+        chap_idx: int,
+        act_name: str,
+        chapter_title: str,
+        chapter_goal: str,
+        characters_raw: list[dict],
+        world_elements: str,
+    ) -> list[SceneDef]:
+        async with sem:
+            return await _generate_one_chapter(
+                act_idx, chap_idx,
+                act_name,
+                chapter_title,
+                chapter_goal,
+                characters_raw,
+                world_elements,
+            )
+
     tasks = []
     for act_idx, act in enumerate(state.get("acts", [])):
         for chap_idx, chapter in enumerate(act.get("chapters", [])):
-            tasks.append(_generate_one_chapter(
+            tasks.append(_generate_one(
                 act_idx, chap_idx,
                 act.get("name", ""),
                 chapter.get("title", ""),
