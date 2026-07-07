@@ -65,3 +65,17 @@ class ProjectService:
         if not project or project.owner_id != owner_id:
             return False
         return await self.repo.delete(project_id)
+
+    async def get_config(self, owner_id: uuid.UUID, project_id: uuid.UUID):
+        project = await self.repo.get(project_id)
+        if not project or project.owner_id != owner_id:
+            return None
+        return await self.repo.get_config(project_id)
+
+    async def update_config(self, owner_id: uuid.UUID, project_id: uuid.UUID, data: dict):
+        project = await self.repo.get(project_id)
+        if not project or project.owner_id != owner_id:
+            return None
+        allowed = {"total_words", "template_type", "target_audience"}
+        filtered = {k: v for k, v in data.items() if k in allowed}
+        return await self.repo.upsert_config(project_id, **filtered)

@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
 from app.project.service import ProjectService
+from app.utils import row_to_dict
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -102,3 +103,30 @@ async def get_version(project_id: uuid.UUID, version: int, current_user: dict = 
     if not target:
         raise HTTPException(status_code=404, detail="Version not found")
     return {"version": target.version, "snapshot": target.snapshot, "created_at": target.created_at.isoformat()}
+
+
+@router.get("/{project_id}/config")
+async def get_project_config(
+    project_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ProjectService(db)
+    config = await service.get_config(uuid.UUID(current_user["id"]), project_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    return row_to_dict(config)
+
+
+@router.put("/{project_id}/config")
+async def update_project_config(
+    project_id: uuid.UUID,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ProjectService(db)
+    config = await service.update_config(uuid.UUID(current_user["id"]), project_id, payload)
+    if not config:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"success": True}
