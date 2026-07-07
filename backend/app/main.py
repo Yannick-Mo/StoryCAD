@@ -51,6 +51,8 @@ def register_routers():
     app.include_router(inspiration_router)
     from app.api.routes_rhythm import router as rhythm_router
     app.include_router(rhythm_router)
+    from app.api.routes_consistency import router as consistency_router
+    app.include_router(consistency_router)
 
     from app.mcp.server import mcp
     app.mount("/mcp", mcp.sse_app())
