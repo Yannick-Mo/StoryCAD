@@ -17,6 +17,7 @@ import ThemeDetail from '../views/theme/ThemeDetail'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
+import AiChatPanel from '../modals/AiChatPanel'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { saveSceneContent } from '../../../api/editor'
@@ -527,6 +528,16 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
             onClose={() => setEditingScene(null)}
             onSaved={handleSceneSaved}
+          />
+        )}
+
+        {aiChatOpen && (
+          <AiChatPanel
+            projectId={projectId}
+            onClose={() => setAiChatOpen(false)}
+            onApply={(content: string) => {
+              console.log('AI content:', content)
+            }}
           />
         )}
 
