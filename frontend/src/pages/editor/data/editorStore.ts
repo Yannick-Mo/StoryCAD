@@ -387,5 +387,6 @@ export function useEditorStore(projectId: string) {
     updateAct, updateChapter, updateScene, updateEdge,
     updateCharacter, updateRelation,
     flushChanges, hasPendingChanges,
+    enqueueChange,
   }
 }

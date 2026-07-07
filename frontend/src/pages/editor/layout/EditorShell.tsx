@@ -145,7 +145,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           />
         )
       case 'narrative-rhythm':
-        return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} />
+        return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => { store.setData(d => d ? { ...d, rhythms: d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r) } : d); store.enqueueChange({ entity: 'rhythms', op: 'update', id: chapterId, data: values as Record<string, unknown> }) }} />
       case 'narrative-theme':
         return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} />
       default:
