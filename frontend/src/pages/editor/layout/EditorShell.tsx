@@ -242,22 +242,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 if (sel.type === 'edge') store.deleteEdge(sel.id!)
                 store.clearSelection()
               }}
-              onRenameAct={() => {
-                if (store.selection?.type === 'act') {
-                  const act = data.acts.find(a => a.id === store.selection.id)
-                  const name = prompt('重命名幕：', act?.name)
-                  if (name && act) { store.updateAct(act.id, { name }) }
-                }
-                store.clearSelection()
-              }}
-              onEditChapterGoal={() => {
-                if (store.selection.type === 'chapter') {
-                  const ch = data.chapters.find(c => c.id === store.selection.id)
-                  if (ch) { setSelectedChapter({ ...ch }); store.clearSelection() }
-                }
-              }}
               onLayout={handleAutoLayout}
-              onExport={handleExport}
             />
           )}
 
@@ -440,9 +425,6 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           )}
 
           <ActionButtons
-            onPreview={() => setPreviewOpen(true)}
-            onExport={handleExport}
-            onGlobalSetting={() => setGlobalSettingsOpen(true)}
             onAIChat={() => setAiChatOpen(true)}
             onInspiration={() => setInspirationOpen(true)}
             onRhythmAnalysis={handleRhythmAnalysis}
@@ -574,6 +556,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         <BottomNav
           activeViewId={views.activeViewId}
           onSwitchView={views.switchView}
+          onPreview={() => setPreviewOpen(true)}
+          onExport={handleExport}
+          onGlobalSetting={() => setGlobalSettingsOpen(true)}
         />
       </div>
       <ConfirmDialog

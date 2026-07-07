@@ -10,8 +10,8 @@ async def mcp_lifespan(server: FastMCP):
 
 mcp = FastMCP(
     "StoryCAD MCP",
+    instructions="StoryCAD project management MCP server — read/write projects, chapters, scenes, characters, and run analysis.",
     lifespan=mcp_lifespan,
-    description="StoryCAD project management MCP server — read/write projects, chapters, scenes, characters, and run analysis.",
 )
 
 

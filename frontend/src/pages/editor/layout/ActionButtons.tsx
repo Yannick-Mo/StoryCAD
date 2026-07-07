@@ -1,20 +1,23 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 interface ActionButtonsProps {
-  onPreview: () => void
-  onExport: () => void
-  onGlobalSetting: () => void
   onAIChat: () => void
   onInspiration: () => void
   onRhythmAnalysis: () => void
   onConsistencyCheck: () => void
 }
 
+const DRAG_THRESHOLD = 5
+
 export default function ActionButtons({
-  onPreview, onExport, onGlobalSetting,
   onAIChat, onInspiration, onRhythmAnalysis, onConsistencyCheck
 }: ActionButtonsProps) {
   const [aiMenuOpen, setAiMenuOpen] = useState(false)
+  const [pos, setPos] = useState(() => ({ x: window.innerWidth - 80, y: window.innerHeight - 200 }))
+  const dragging = useRef(false)
+  const dragStart = useRef({ x: 0, y: 0 })
+  const startPos = useRef({ x: 0, y: 0 })
+  const wasDrag = useRef(false)
 
   const aiItems = [
     { label: '💬 AI 对话', action: onAIChat },
@@ -23,44 +26,78 @@ export default function ActionButtons({
     { label: '✅ 一致性检查', action: onConsistencyCheck },
   ]
 
-  return (
-    <div className="absolute right-4 bottom-[188px] z-10 flex flex-col items-end gap-2">
-      {/* AI main button (larger, above others) */}
-      <div className="relative">
-        <button
-          onClick={() => setAiMenuOpen(!aiMenuOpen)}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm bg-gradient-to-r from-amber-700/80 to-amber-600/80 border border-amber-500/50 text-white hover:from-amber-600 hover:to-amber-500 transition-all backdrop-blur-sm shadow-lg shadow-amber-900/20"
-        >
-          🤖 AI
-        </button>
-        {aiMenuOpen && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setAiMenuOpen(false)} />
-            <div className="absolute bottom-full mb-2 right-0 z-50 w-44 bg-gray-900/95 border border-gray-700 rounded-xl overflow-hidden shadow-xl backdrop-blur-sm">
-              {aiItems.map((item) => (
-                <button
-                  key={item.label}
-                  onClick={() => { setAiMenuOpen(false); item.action() }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-amber-600/20 hover:text-amber-400 transition-colors"
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    dragging.current = true
+    wasDrag.current = false
+    dragStart.current = { x: e.clientX, y: e.clientY }
+    startPos.current = { x: pos.x, y: pos.y }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }, [pos])
 
-      {/* Existing buttons */}
-      <button onClick={onPreview} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-gray-800/80 border border-gray-700 text-gray-300 hover:border-amber-600 hover:text-amber-400 transition-colors backdrop-blur-sm">
-        📄 预览已完成内容
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return
+    const dx = e.clientX - dragStart.current.x
+    const dy = e.clientY - dragStart.current.y
+    if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+      wasDrag.current = true
+    }
+    if (wasDrag.current) {
+      setPos({
+        x: Math.min(Math.max(startPos.current.x + dx, 0), window.innerWidth - 72),
+        y: Math.min(Math.max(startPos.current.y + dy, 0), window.innerHeight - 56),
+      })
+    }
+  }, [])
+
+  const handlePointerUp = useCallback(() => {
+    if (!dragging.current) return
+    dragging.current = false
+    if (!wasDrag.current) {
+      setAiMenuOpen(prev => !prev)
+    }
+  }, [])
+
+  useEffect(() => {
+    const clamp = () => {
+      setPos(p => ({
+        x: Math.min(Math.max(p.x, 0), window.innerWidth - 56),
+        y: Math.min(Math.max(p.y, 0), window.innerHeight - 56),
+      }))
+    }
+    window.addEventListener('resize', clamp)
+    return () => window.removeEventListener('resize', clamp)
+  }, [])
+
+  return (
+    <div
+      style={{ left: pos.x, top: pos.y, position: 'fixed', zIndex: 9999 }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      className="relative"
+    >
+      <button
+        className="flex items-center gap-1.5 px-4 py-2.5 rounded-full text-sm bg-gradient-to-r from-amber-700/80 to-amber-600/80 border border-amber-500/50 text-white hover:from-amber-600 hover:to-amber-500 transition-all backdrop-blur-sm shadow-lg shadow-amber-900/20 cursor-grab active:cursor-grabbing select-none"
+      >
+        🤖 AI
       </button>
-      <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-gray-800/80 border border-gray-700 text-gray-300 hover:border-amber-600 hover:text-amber-400 transition-colors backdrop-blur-sm">
-        ⬇️ 导出完整内容
-      </button>
-      <button onClick={onGlobalSetting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-gray-800/80 border border-amber-800/50 text-amber-600 hover:bg-amber-900/20 hover:border-amber-600 transition-colors backdrop-blur-sm">
-        📜 全局设定
-      </button>
+      {aiMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={e => e.stopPropagation()} onClick={() => setAiMenuOpen(false)} />
+          <div className="absolute bottom-full mb-2 right-0 z-50 w-44 bg-gray-900/95 border border-gray-700 rounded-xl overflow-hidden shadow-xl backdrop-blur-sm" onPointerDown={e => e.stopPropagation()}>
+            {aiItems.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => { setAiMenuOpen(false); item.action() }}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-amber-600/20 hover:text-amber-400 transition-colors"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
