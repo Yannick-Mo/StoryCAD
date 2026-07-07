@@ -16,6 +16,7 @@ class RegisterRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def validate_username(cls, v):
+        v = v.strip()
         if len(v) < 3 or len(v) > 20:
             raise ValueError("Username must be between 3 and 20 characters")
         if not re.match(r"^[a-zA-Z0-9_]+$", v):
@@ -25,7 +26,8 @@ class RegisterRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+        v = v.strip().lower()
+        if not re.match(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$", v):
             raise ValueError("Invalid email format")
         return v
 
@@ -34,6 +36,8 @@ class RegisterRequest(BaseModel):
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must not exceed 128 characters")
         return v
 
 
@@ -47,7 +51,7 @@ async def register(request: Request, payload: RegisterRequest, db: AsyncSession 
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     service = UserService(db)
     try:
-        return await service.register(payload.username.strip(), payload.email.strip().lower(), payload.password)
+        return await service.register(payload.username, payload.email, payload.password)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
