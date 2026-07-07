@@ -1,7 +1,15 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
 from app.database import init_db
+
+def _validate_config():
+    if not settings.jwt_secret_key:
+        raise ValueError(
+            "JWT_SECRET_KEY is not configured. Set it in .env file or JWT_SECRET_KEY environment variable."
+        )
+_validate_config()
 
 
 @asynccontextmanager
