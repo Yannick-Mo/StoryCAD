@@ -12,6 +12,7 @@ from app.storycad.models import (
     Theme, ThemeChapter,
 )
 from app.storycad.entity_map import ENTITY_MAP
+from app.utils import row_to_dict
 
 
 class StoryCADRepository:
@@ -243,15 +244,4 @@ class StoryCADRepository:
 
     @staticmethod
     def _row(obj: Any) -> dict:
-        if obj is None:
-            return {}
-        d = {}
-        for col in obj.__table__.columns:
-            val = getattr(obj, col.name)
-            if isinstance(val, uuid.UUID):
-                d[col.name] = str(val)
-            elif isinstance(val, datetime):
-                d[col.name] = val.isoformat()
-            else:
-                d[col.name] = val
-        return d
+        return row_to_dict(obj)

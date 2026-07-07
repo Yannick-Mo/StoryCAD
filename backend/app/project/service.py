@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.repository import ProjectRepository
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Chapter, Scene
+from app.utils import row_to_dict
 
 
 class ProjectService:
@@ -14,24 +15,13 @@ class ProjectService:
 
     async def create_project(self, title: str, description: str, owner_id: uuid.UUID) -> dict:
         project = await self.repo.create(title, description, owner_id)
-        return {
-            "id": str(project.id),
-            "title": project.title,
-            "status": project.status,
-            "workflow_stage": project.workflow_stage,
-            "created_at": project.created_at.isoformat()
-        }
+        return row_to_dict(project)
 
     async def get_project(self, project_id: uuid.UUID, owner_id: uuid.UUID) -> Optional[dict]:
         project = await self.repo.get(project_id)
         if not project or project.owner_id != owner_id:
             return None
-        return {
-            "id": str(project.id), "title": project.title, "description": project.description,
-            "genre": project.genre, "status": project.status,
-            "workflow_stage": project.workflow_stage,
-            "created_at": project.created_at.isoformat(), "updated_at": project.updated_at.isoformat()
-        }
+        return row_to_dict(project)
 
     async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20, search: str = "", status: str = "") -> dict:
         projects = await self.repo.list_projects(owner_id, page, size, search, status)
@@ -51,18 +41,12 @@ class ProjectService:
                 select(ProjectConfig).where(ProjectConfig.project_id == p.id)
             )).scalar_one_or_none()
 
-            items.append({
-                "id": str(p.id),
-                "title": p.title,
-                "genre": p.genre,
-                "status": p.status,
-                "template_type": config.template_type if config else "",
-                "total_words": int(words),
-                "total_chapters": int(ch_count),
-                "total_scenes": int(sc_count),
-                "created_at": p.created_at.isoformat() if p.created_at else "",
-                "updated_at": p.updated_at.isoformat() if p.updated_at else "",
-            })
+            item = row_to_dict(p)
+            item["template_type"] = config.template_type if config else ""
+            item["total_words"] = int(words)
+            item["total_chapters"] = int(ch_count)
+            item["total_scenes"] = int(sc_count)
+            items.append(item)
 
         total = (await self.repo.db.execute(
             select(func.count()).select_from(Project).where(Project.owner_id == owner_id)
