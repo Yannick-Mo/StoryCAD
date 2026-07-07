@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-chat"
+    llm_models: str = ""
 
     class Config:
         env_file = ".env"
