@@ -1,0 +1,114 @@
+import json
+from app.llm.client import LLMClient
+from app.llm.types import Message
+
+
+STARTER_SYSTEM_PROMPT = """你是一个创意故事生成器。根据用户指定的类型和风格，生成一个新颖的故事情节起点。
+返回 JSON 格式，包含以下字段：
+- title: 故事标题（中文，有吸引力）
+- hook: 一句话钩子（吸引读者，30字以内）
+- premise: 核心设定（2-3句话）
+- protagonist: 主角原型描述（包括身份、性格特点）
+- opening_scene: 开篇场景（100-200字，中文）
+- themes: 可能主题（数组，每项10字以内）
+- tags: 标签（数组，每项5字以内）
+
+要求：
+1. 每个生成结果必须完全不同，避免重复套路
+2. 充分运用该类型的经典元素和叙事模式
+3. 开篇场景要有画面感和代入感
+4. 保持原创性，不要套用知名作品的设定"""
+
+BATCH_SYSTEM_PROMPT = """你是一个创意故事生成器。根据用户指定的类型列表，每个类型生成多个不同的故事情节起点。
+返回 JSON 格式的数组，每个元素包含：
+- title: 故事标题（中文，有吸引力）
+- hook: 一句话钩子（吸引读者，30字以内）
+- premise: 核心设定（2-3句话）
+- protagonist: 主角原型描述（包括身份、性格特点）
+- opening_scene: 开篇场景（100-200字，中文）
+- themes: 可能主题（数组，每项10字以内）
+- tags: 标签（数组，每项5字以内）
+
+要求：
+1. 每个结果必须完全不同，不能有重复
+2. 跨类型时要有明显风格差异
+3. 同一类型下的多个结果要有不同的切入角度
+4. 开篇场景要有画面感和代入感
+5. 保持原创性"""
+
+CHALLENGE_SYSTEM_PROMPT = """你是一个创作挑战生成器。生成带有创意限制条件的写作挑战。
+返回 JSON 格式，包含以下字段：
+- title: 挑战标题（中文，3-8字）
+- description: 挑战描述（2-3句话，设定情境）
+- constraints: 约束条件列表（每项一个明确的写作限制）
+- genre: 类型
+- difficulty: 难度（easy/medium/hard）
+
+难度定义：
+- easy: 1个约束条件
+- medium: 2-3个约束条件
+- hard: 4个及以上约束条件
+
+要求：
+1. 挑战要有趣且有可写性
+2. 约束条件要具体、可操作
+3. 避免过于抽象或无法验证的约束"""
+
+
+class InspirationGenerator:
+
+    def __init__(self):
+        self._client = LLMClient()
+
+    async def generate_story_starter(
+        self,
+        genre: str,
+        style: str = "",
+        constraints: list[str] | None = None,
+    ) -> dict:
+        user_content = f"类型：{genre}"
+        if style:
+            user_content += f"\n风格：{style}"
+        if constraints:
+            user_content += f"\n额外约束：{'；'.join(constraints)}"
+        result = await self._client.chat(
+            messages=[
+                Message(role="system", content=STARTER_SYSTEM_PROMPT),
+                Message(role="user", content=user_content),
+            ],
+            response_format=dict,
+        )
+        return json.loads(result.content)
+
+    async def generate_challenge(
+        self,
+        difficulty: str = "medium",
+        genre: str = "",
+    ) -> dict:
+        user_content = f"难度：{difficulty}"
+        if genre:
+            user_content += f"\n类型：{genre}"
+        result = await self._client.chat(
+            messages=[
+                Message(role="system", content=CHALLENGE_SYSTEM_PROMPT),
+                Message(role="user", content=user_content),
+            ],
+            response_format=dict,
+        )
+        return json.loads(result.content)
+
+    async def batch_generate(
+        self,
+        genres: list[str],
+        count: int = 3,
+    ) -> list[dict]:
+        user_content = f"类型列表：{'，'.join(genres)}\n每个类型生成 {count} 个不同的起点，确保不重复"
+        result = await self._client.chat(
+            messages=[
+                Message(role="system", content=BATCH_SYSTEM_PROMPT),
+                Message(role="user", content=user_content),
+            ],
+            max_tokens=8192,
+            response_format=dict,
+        )
+        return json.loads(result.content)

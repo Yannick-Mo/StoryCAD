@@ -35,6 +35,7 @@ export function sendMessage(
   onEvent: (event: ChatEvent) => void,
   onError: (error: Error) => void,
   onComplete: () => void,
+  mode: string = 'chat',
 ): AbortController {
   const controller = new AbortController()
   const token = getToken()
@@ -45,7 +46,7 @@ export function sendMessage(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ message, conversation_id: conversationId }),
+    body: JSON.stringify({ message, conversation_id: conversationId, mode }),
     signal: controller.signal,
   })
     .then(async (resp) => {

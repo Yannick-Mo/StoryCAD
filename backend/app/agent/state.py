@@ -14,5 +14,6 @@ class AgentState(TypedDict):
     active_skills: list[str]
     rag_context: list[str]
     sub_agent_results: dict[str, Any]
+    mode: str
     pending_actions: list[str]
     intermediate_steps: list[dict]

@@ -26,6 +26,7 @@ class SuperAgent:
         user_id: str,
         message: str,
         conversation_id: str | None = None,
+        mode: str = "chat",
     ) -> AsyncGenerator[dict, None]:
         if not conversation_id and self.conv_memory:
             conversation_id = await self.conv_memory.create_conversation(
@@ -52,6 +53,7 @@ class SuperAgent:
             "active_skills": project_context.get("active_skills", []),
             "rag_context": project_context.get("rag_context", []),
             "sub_agent_results": {},
+            "mode": mode,
             "pending_actions": [],
             "intermediate_steps": [],
         }

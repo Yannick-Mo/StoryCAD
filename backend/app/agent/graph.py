@@ -115,6 +115,11 @@ def build_super_graph(db: AsyncSession) -> StateGraph:
         if tool_results:
             sys_parts.append("\n工具执行结果：\n" + json.dumps(tool_results, ensure_ascii=False))
 
+        if state.get("mode") == "cowriter":
+            from app.agent.cowriter.mode import CoWriterMode
+            cw = CoWriterMode()
+            sys_parts.append(cw.build_system_prompt(project_ctx, list(state["messages"])))
+
         msgs.insert(0, Message(role="system", content="\n".join(sys_parts)))
 
         result = await client.chat(messages=msgs)

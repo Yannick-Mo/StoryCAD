@@ -1,6 +1,6 @@
-import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.consistency.checker import ConsistencyChecker
 
 
 class ConsistencyCheckTool(BaseTool):
@@ -16,12 +16,9 @@ class ConsistencyCheckTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            report = {
-                "status": "ok",
-                "checks": [],
-                "note": "一致性检查将在 Phase 4 中完整实现",
-            }
-            return ToolResult(success=True, data=report)
+            checker = ConsistencyChecker(db)
+            report = await checker.check_all(kwargs["project_id"])
+            return ToolResult(success=True, data=report.model_dump(mode="json"))
         except Exception as e:
             return ToolResult(success=False, error=str(e))
 
@@ -39,11 +36,10 @@ class RhythmAnalyzeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            analysis = {
-                "status": "ok",
-                "metrics": {},
-                "note": "节奏分析将在 Phase 4 中完整实现",
-            }
-            return ToolResult(success=True, data=analysis)
+            from app.agent.rhythm.analyzer import RhythmAnalyzer
+            project_id = kwargs["project_id"]
+            analyzer = RhythmAnalyzer(db)
+            result = await analyzer.analyze(project_id)
+            return ToolResult(success=True, data=result)
         except Exception as e:
             return ToolResult(success=False, error=str(e))

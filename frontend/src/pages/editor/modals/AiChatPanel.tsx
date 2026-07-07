@@ -22,6 +22,7 @@ export default function AiChatPanel({ projectId, onClose, onApply }: AiChatPanel
   const [error, setError] = useState<string | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
+  const [mode, setMode] = useState<'chat' | 'cowriter'>('chat')
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -83,11 +84,12 @@ export default function AiChatPanel({ projectId, onClose, onApply }: AiChatPanel
         setLoading(false)
         setStep(null)
       },
+      mode,
     )
 
     abortRef.current = controller
     setLoading(true)
-  }, [input, loading, projectId, conversationId])
+  }, [input, loading, projectId, conversationId, mode])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -114,6 +116,17 @@ export default function AiChatPanel({ projectId, onClose, onApply }: AiChatPanel
       <div className="flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-amber-100">AI 助手</h3>
+          <button
+            onClick={() => setMode(mode === 'chat' ? 'cowriter' : 'chat')}
+            className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+              mode === 'cowriter'
+                ? 'bg-amber-700 text-amber-100 hover:bg-amber-600'
+                : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700'
+            }`}
+            title={mode === 'cowriter' ? '当前：协作模式' : '切换为协作写作模式'}
+          >
+            {mode === 'cowriter' ? '协作' : '对话'}
+          </button>
           {conversationId && (
             <button
               onClick={handleNewChat}

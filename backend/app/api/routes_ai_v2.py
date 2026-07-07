@@ -12,13 +12,14 @@ router = APIRouter(prefix="/api/v2", tags=["AI v2"])
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
+    mode: str = "chat"
 
 class NewChatRequest(BaseModel):
     title: str = ""
 
 
-async def _stream_chat(agent: SuperAgent, project_id: str, user_id: str, message: str, conv_id: str | None):
-    async for event in agent.chat_stream(project_id, user_id, message, conv_id):
+async def _stream_chat(agent: SuperAgent, project_id: str, user_id: str, message: str, conv_id: str | None, mode: str = "chat"):
+    async for event in agent.chat_stream(project_id, user_id, message, conv_id, mode=mode):
         yield f"event: {event['type']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
 
 
@@ -31,7 +32,7 @@ async def chat(
 ):
     agent = SuperAgent(db)
     return StreamingResponse(
-        _stream_chat(agent, project_id, user["id"], req.message, req.conversation_id),
+        _stream_chat(agent, project_id, user["id"], req.message, req.conversation_id, req.mode),
         media_type="text/event-stream",
     )
 

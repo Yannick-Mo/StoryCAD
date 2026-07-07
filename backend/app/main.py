@@ -47,6 +47,10 @@ def register_routers():
     app.include_router(material_router)
     from app.api.routes_ai_v2 import router as ai_v2_router
     app.include_router(ai_v2_router)
+    from app.api.routes_inspiration import router as inspiration_router
+    app.include_router(inspiration_router)
+    from app.api.routes_rhythm import router as rhythm_router
+    app.include_router(rhythm_router)
 
     from app.mcp.server import mcp
     app.mount("/mcp", mcp.sse_app())
