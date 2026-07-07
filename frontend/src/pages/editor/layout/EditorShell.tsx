@@ -44,11 +44,20 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [newThemeName, setNewThemeName] = useState('')
   const [newThemeColor, setNewThemeColor] = useState('#d4a373')
   const [newThemeProposition, setNewThemeProposition] = useState('')
+  const [aiChatOpen, setAiChatOpen] = useState(false)
+  const [inspirationOpen, setInspirationOpen] = useState(false)
+  const [consistencyOpen, setConsistencyOpen] = useState(false)
+  const [triggerRhythmAnalysis, setTriggerRhythmAnalysis] = useState(false)
 
   const store = useEditorStore(projectId)
   const data = store.data
   const [layoutKey, setLayoutKey] = useState(0)
   const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
+
+  const handleRhythmAnalysis = () => {
+    views.switchView('narrative-rhythm')
+    setTriggerRhythmAnalysis(true)
+  }
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
@@ -431,6 +440,10 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onPreview={() => setPreviewOpen(true)}
             onExport={handleExport}
             onGlobalSetting={() => setGlobalSettingsOpen(true)}
+            onAIChat={() => setAiChatOpen(true)}
+            onInspiration={() => setInspirationOpen(true)}
+            onRhythmAnalysis={handleRhythmAnalysis}
+            onConsistencyCheck={() => setConsistencyOpen(true)}
           />
         </div>
 
