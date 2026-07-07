@@ -1,4 +1,4 @@
-from app.storycad.models import Act, Chapter, Scene, ChapterEdge, Character, CharacterRelation, Theme, ThemeChapter
+from app.storycad.models import Act, Chapter, Scene, ChapterEdge, Character, CharacterRelation, Theme, ThemeChapter, ChapterRhythm
 from app.project.models import Project
 
 ENTITY_MAP = {
@@ -10,5 +10,6 @@ ENTITY_MAP = {
     "character_relations": CharacterRelation,
     "themes": Theme,
     "theme_chapters": ThemeChapter,
+    "rhythms": ChapterRhythm,
     "projects": Project,
 }

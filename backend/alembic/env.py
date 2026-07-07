@@ -7,13 +7,14 @@ from alembic import context
 sys.path.insert(0, ".")
 
 from app.project.models import Base
+from app.storycad.models import StoryBase
 from app.user.models import User
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, StoryBase.metadata]
 
 
 def run_migrations_offline():
@@ -25,7 +26,7 @@ def run_migrations_offline():
 
 def run_migrations_online():
     url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
-    url = url.replace("+asyncpg", "")
+    url = url.replace("+asyncpg", "+psycopg2")
     connectable = create_engine(url)
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

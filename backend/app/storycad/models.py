@@ -127,3 +127,21 @@ class ThemeChapter(StoryBase):
     chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), primary_key=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
 
+
+# ============================================================
+# Chapter Rhythm
+# ============================================================
+
+class ChapterRhythm(StoryBase):
+    __tablename__ = "chapter_rhythms"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, unique=True)
+    action = Column(Integer, nullable=False, default=5)
+    suspense = Column(Integer, nullable=False, default=5)
+    emotion = Column(Integer, nullable=False, default=5)
+    humor = Column(Integer, nullable=False, default=5)
+    intensity = Column(Integer, nullable=False, default=5)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+

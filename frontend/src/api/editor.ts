@@ -149,7 +149,15 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       targetHandle: e.target_handle || undefined,
     })),
     characters: Array.from(charMap.values()),
-    rhythms: [],
+    rhythms: (raw.rhythms || []).map((r: any) => ({
+      id: r.id,
+      chapterId: r.chapter_id,
+      action: r.action,
+      suspense: r.suspense,
+      emotion: r.emotion,
+      humor: r.humor,
+      intensity: r.intensity,
+    })),
     themes: themes.map((t, i) => ({
       name: t.name,
       color: t.color || "#d4a373",
