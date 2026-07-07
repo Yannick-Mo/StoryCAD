@@ -91,7 +91,6 @@ async def create_from_material(
             "acts": [], "estimated_words": 0, "scenes": [],
             "characters": [], "relations": [],
             "global_settings": "", "errors": [],
-            "_fanout_act_idx": 0, "_fanout_chap_idx": 0,
         }
 
         try:
@@ -121,9 +120,9 @@ def _make_preview(node_name: str, output: dict) -> str:
         acts = output.get("acts", [])
         total_ch = sum(len(a.get("chapters", [])) for a in acts)
         return f"{len(acts)}幕{total_ch}章 · 预估{output.get('estimated_words', 0)}字"
-    elif node_name == "generate_scene_chapter":
+    elif node_name == "generate_all_scenes":
         sc = output.get("scenes", [])
-        return f"+{len(sc)}个场景"
+        return f"{len(sc)}个场景已生成"
     elif node_name == "design_characters":
         return f"{len(output.get('characters', []))}个角色已创建"
     elif node_name == "build_settings":

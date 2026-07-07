@@ -1,8 +1,14 @@
 import uuid
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.user.models import User
+from app.project.models import Project, ProjectVersion, ProjectConfig
+from app.storycad.models import (
+    Act, Chapter, Scene, SceneContent, ChapterEdge,
+    Character, CharacterRelation,
+    Theme, ThemeChapter,
+)
 
 
 class UserRepository:
@@ -41,6 +47,32 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         if not user:
             return False
+
+        result = await self.db.execute(select(Project.id).where(Project.owner_id == user_id))
+        project_ids = [row[0] for row in result.all()]
+
+        for pid in project_ids:
+            await self.db.execute(delete(SceneContent).where(SceneContent.project_id == pid))
+            await self.db.execute(delete(Scene).where(Scene.project_id == pid))
+            await self.db.execute(delete(ChapterEdge).where(ChapterEdge.project_id == pid))
+            await self.db.execute(delete(ThemeChapter).where(ThemeChapter.project_id == pid))
+            await self.db.execute(delete(Chapter).where(Chapter.project_id == pid))
+            await self.db.execute(delete(CharacterRelation).where(CharacterRelation.project_id == pid))
+            await self.db.execute(delete(Character).where(Character.project_id == pid))
+            await self.db.execute(delete(Theme).where(Theme.project_id == pid))
+            await self.db.execute(delete(Act).where(Act.project_id == pid))
+            await self.db.execute(delete(ProjectVersion).where(ProjectVersion.project_id == pid))
+            await self.db.execute(delete(ProjectConfig).where(ProjectConfig.project_id == pid))
+
+        await self.db.commit()
+
+        for pid in project_ids:
+            await self.db.execute(delete(Project).where(Project.id == pid))
+
+        await self.db.delete(user)
+        await self.db.commit()
+        return True
+
         await self.db.delete(user)
         await self.db.commit()
         return True

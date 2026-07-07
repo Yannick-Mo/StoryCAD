@@ -62,5 +62,3 @@ class MaterialState(TypedDict):
     relations: list[RelationDef]
     global_settings: str
     errors: list[str]
-    _fanout_act_idx: int
-    _fanout_chap_idx: int

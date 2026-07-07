@@ -221,28 +221,28 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                 )
               })}
               {(() => {
-                const sceneEvents = aiSteps.filter(e => e.step === "generate_scene_chapter")
+                const sceneEvent = aiSteps.find(e => e.step === "generate_all_scenes")
                 const totalChapters = (() => {
                   const plan = aiSteps.find(e => e.step === "plan_structure")
                   if (!plan?.preview) return 0
                   const m = plan.preview.match(/(\d+)章/)
                   return m ? parseInt(m[1]) : 0
                 })()
-                const done = sceneEvents.length
+                const done = !!sceneEvent
                 const lastStep = aiSteps[aiSteps.length - 1]?.step
-                const current = lastStep === "generate_scene_chapter"
-                const allDone = totalChapters > 0 && done >= totalChapters
+                const current = lastStep === "generate_all_scenes"
+                const sceneCount = done && sceneEvent.preview ? (parseInt(sceneEvent.preview) || 0) : 0
                 return (
-                  <div className={`flex items-start gap-3 p-2 rounded-lg ${(done > 0 || current) ? 'bg-gray-800/60' : ''}`}>
-                    <span className={`text-sm w-5 ${allDone ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : done > 0 ? 'text-amber-400' : 'text-gray-600'}`}>
-                      {allDone ? "✓" : current ? "⟳" : done > 0 ? "⟳" : "○"}
+                  <div className={`flex items-start gap-3 p-2 rounded-lg ${(done || current) ? 'bg-gray-800/60' : ''}`}>
+                    <span className={`text-sm w-5 ${done ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : 'text-gray-600'}`}>
+                      {done ? "✓" : current ? "⟳" : "○"}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm ${current || done > 0 ? 'text-gray-200' : 'text-gray-600'}`}>
-                        生成场景 {totalChapters > 0 ? `(${done}/${totalChapters})` : done > 0 ? `(${done})` : ""}
+                      <div className={`text-sm ${current ? 'text-gray-200' : done ? 'text-gray-400' : 'text-gray-600'}`}>
+                        生成场景{totalChapters > 0 ? ` (${totalChapters}章)` : ""}
                       </div>
-                      {current && sceneEvents.length > 0 && (
-                        <div className="text-xs text-gray-500 mt-0.5">{sceneEvents[sceneEvents.length - 1].preview}</div>
+                      {done && sceneCount > 0 && (
+                        <div className="text-xs text-gray-500 mt-0.5">共 {sceneCount} 个场景</div>
                       )}
                     </div>
                   </div>
