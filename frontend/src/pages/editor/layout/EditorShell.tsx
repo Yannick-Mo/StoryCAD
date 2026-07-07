@@ -19,6 +19,7 @@ import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import AiChatPanel from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
+import ConsistencyCheckModal from '../modals/ConsistencyCheckModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { saveSceneContent } from '../../../api/editor'
@@ -548,6 +549,23 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onApplyStarter={(title: string) => {
               store.setData({ ...store.data, title })
               setInspirationOpen(false)
+            }}
+          />
+        )}
+
+        {consistencyOpen && (
+          <ConsistencyCheckModal
+            projectId={projectId}
+            onClose={() => setConsistencyOpen(false)}
+            onNavigate={(location) => {
+              setConsistencyOpen(false)
+              if (location.chapter_id) {
+                const idx = data.chapters?.findIndex(c => c.id === location.chapter_id)
+                if (idx >= 0 && data.chapters) {
+                  setSelectedChapter(data.chapters[idx])
+                  views.switchView('narrative-plot')
+                }
+              }
             }}
           />
         )}

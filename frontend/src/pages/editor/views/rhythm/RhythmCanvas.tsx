@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState, useEffect } from 'react'
 import type { RhythmPoint, Chapter, Act } from '../../types'
 import { RhythmEditPanel } from './RhythmEditPanel'
-import { analyzeRhythm, type RhythmAnalysis } from '../../../api/rhythm'
+import { analyzeRhythm, type RhythmAnalysis } from '../../../../api/rhythm'
 
 interface RhythmCanvasProps {
   projectId: string
