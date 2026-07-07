@@ -9,7 +9,7 @@ from app.project.repository import ProjectRepository
 from app.storycad.models import (
     Act, Chapter, Scene, SceneContent, ChapterEdge,
     Character, CharacterRelation,
-    Theme, ThemeChapter,
+    Theme, ThemeChapter, ChapterRhythm,
 )
 from app.storycad.entity_map import ENTITY_MAP
 from app.utils import row_to_dict
@@ -66,6 +66,11 @@ class StoryCADRepository:
         )
         result["theme_chapters"] = [self._row(r) for r in theme_chs.scalars().all()]
 
+        rhythms = await self.db.execute(
+            select(ChapterRhythm).where(ChapterRhythm.project_id == project_id)
+        )
+        result["rhythms"] = [self._row(r) for r in rhythms.scalars().all()]
+
         proj_result = await self.db.execute(
             select(Project).where(Project.id == project_id)
         )
@@ -83,7 +88,7 @@ class StoryCADRepository:
         has_changes = False
         for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
                             "character_relations", "themes", "theme_chapters",
-                            "projects"]:
+                            "rhythms", "projects"]:
             ops = changes.get(entity_type, {})
             if not ops:
                 continue
