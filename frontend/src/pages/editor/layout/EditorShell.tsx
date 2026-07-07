@@ -38,6 +38,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [selectedRelation, setSelectedRelation] = useState<{ sourceId: string; relationId: string } | null>(null)
   const [selectedRhythmIndex, setSelectedRhythmIndex] = useState<number | null>(null)
   const [selectedTheme, setSelectedTheme] = useState<{ themeIndex: number; chapterIndex: number } | null>(null)
+  const [showAddTheme, setShowAddTheme] = useState(false)
+  const [deleteThemeIdx, setDeleteThemeIdx] = useState<number | null>(null)
+  const [newThemeName, setNewThemeName] = useState('')
+  const [newThemeColor, setNewThemeColor] = useState('#d4a373')
+  const [newThemeProposition, setNewThemeProposition] = useState('')
 
   const store = useEditorStore(projectId)
   const data = store.data
@@ -147,7 +152,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
       case 'narrative-rhythm':
         return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => { store.setData(d => d ? { ...d, rhythms: d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r) } : d); store.enqueueChange({ entity: 'rhythms', op: 'update', id: chapterId, data: values as Record<string, unknown> }) }} />
       case 'narrative-theme':
-        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} />
+        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} onAddTheme={() => setShowAddTheme(true)} onDeleteTheme={(idx) => setDeleteThemeIdx(idx)} />
       default:
         return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
     }
@@ -346,7 +351,16 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                   theme={theme}
                   chapter={ch}
                   onClose={() => setSelectedTheme(null)}
-                  onSaveNote={() => {}}
+                  onSaveNote={(note) => {
+                    const t = data.themes[selectedTheme.themeIndex]
+                    if (t && t.id) {
+                      setData(d => d ? {
+                        ...d,
+                        themes: d.themes.map((th, i) => i === selectedTheme.themeIndex ? { ...th, note } : th)
+                      } : d)
+                      store.enqueueChange({ entity: 'themes', op: 'update', id: t.id, data: { note } })
+                    }
+                  }}
                 />
               )
             })()
@@ -367,6 +381,60 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           onClose={() => setDrawerOpen(false)}
           onSelectChapter={handleChapterClick}
         />
+
+        {/* Create theme dialog */}
+        {showAddTheme && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAddTheme(false)}>
+            <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-96" onClick={e => e.stopPropagation()}>
+              <h3 className="text-white font-semibold mb-4">新建主题</h3>
+              <input placeholder="主题名称" value={newThemeName} onChange={e => setNewThemeName(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white mt-2" />
+              <div className="flex gap-2 mt-3">
+                {["#d4a373","#6b7280","#ef4444","#3b82f6","#22c55e","#a855f7","#f97316","#ec4899"].map(c => (
+                  <div key={c} onClick={() => setNewThemeColor(c)}
+                    className={`w-7 h-7 rounded-full cursor-pointer border-2 ${newThemeColor === c ? 'border-white' : 'border-transparent'} hover:border-white`}
+                    style={{ backgroundColor: c }} />
+                ))}
+              </div>
+              <textarea placeholder="主题命题（可选）" value={newThemeProposition} onChange={e => setNewThemeProposition(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white mt-3" rows={2} />
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => { setShowAddTheme(false); setNewThemeName(''); setNewThemeColor('#d4a373'); setNewThemeProposition('') }}
+                  className="flex-1 px-3 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600">取消</button>
+                <button onClick={() => {
+                  const t = store.addTheme(newThemeName || undefined, newThemeColor, newThemeProposition || undefined)
+                  if (t) setSelectedTheme({ themeIndex: data.themes.length, chapterIndex: -1 })
+                  setShowAddTheme(false)
+                  setNewThemeName('')
+                  setNewThemeColor('#d4a373')
+                  setNewThemeProposition('')
+                }} className="flex-1 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-500">确定</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete theme confirmation */}
+        {deleteThemeIdx !== null && (() => {
+          const theme = data.themes[deleteThemeIdx]
+          return (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteThemeIdx(null)}>
+              <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+                <h3 className="text-white font-semibold mb-2">删除主题</h3>
+                <p className="text-sm text-gray-400 mb-4">确定要删除主题「{theme?.name}」吗？</p>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setDeleteThemeIdx(null)}
+                    className="px-3 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm">取消</button>
+                  <button onClick={() => {
+                    store.deleteTheme(deleteThemeIdx)
+                    if (selectedTheme?.themeIndex === deleteThemeIdx) setSelectedTheme(null)
+                    setDeleteThemeIdx(null)
+                  }} className="px-3 py-2 rounded bg-red-600 text-white hover:bg-red-500 text-sm">删除</button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Modals */}
         <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} onClose={() => setPreviewOpen(false)} />

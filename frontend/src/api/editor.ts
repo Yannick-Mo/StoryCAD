@@ -164,15 +164,16 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       }
     }),
     themes: themes.map((t, i) => ({
+      id: t.id,
       name: t.name,
       color: t.color || "#d4a373",
       proposition: t.proposition || "",
       chapterIndices: (() => {
         const chapterIndexMap = new Map<string, number>()
-        let i = 0
+        let j = 0
         for (const key of chMap.keys()) {
-          chapterIndexMap.set(key, i)
-          i++
+          chapterIndexMap.set(key, j)
+          j++
         }
         return themeChs.filter(tc => tc.theme_id === t.id).map(tc => {
           return chapterIndexMap.get(tc.chapter_id) ?? 0

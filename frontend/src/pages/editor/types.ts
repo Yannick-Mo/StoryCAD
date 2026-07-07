@@ -105,11 +105,13 @@ export interface RhythmPoint {
 }
 
 export interface ThemeItem {
+  id: string
   name: string
   color: string
   proposition: string
   chapterIndices: number[]
   connections: string[]
+  note?: string
 }
 
 export interface EditorMockData {

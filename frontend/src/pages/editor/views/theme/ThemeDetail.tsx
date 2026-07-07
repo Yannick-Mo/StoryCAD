@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { ThemeItem, Chapter } from '../../types'
 
 interface ThemeDetailProps {
@@ -9,7 +9,11 @@ interface ThemeDetailProps {
 }
 
 export default function ThemeDetail({ theme, chapter, onClose, onSaveNote }: ThemeDetailProps) {
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(theme.note ?? '')
+
+  useEffect(() => {
+    setNote(theme.note ?? '')
+  }, [theme.name])
 
   return (
     <div className="absolute right-0 top-0 h-full w-96 bg-gray-900/95 backdrop-blur-xl border-l border-gray-800 z-20 flex flex-col shadow-2xl">

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { EditorMockData, Act, Chapter, ChapterEdge, CharacterRelation, EdgeType, EdgeResult, SelectionState, Scene, Character } from '../types'
+import type { EditorMockData, Act, Chapter, ChapterEdge, CharacterRelation, EdgeType, EdgeResult, SelectionState, Scene, Character, ThemeItem } from '../types'
 import { loadEditorData, syncEditorData, type SyncPayload } from '../../../api/editor'
 import { topologicalSort, wouldCreateCycle, hasIncomingTimeline, hasOutgoingTimeline } from './orderUtils'
 
@@ -296,6 +296,27 @@ export function useEditorStore(projectId: string) {
   }, [data, enqueueChange])
 
   // ============================================================
+  // Themes
+  // ============================================================
+
+  const addTheme = useCallback((themeName?: string, themeColor?: string, proposition?: string): ThemeItem => {
+    if (!data) throw new Error("Store not initialized")
+    const id = uid()
+    const newTheme: ThemeItem = { id, name: themeName ?? `新主题 ${data.themes.length + 1}`, color: themeColor ?? "#d4a373", proposition: proposition ?? "", chapterIndices: [], connections: [] }
+    setData(d => d ? { ...d, themes: [...d.themes, newTheme] } : d)
+    enqueueChange({ entity: 'themes', op: 'create', data: { id, project_id: projectId, name: newTheme.name, color: newTheme.color, proposition: newTheme.proposition } })
+    return newTheme
+  }, [data, projectId, enqueueChange])
+
+  const deleteTheme = useCallback((themeIdx: number) => {
+    if (!data) return
+    const theme = data.themes[themeIdx]
+    if (!theme) return
+    setData(d => d ? { ...d, themes: d.themes.filter((_, i) => i !== themeIdx) } : d)
+    enqueueChange({ entity: 'themes', op: 'delete', id: theme.id })
+  }, [data, enqueueChange])
+
+  // ============================================================
   // Global Settings
   // ============================================================
 
@@ -383,6 +404,7 @@ export function useEditorStore(projectId: string) {
     addScene, deleteScene, addEdge, deleteEdge, changeEdgeType, reconnectEdge,
     resizeAct,
     addCharacter, deleteCharacter, addRelation, deleteRelation,
+    addTheme, deleteTheme,
     saveGlobalSettings,
     updateAct, updateChapter, updateScene, updateEdge,
     updateCharacter, updateRelation,
