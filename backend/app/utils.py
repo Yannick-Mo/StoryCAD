@@ -1,10 +1,7 @@
 import uuid
 from datetime import datetime
-from typing import Any, Optional, TypeVar
+from typing import Any
 from pydantic import BaseModel, Field
-
-
-T = TypeVar("T")
 
 
 def row_to_dict(obj: Any) -> dict:

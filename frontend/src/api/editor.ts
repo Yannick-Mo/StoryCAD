@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPut, apiDelete } from "./auth"
-import type { EditorMockData, Act, Chapter, Scene, CharacterRelation, Character } from "../pages/editor/types"
+import type { EditorMockData, Chapter, CharacterRelation, Character } from "../pages/editor/types"
 
 export interface SyncPayload {
   [entityType: string]: {

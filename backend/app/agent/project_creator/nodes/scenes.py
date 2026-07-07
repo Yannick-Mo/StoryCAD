@@ -71,30 +71,6 @@ async def _generate_one_chapter(
     return scenes
 
 
-async def generate_scene_chapter(state: MaterialState) -> dict:
-    act_idx = state.get("_fanout_act_idx", 0)
-    chap_idx = state.get("_fanout_chap_idx", 0)
-    acts = state.get("acts", [])
-
-    if act_idx >= len(acts):
-        return {"scenes": []}
-    act = acts[act_idx]
-    chapters = act.get("chapters", [])
-    if chap_idx >= len(chapters):
-        return {"scenes": []}
-
-    chapter = chapters[chap_idx]
-    result = await _generate_one_chapter(
-        act_idx, chap_idx,
-        act.get("name", ""),
-        chapter.get("title", ""),
-        chapter.get("goal", ""),
-        state.get("characters_raw", []),
-        state.get("world_elements", ""),
-    )
-    return {"scenes": result}
-
-
 async def generate_all_scenes(state: MaterialState) -> dict:
     tasks = []
     for act_idx, act in enumerate(state.get("acts", [])):

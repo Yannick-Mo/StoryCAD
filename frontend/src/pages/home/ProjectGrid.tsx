@@ -32,7 +32,6 @@ interface ProjectGridProps {
 
 export default function ProjectGrid({ projects, searchQuery, loading, onDeleteProject }: ProjectGridProps) {
   const [activeFilter, setActiveFilter] = useState("all")
-  const [deleting, setDeleting] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const enriched = projects.map((p, i) => enrichProject(p, i))

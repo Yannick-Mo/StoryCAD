@@ -72,7 +72,3 @@ class UserRepository:
         await self.db.delete(user)
         await self.db.commit()
         return True
-
-        await self.db.delete(user)
-        await self.db.commit()
-        return True

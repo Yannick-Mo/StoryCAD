@@ -80,14 +80,6 @@ export function hasOutgoingTimeline(edges: ChapterEdge[], nodeId: string): boole
   return edges.some(e => e.type === 'timeline' && e.sourceId === nodeId)
 }
 
-export function getOutgoingTimeline(edges: ChapterEdge[], nodeId: string): ChapterEdge | undefined {
-  return edges.find(e => e.type === 'timeline' && e.sourceId === nodeId)
-}
-
-export function getIncomingTimeline(edges: ChapterEdge[], nodeId: string): ChapterEdge | undefined {
-  return edges.find(e => e.type === 'timeline' && e.targetId === nodeId)
-}
-
 export function getCompletedChain(chapters: Chapter[], edges: ChapterEdge[], acts: Act[]): Chapter[][] {
   const sortedActs = [...acts].sort((a, b) => a.order - b.order)
   if (sortedActs.length === 0) return []
