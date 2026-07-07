@@ -18,6 +18,7 @@ import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import AiChatPanel from '../modals/AiChatPanel'
+import InspirationModal from '../modals/InspirationModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
 import { saveSceneContent } from '../../../api/editor'
@@ -537,6 +538,16 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             onClose={() => setAiChatOpen(false)}
             onApply={(content: string) => {
               console.log('AI content:', content)
+            }}
+          />
+        )}
+
+        {inspirationOpen && (
+          <InspirationModal
+            onClose={() => setInspirationOpen(false)}
+            onApplyStarter={(title: string) => {
+              store.setData({ ...store.data, title })
+              setInspirationOpen(false)
             }}
           />
         )}
