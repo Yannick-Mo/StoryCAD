@@ -7,7 +7,7 @@ interface ThemeCanvasProps {
   selected: { themeIndex: number; chapterIndex: number } | null
   onSelect: (themeIndex: number, chapterIndex: number) => void
   onAddTheme: () => void
-  onDeleteTheme: (index: number) => void
+  onDeleteTheme: (id: string) => void
 }
 
 export default function ThemeCanvas({ themes, chapters, selected, onSelect, onAddTheme, onDeleteTheme }: ThemeCanvasProps) {
@@ -37,7 +37,7 @@ export default function ThemeCanvas({ themes, chapters, selected, onSelect, onAd
             >
               {/* Hover actions */}
               <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                <button onClick={(e) => { e.stopPropagation(); onDeleteTheme(tIdx) }}
+                <button onClick={(e) => { e.stopPropagation(); onDeleteTheme(t.id) }}
                   className="p-1.5 bg-gray-800 rounded-lg hover:bg-red-700 text-xs text-gray-300">✕</button>
               </div>
 

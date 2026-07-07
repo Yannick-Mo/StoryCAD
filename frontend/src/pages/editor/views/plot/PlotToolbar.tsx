@@ -19,6 +19,8 @@ const MODE_OPTIONS: { value: 'all' | EdgeType; label: string }[] = [
   { value: 'timeline', label: '时序主线' },
   { value: 'causal', label: '因果关系' },
   { value: 'foreshadow', label: '伏笔照应' },
+  { value: 'character', label: '人物关联' },
+  { value: 'theme', label: '主题关联' },
 ]
 
 export default function PlotToolbar({

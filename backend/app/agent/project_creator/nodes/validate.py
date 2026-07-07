@@ -8,27 +8,32 @@ MAX_CHARACTERS = 10
 
 async def validate(state: MaterialState) -> dict:
     errors: list[str] = []
-    acts = state.get("acts", [])
+    acts = list(state.get("acts", []))
+    characters = list(state.get("characters", []))
+    scenes = list(state.get("scenes", []))
 
     if len(acts) > MAX_ACTS:
         errors.append(f"幕数 {len(acts)} 超过上限 {MAX_ACTS}")
-        state["acts"] = acts[:MAX_ACTS]
+        acts = acts[:MAX_ACTS]
 
+    trimmed_acts = []
     for act in acts:
-        chapters = act.get("chapters", [])
+        act = dict(act)
+        chapters = list(act.get("chapters", []))
         if len(chapters) > MAX_CHAPTERS_PER_ACT:
             errors.append(f"幕 '{act.get('name', '')}' 的章数 {len(chapters)} 超过上限 {MAX_CHAPTERS_PER_ACT}")
-            act["chapters"] = chapters[:MAX_CHAPTERS_PER_ACT]
+            chapters = chapters[:MAX_CHAPTERS_PER_ACT]
+        act["chapters"] = chapters
+        trimmed_acts.append(act)
 
-    if len(state.get("characters", [])) > MAX_CHARACTERS:
+    if len(characters) > MAX_CHARACTERS:
         errors.append(f"角色数超过上限 {MAX_CHARACTERS}")
-        state["characters"] = state["characters"][:MAX_CHARACTERS]
+        characters = characters[:MAX_CHARACTERS]
 
-    scenes = state.get("scenes", [])
     chapter_scene_counts: dict[str, int] = {}
     trimmed_scenes = []
     for sc in scenes:
-        key = f"{sc['act_idx']}-{sc['chapter_idx']}"
+        key = f"{sc.get('act_idx', 0)}-{sc.get('chapter_idx', 0)}"
         count = chapter_scene_counts.get(key, 0)
         if count < MAX_SCENES_PER_CHAPTER:
             chapter_scene_counts[key] = count + 1
@@ -36,4 +41,4 @@ async def validate(state: MaterialState) -> dict:
         else:
             errors.append(f"章节 {key} 的场景数超过上限")
 
-    return {"scenes": trimmed_scenes, "errors": errors}
+    return {"acts": trimmed_acts, "characters": characters, "scenes": trimmed_scenes, "errors": errors}

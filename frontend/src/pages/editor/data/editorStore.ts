@@ -308,12 +308,12 @@ export function useEditorStore(projectId: string) {
     return newTheme
   }, [data, projectId, enqueueChange])
 
-  const deleteTheme = useCallback((themeIdx: number) => {
+  const deleteTheme = useCallback((themeId: string) => {
     if (!data) return
-    const theme = data.themes[themeIdx]
+    const theme = data.themes.find(t => t.id === themeId)
     if (!theme) return
-    setData(d => d ? { ...d, themes: d.themes.filter((_, i) => i !== themeIdx) } : d)
-    enqueueChange({ entity: 'themes', op: 'delete', id: theme.id })
+    setData(d => d ? { ...d, themes: d.themes.filter(t => t.id !== themeId) } : d)
+    enqueueChange({ entity: 'themes', op: 'delete', id: themeId })
   }, [data, enqueueChange])
 
   // ============================================================

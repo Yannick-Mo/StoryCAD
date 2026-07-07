@@ -134,32 +134,33 @@ def _make_preview(node_name: str, output: dict) -> str:
 
 
 async def _write_project_to_db(db: AsyncSession, state: dict, owner_id: uuid.UUID) -> uuid.UUID:
-    svc = ProjectService(db)
     repo = StoryCADRepository(db)
 
-    project = await svc.create_project(state.get("project_title", "未命名"), "", owner_id)
-    project_id = uuid.UUID(project["id"])
-    await db.commit()
+    project = Project(title=state.get("project_title", "未命名"), description="", owner_id=owner_id)
+    db.add(project)
+    await db.flush()
+    await db.refresh(project)
+    project_id = project.id
 
     act_id_map: dict[int, str] = {}
-    for act in state.get("acts", []):
+    for act_idx, act in enumerate(state.get("acts", [])):
         result = await repo.create_entity(
             ENTITY_MAP["acts"],
             {
                 "project_id": str(project_id),
                 "name": act.get("name", ""),
-                "sort_order": act.get("order", 1),
+                "sort_order": act.get("order", act_idx + 1),
                 "color": act.get("color", "#8b5cf6"),
             },
         )
-        act_id_map[act.get("order", 1)] = result["id"]
+        act_id_map[act_idx] = result["id"]
 
     chapter_sort = 0
     chap_id_map: dict[tuple[int, int], str] = {}
     for act_idx, act in enumerate(state.get("acts", [])):
         for ch_idx, ch in enumerate(act.get("chapters", [])):
             chapter_sort += 1
-            act_id = act_id_map.get(act.get("order", act_idx + 1), "")
+            act_id = act_id_map.get(act_idx, "")
             chapter_result = await repo.create_entity(
                 ENTITY_MAP["chapters"],
                 {
@@ -174,7 +175,7 @@ async def _write_project_to_db(db: AsyncSession, state: dict, owner_id: uuid.UUI
             chap_id_map[(act_idx, ch_idx)] = chapter_result["id"]
 
     scene_sort_total = 0
-    for sc in sorted(state.get("scenes", []), key=lambda s: (s["act_idx"], s["chapter_idx"])):
+    for sc in sorted(state.get("scenes", []), key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0))):
         cid = chap_id_map.get((sc["act_idx"], sc["chapter_idx"]))
         if cid:
             scene_sort_total += 1

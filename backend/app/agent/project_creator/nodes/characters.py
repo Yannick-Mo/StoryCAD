@@ -1,25 +1,6 @@
-import json
-import yaml
-from pathlib import Path
 from app.agent.client import LLMClient
 from app.agent.project_creator.state import MaterialState
-
-PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-
-
-def _load(name: str) -> str:
-    path = PROMPT_DIR / f"{name}.yaml"
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f).get("system", "")
-
-
-def _parse_json(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        end = next((i for i in range(len(lines) - 1, 0, -1) if lines[i].strip() == "```"), len(lines))
-        text = "\n".join(lines[1:end])
-    return json.loads(text)
+from app.agent.utils import parse_json, load_project_prompt
 
 
 def _raw_chars_text(raw_chars: list[dict]) -> str:
@@ -30,12 +11,16 @@ def _raw_chars_text(raw_chars: list[dict]) -> str:
 
 async def design_characters(state: MaterialState) -> dict:
     client = LLMClient()
-    system = _load("material_characters").format(
-        genre=state.get("genre", ""),
-        tone=state.get("tone", ""),
-        plot_summary=state.get("plot_summary", ""),
-        characters_raw_text=_raw_chars_text(state.get("characters_raw", [])),
-    )
+    system_raw = load_project_prompt("material_characters")
+    try:
+        system = system_raw.format(
+            genre=state.get("genre", ""),
+            tone=state.get("tone", ""),
+            plot_summary=state.get("plot_summary", ""),
+            characters_raw_text=_raw_chars_text(state.get("characters_raw", [])),
+        )
+    except KeyError:
+        system = system_raw
 
     messages = [
         {"role": "system", "content": system},
@@ -43,7 +28,10 @@ async def design_characters(state: MaterialState) -> dict:
     ]
 
     raw = await client.chat(messages, temperature=0.7, max_tokens=4096)
-    parsed = _parse_json(raw)
+    try:
+        parsed = parse_json(raw)
+    except Exception:
+        parsed = {}
 
     characters = parsed.get("characters", [])
     for c in characters:

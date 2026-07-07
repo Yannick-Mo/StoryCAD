@@ -97,6 +97,7 @@ export function createFromMaterial(
     const decoder = new TextDecoder()
     let buffer = ''
 
+    let receivedTerminal = false
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -111,14 +112,19 @@ export function createFromMaterial(
             const data: ProgressEvent = JSON.parse(line.slice(6))
             onProgress(data)
             if (data.step === 'done' && data.project_id) {
+              receivedTerminal = true
               onDone(data.project_id)
             }
             if (data.step === 'error') {
+              receivedTerminal = true
               onError(data.message || '生成失败')
             }
           } catch {}
         }
       }
+    }
+    if (!receivedTerminal) {
+      onError('连接中断，请重试')
     }
   }).catch((err) => {
     if (err.name !== 'AbortError') {

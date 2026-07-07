@@ -79,13 +79,16 @@ async def save_scene_content(
     await _check_project_owner(project_id, current_user, db)
     repo = await _get_repo(db)
     content = payload.get("content", "")
-    word_count = len(content.split())
+    from app.agent.utils import count_words
+    word_count = count_words(content)
     ok = await repo.save_scene_content(scene_id, project_id, content)
     if ok is None:
         raise HTTPException(status_code=404, detail="Scene not found")
-    await db.execute(
-        Scene.__table__.update().where(Scene.id == scene_id).values(word_count=word_count)
-    )
+    from sqlalchemy import select
+    result = await db.execute(select(Scene).where(Scene.id == scene_id))
+    scene = result.scalar_one_or_none()
+    if scene:
+        scene.word_count = word_count
     await db.commit()
     return {"ok": True, "word_count": word_count}
 

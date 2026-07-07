@@ -94,6 +94,7 @@ export interface Character {
 }
 
 export interface RhythmPoint {
+  id: string
   chapterIndex: number
   intensity: number
   label: string

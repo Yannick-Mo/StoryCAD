@@ -88,7 +88,7 @@ class StoryCADRepository:
         has_changes = False
         for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
                             "character_relations", "themes", "theme_chapters",
-                            "rhythms", "projects"]:
+                            "rhythms"]:
             ops = changes.get(entity_type, {})
             if not ops:
                 continue
@@ -103,12 +103,22 @@ class StoryCADRepository:
                 item["project_id"] = project_id
                 await self._update_entity(entity_type, item)
 
-        await self.db.flush()
-        await self._recalc_chapter_counts(project_id)
-        await self.db.commit()
+        # Handle global_settings separately (only field allowed on Project)
+        projects_ops = changes.get("projects", {})
+        for item in projects_ops.get("updated", []):
+            if "global_settings" in item:
+                result = await self.db.execute(select(Project).where(Project.id == project_id))
+                proj = result.scalar_one_or_none()
+                if proj:
+                    proj.global_settings = item["global_settings"]
+                    has_changes = True
 
         if not has_changes:
             return 0
+
+        await self.db.flush()
+        await self._recalc_chapter_counts(project_id)
+        await self.db.commit()
 
         project_repo = ProjectRepository(self.db)
         pv = await project_repo.save_version(project_id, {"type": "editor_sync"})
@@ -186,10 +196,12 @@ class StoryCADRepository:
         return self._row(row) if row else None
 
     async def create_entity(self, model_class: type, data: dict, extra_attrs: dict | None = None) -> dict:
+        column_names = {col.name for col in model_class.__table__.columns}
+        filtered = {k: v for k, v in data.items() if k in column_names}
         for col in model_class.__table__.columns:
-            if col.name in data and isinstance(data[col.name], str) and isinstance(col.type, UUID):
-                data[col.name] = uuid.UUID(data[col.name])
-        obj = model_class(**data)
+            if col.name in filtered and isinstance(filtered[col.name], str) and isinstance(col.type, UUID):
+                filtered[col.name] = uuid.UUID(filtered[col.name])
+        obj = model_class(**filtered)
         self.db.add(obj)
         await self.db.flush()
         if extra_attrs:
@@ -236,7 +248,8 @@ class StoryCADRepository:
         extra = {}
         if entity_type == "scenes" and "content" in data:
             content = data.pop("content")
-            extra["word_count"] = len(content.split())
+            from app.agent.utils import count_words
+            extra["word_count"] = count_words(content)
         await self.create_entity(model_class, data, extra_attrs=extra or None)
 
     async def _update_entity(self, entity_type: str, data: dict):
@@ -254,16 +267,20 @@ class StoryCADRepository:
             result = await self.db.execute(select(Scene).where(Scene.id == entity_id))
             obj = result.scalar_one_or_none()
             if obj:
-                obj.word_count = len(scene_content.split())
+                from app.agent.utils import count_words
+                obj.word_count = count_words(scene_content)
 
     async def _delete_entity(self, entity_type: str, entity_id_str: str):
         model_class = ENTITY_MAP.get(entity_type)
         if not model_class:
             return
-        if isinstance(entity_id_str, str):
-            entity_id = uuid.UUID(entity_id_str)
-        else:
-            entity_id = entity_id_str
+        try:
+            if isinstance(entity_id_str, str):
+                entity_id = uuid.UUID(entity_id_str)
+            else:
+                entity_id = entity_id_str
+        except (ValueError, AttributeError):
+            return
         await self.delete_entity(model_class, entity_id)
 
     @staticmethod

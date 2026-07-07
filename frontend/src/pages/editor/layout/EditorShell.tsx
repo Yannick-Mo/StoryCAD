@@ -39,7 +39,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [selectedRhythmIndex, setSelectedRhythmIndex] = useState<number | null>(null)
   const [selectedTheme, setSelectedTheme] = useState<{ themeIndex: number; chapterIndex: number } | null>(null)
   const [showAddTheme, setShowAddTheme] = useState(false)
-  const [deleteThemeIdx, setDeleteThemeIdx] = useState<number | null>(null)
+  const [deleteThemeId, setDeleteThemeId] = useState<string | null>(null)
   const [newThemeName, setNewThemeName] = useState('')
   const [newThemeColor, setNewThemeColor] = useState('#d4a373')
   const [newThemeProposition, setNewThemeProposition] = useState('')
@@ -64,19 +64,21 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const setData = useCallback(store.setData!, [])
 
   const handleSceneSaved = useCallback((sceneId: string, content: string, wordCount: number) => {
+    let updatedChapter: Chapter | undefined
     setData(d => {
       if (!d) return d
       const newChapters = d.chapters.map(ch => {
         if (!ch.scenes.some(s => s.id === sceneId)) return ch
         const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount } : s)
-        return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+        const updated = { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+        updatedChapter = updated
+        return updated
       })
       return { ...d, chapters: newChapters }
     })
-    const updated = data?.chapters.find(c => c.scenes.some(s => s.id === sceneId))
-    if (updated) setSelectedChapter({ ...updated })
+    if (updatedChapter) setSelectedChapter(updatedChapter)
     setEditingScene(null)
-  }, [setData, data])
+  }, [setData])
 
   const handleChapterGoalSave = useCallback((chapterId: string, goal: string) => {
     setData(d => d ? { ...d, chapters: d.chapters.map(c => c.id === chapterId ? { ...c, goal } : c) } : d)
@@ -153,9 +155,9 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           />
         )
       case 'narrative-rhythm':
-        return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => { store.setData(d => d ? { ...d, rhythms: d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r) } : d); store.enqueueChange({ entity: 'rhythms', op: 'update', id: chapterId, data: values as Record<string, unknown> }) }} />
+        return <RhythmCanvas rhythms={data.rhythms} chapters={data.chapters} acts={data.acts} selectedIndex={selectedRhythmIndex} onSelectChapter={setSelectedRhythmIndex} onSaveRhythm={(chapterId, values) => { const rhythmId = data.rhythms.find(r => r.chapterId === chapterId)?.id; store.setData(d => d ? { ...d, rhythms: d.rhythms.map(r => r.chapterId === chapterId ? { ...r, ...values } : r) } : d); if (rhythmId) store.enqueueChange({ entity: 'rhythms', op: 'update', id: rhythmId, data: values as Record<string, unknown> }) }} />
       case 'narrative-theme':
-        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} onAddTheme={() => setShowAddTheme(true)} onDeleteTheme={(idx) => setDeleteThemeIdx(idx)} />
+        return <ThemeCanvas themes={data.themes} chapters={data.chapters} selected={selectedTheme} onSelect={(tIdx, chIdx) => setSelectedTheme({ themeIndex: tIdx, chapterIndex: chIdx })} onAddTheme={() => setShowAddTheme(true)} onDeleteTheme={(id) => setDeleteThemeId(id)} />
       default:
         return <div className="flex items-center justify-center h-full text-gray-500">选择视图</div>
     }
@@ -223,7 +225,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
               onDeleteSelected={() => {
                 const sel = store.selection
                 if (sel.type === 'act') setConfirmDelete({ type: 'act', id: sel.id! })
-                if (sel.type === 'chapter') store.deleteChapter(sel.id!)
+                if (sel.type === 'chapter') setConfirmDelete({ type: 'chapter', id: sel.id! })
                 if (sel.type === 'edge') store.deleteEdge(sel.id!)
                 store.clearSelection()
               }}
@@ -418,20 +420,20 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         )}
 
         {/* Delete theme confirmation */}
-        {deleteThemeIdx !== null && (() => {
-          const theme = data.themes[deleteThemeIdx]
+        {deleteThemeId !== null && (() => {
+          const theme = data.themes.find(t => t.id === deleteThemeId)
           return (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteThemeIdx(null)}>
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setDeleteThemeId(null)}>
               <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-80" onClick={e => e.stopPropagation()}>
                 <h3 className="text-white font-semibold mb-2">删除主题</h3>
                 <p className="text-sm text-gray-400 mb-4">确定要删除主题「{theme?.name}」吗？</p>
                 <div className="flex gap-2 justify-end">
-                  <button onClick={() => setDeleteThemeIdx(null)}
+                  <button onClick={() => setDeleteThemeId(null)}
                     className="px-3 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-sm">取消</button>
                   <button onClick={() => {
-                    store.deleteTheme(deleteThemeIdx)
-                    if (selectedTheme?.themeIndex === deleteThemeIdx) setSelectedTheme(null)
-                    setDeleteThemeIdx(null)
+                    store.deleteTheme(deleteThemeId)
+                    setSelectedTheme(null)
+                    setDeleteThemeId(null)
                   }} className="px-3 py-2 rounded bg-red-600 text-white hover:bg-red-500 text-sm">删除</button>
                 </div>
               </div>
