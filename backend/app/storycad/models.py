@@ -117,6 +117,7 @@ class Theme(StoryBase):
     name = Column(String(100), nullable=False)
     color = Column(String(20), default="#d4a373")
     proposition = Column(Text, default="")
+    note = Column(Text, default="")
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
 
