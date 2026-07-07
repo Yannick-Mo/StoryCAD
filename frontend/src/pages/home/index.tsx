@@ -8,9 +8,10 @@ import CreateCards from "./CreateCards"
 import CreateProjectDialog from "./CreateProjectDialog"
 import TemplateGrid from "./TemplateGrid"
 import Footer from "./Footer"
-import { listProjects, deleteProject } from "../../api/auth"
+import { listProjects, deleteProject, updateProject } from "../../api/auth"
 import type { ProjectListItem } from "../../types/project"
 import ConfirmDialog from "../editor/components/ConfirmDialog"
+import RenameDialog from "./RenameDialog"
 import { useToast } from "../editor/components/Toast"
 
 export default function ProjectListPage() {
@@ -19,6 +20,7 @@ export default function ProjectListPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const { addToast } = useToast()
 
   const fetchProjects = useCallback(() => {
@@ -47,6 +49,25 @@ export default function ProjectListPage() {
     setDeleteTarget(id)
   }, [])
 
+  const handleRename = useCallback((id: string) => {
+    setRenameTarget(id)
+  }, [])
+
+  const handleConfirmRename = useCallback(async (title: string) => {
+    if (!renameTarget) return
+    try {
+      await updateProject(renameTarget, { title })
+      setProjects(prev => prev.map(p => p.id === renameTarget ? { ...p, title } : p))
+      addToast("重命名成功", "success")
+    } catch {
+      addToast("重命名失败", "error")
+    } finally {
+      setRenameTarget(null)
+    }
+  }, [renameTarget])
+
+  const renameProject = projects.find(p => p.id === renameTarget)
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <HomeNavbar searchQuery={searchQuery} onSearchChange={setSearchQuery} onCreateClick={() => setCreateOpen(true)} />
@@ -55,11 +76,17 @@ export default function ProjectListPage() {
         <HeroSection />
         <CreateCards onCreateClick={() => setCreateOpen(true)} />
         <StatsRow projectCount={projects.length} />
-        <ProjectGrid projects={projects} loading={loading} onDeleteProject={handleDelete} />
+        <ProjectGrid projects={projects} loading={loading} onDeleteProject={handleDelete} onRenameProject={handleRename} />
         <TemplateGrid />
         <Footer />
       </div>
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <RenameDialog
+        open={renameTarget !== null}
+        currentTitle={renameProject?.title ?? ""}
+        onConfirm={handleConfirmRename}
+        onCancel={() => setRenameTarget(null)}
+      />
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除项目"

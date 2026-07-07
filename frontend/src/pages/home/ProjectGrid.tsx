@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { Pencil } from "lucide-react"
 import type { ProjectListItem, HomeProject } from "../../types/project"
 import { COVER_GRADIENTS, PROGRESS_CLASSES } from "../../types/project"
 
@@ -27,9 +28,10 @@ interface ProjectGridProps {
   projects: ProjectListItem[]
   loading: boolean
   onDeleteProject: (id: string) => void
+  onRenameProject: (id: string) => void
 }
 
-export default function ProjectGrid({ projects, loading, onDeleteProject }: ProjectGridProps) {
+export default function ProjectGrid({ projects, loading, onDeleteProject, onRenameProject }: ProjectGridProps) {
   const [activeFilter, setActiveFilter] = useState("all")
   const navigate = useNavigate()
 
@@ -112,6 +114,13 @@ export default function ProjectGrid({ projects, loading, onDeleteProject }: Proj
                   title="删除项目"
                 >
                   ✕
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRenameProject(proj.id) }}
+                  className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded-full bg-black/50 text-white/0 group-hover:text-white/70 hover:!text-blue-400 text-xs transition-all opacity-0 group-hover:opacity-100"
+                  title="重命名项目"
+                >
+                  <Pencil className="w-3 h-3" />
                 </button>
                 <div className="p-4 flex flex-col gap-1.5">
                   <div className="font-bold text-sm text-gray-100">《{proj.title}》</div>

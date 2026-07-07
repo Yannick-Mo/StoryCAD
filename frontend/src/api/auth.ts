@@ -149,3 +149,7 @@ export async function createProject(title: string, description?: string): Promis
 export async function deleteProject(id: string): Promise<void> {
   await apiDelete(`${BASE_PROJECTS}/${id}`)
 }
+
+export async function updateProject(id: string, payload: Partial<{ title: string; description: string; status: string }>): Promise<{ ok: boolean }> {
+  return apiPatch(`${BASE_PROJECTS}/${id}`, payload)
+}

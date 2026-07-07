@@ -44,6 +44,12 @@ class ProjectRepository:
         project = await self.get(project_id)
         if not project:
             return False
+        await self.db.execute(
+            ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project_id)
+        )
+        await self.db.execute(
+            ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project_id)
+        )
         await self.db.delete(project)
         await self.db.commit()
         return True
