@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.storycad.models import Act, Chapter, Scene, SceneContent, Character, CharacterRelation, Theme
 from app.project.models import Project, ProjectConfig
+from app.knowledge.rag import RAGEngine
+from app.knowledge.skill_engine import SkillEngine
 
 
 class ContextBuilder:
@@ -43,6 +45,9 @@ class ContextBuilder:
 
         if mode == "writing":
             ctx["all_scenes_content"] = await self._scenes_content_text(chapter_id)
+
+        ctx["active_skills"] = await self._get_active_skills(project_id)
+        ctx["rag_context"] = await self._get_rag_context(ctx["genre"], mode)
 
         return ctx
 
@@ -169,3 +174,17 @@ class ContextBuilder:
                 f"正文: {content or '（尚未写作）'}"
             )
         return "\n\n".join(parts)
+
+    async def _get_active_skills(self, project_id: uuid.UUID) -> list:
+        engine = SkillEngine(self.db)
+        return await engine.get_active_skills(project_id)
+
+    async def _get_rag_context(self, genre: str, mode: str) -> str:
+        engine = RAGEngine(self.db)
+        if mode == "goal":
+            query = f"{genre} 故事目标设定技巧"
+        elif mode == "writing":
+            query = f"{genre} 写作技巧 场景描写"
+        else:
+            query = f"{genre} 写作技巧"
+        return await engine.retrieve_context(project_id=None, genre=genre, query=query)

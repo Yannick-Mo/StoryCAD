@@ -26,10 +26,20 @@ class BaseAgent:
         data = self._load_yaml(self.prompt_name)
         template = data.get("system", "")
         persona = self._load_persona()
+
+        skill_names = context.get("active_skills") or []
+        if skill_names:
+            persona = f"已启用技能：{', '.join(skill_names)}\n" + persona
+
         try:
             prompt = template.format(persona=persona, **context, user_prompt=user_prompt)
         except KeyError:
             prompt = template
+
+        rag_context = context.get("rag_context") or ""
+        if rag_context:
+            prompt += f"\n\n参考知识：\n{rag_context}"
+
         return prompt
 
     async def run(self, client: LLMClient, context: dict, user_prompt: str) -> BaseModel:
