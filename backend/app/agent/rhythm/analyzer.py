@@ -151,36 +151,46 @@ class RhythmAnalyzer:
         return [(i, round(cd["word_count"] / max_wc, 4)) for i, cd in enumerate(chapters_data)]
 
     async def _compute_dialogue_ratio(self, chapters_data: list[dict]) -> list[tuple[int, float]]:
+        if not chapters_data:
+            return []
+
+        chapter_ids = [cd["chapter_id"] for cd in chapters_data]
+        stmt = (
+            select(Scene.chapter_id, SceneContent.content)
+            .join(SceneContent, SceneContent.scene_id == Scene.id)
+            .where(Scene.chapter_id.in_(chapter_ids))
+        )
+        rows = (await self.db.execute(stmt)).all()
+
+        chapter_scenes: dict[str, list[str]] = {}
+        for chapter_id, content in rows:
+            key = str(chapter_id)
+            if key not in chapter_scenes:
+                chapter_scenes[key] = []
+            chapter_scenes[key].append(content or "")
+
         ratios = []
         for i, cd in enumerate(chapters_data):
-            scene_result = await self.db.execute(
-                select(Scene).where(Scene.chapter_id == cd["chapter_id"])
-            )
-            scenes = scene_result.scalars().all()
-            if not scenes:
+            cid = str(cd["chapter_id"])
+            contents = chapter_scenes.get(cid, [])
+            if not contents:
                 ratios.append((i, 0.5))
                 continue
 
             total_chars = 0
             dialogue_chars = 0
-            for sc in scenes:
-                content_result = await self.db.execute(
-                    select(SceneContent).where(SceneContent.scene_id == sc.id)
-                )
-                sc_content = content_result.scalar_one_or_none()
-                if sc_content and sc_content.content:
-                    text = sc_content.content
-                    total_chars += len(text)
-                    in_quote = False
-                    for ch in text:
-                        if ch in ('"', '\u201c', '\u300c'):
-                            in_quote = True
-                        elif ch in ('"', '\u201d', '\u300d'):
-                            if in_quote:
-                                dialogue_chars += 1
-                            in_quote = False
-                        elif in_quote:
+            for text in contents:
+                total_chars += len(text)
+                in_quote = False
+                for ch in text:
+                    if ch in ('"', '\u201c', '\u300c'):
+                        in_quote = True
+                    elif ch in ('"', '\u201d', '\u300d'):
+                        if in_quote:
                             dialogue_chars += 1
+                        in_quote = False
+                    elif in_quote:
+                        dialogue_chars += 1
 
             ratio = round(dialogue_chars / total_chars, 4) if total_chars > 0 else 0.5
             ratios.append((i, max(0.0, min(1.0, ratio))))

@@ -6,6 +6,7 @@ from app.agent.state import AgentState
 from app.agent.tools import get_tool_registry
 from app.llm.client import LLMClient
 from app.llm.types import Message, ToolCall, ToolDef
+from app.agent.cowriter.mode import CoWriterMode
 
 
 def build_super_graph(db: AsyncSession) -> StateGraph:
@@ -116,7 +117,6 @@ def build_super_graph(db: AsyncSession) -> StateGraph:
             sys_parts.append("\n工具执行结果：\n" + json.dumps(tool_results, ensure_ascii=False))
 
         if state.get("mode") == "cowriter":
-            from app.agent.cowriter.mode import CoWriterMode
             cw = CoWriterMode()
             sys_parts.append(cw.build_system_prompt(project_ctx, list(state["messages"])))
 

@@ -17,7 +17,6 @@ const DIFFICULTY_MAP: Record<string, string> = {
 }
 
 interface Props {
-  projectId: string
   onClose: () => void
   onApplyStarter?: (title: string) => void
 }
@@ -233,7 +232,9 @@ function ChallengeTab() {
     try {
       const data = await getChallenges(difficultyFilter || undefined, genreFilter || undefined)
       setChallenges(data)
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '获取失败';
+      setError(message);
     } finally {
       setLoading(false)
     }
@@ -244,7 +245,9 @@ function ChallengeTab() {
     try {
       const data = await getRandomChallenge()
       setRandomChallenge(data)
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '获取失败';
+      setError(message);
     }
   }
 

@@ -41,13 +41,13 @@ class ConversationMemory:
         self._store: dict[str, list[dict]] = {}
         self._meta: dict[str, dict] = {}
 
-    async def create_conversation(self, project_id: str, user_id: str) -> str:
+    async def create_conversation(self, project_id: str, user_id: str, title: str = "") -> str:
         conv_id = str(uuid.uuid4())
-        meta = {"project_id": project_id, "user_id": user_id}
+        meta = {"project_id": project_id, "user_id": user_id, "title": title}
         if self._redis:
             await self._redis.hset(
                 f"{_CONV_PREFIX}{conv_id}",
-                mapping={"project_id": project_id, "user_id": user_id},
+                mapping={"project_id": project_id, "user_id": user_id, "title": title},
             )
         else:
             self._meta[conv_id] = meta
@@ -77,3 +77,33 @@ class ConversationMemory:
             if conversation_id not in self._store:
                 self._store[conversation_id] = []
             self._store[conversation_id].append(d)
+
+    async def list_conversations(self, project_id: str, user_id: str) -> list[dict]:
+        if self._redis:
+            pattern = f"{_CONV_PREFIX}{project_id}:{user_id}:*"
+            cursor = 0
+            keys = []
+            while True:
+                cursor, batch = await self._redis.scan(cursor, match=pattern)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
+            convs = []
+            for key in keys:
+                data = await self._redis.hgetall(key)
+                if data:
+                    convs.append(data)
+            return convs
+        return []
+
+    async def get_conversation(self, project_id: str, user_id: str, conversation_id: str) -> dict | None:
+        if self._redis:
+            data = await self._redis.hgetall(f"{_CONV_PREFIX}{conversation_id}")
+            return data if data else None
+        return None
+
+    async def delete_conversation(self, project_id: str, user_id: str, conversation_id: str) -> bool:
+        if self._redis:
+            await self._redis.delete(f"{_CONV_PREFIX}{conversation_id}")
+            await self._redis.delete(f"{_CONV_MSGS_PREFIX}{conversation_id}")
+        return True

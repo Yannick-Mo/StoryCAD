@@ -28,10 +28,13 @@ class SuperAgent:
         conversation_id: str | None = None,
         mode: str = "chat",
     ) -> AsyncGenerator[dict, None]:
-        if not conversation_id and self.conv_memory:
-            conversation_id = await self.conv_memory.create_conversation(
-                project_id, user_id
-            )
+        if not conversation_id:
+            if self.conv_memory:
+                conversation_id = await self.conv_memory.create_conversation(
+                    project_id, user_id
+                )
+            else:
+                conversation_id = str(uuid.uuid4())
 
         project_context = await self._load_project_context(project_id)
 
@@ -62,6 +65,11 @@ class SuperAgent:
             "configurable": {"thread_id": conversation_id or str(uuid.uuid4())}
         }
 
+        if self.conv_memory:
+            await self.conv_memory.save_message(
+                conversation_id, Message(role="user", content=message)
+            )
+
         events_buffer: list[dict] = []
 
         yield {"type": "conv_id", "data": conversation_id}
@@ -79,17 +87,17 @@ class SuperAgent:
                 if event["name"] == "generate":
                     yield {"type": "done", "data": ""}
             events_buffer.append(event)
+
+        assistant_content = ""
+        for ev in events_buffer:
+            if ev.get("event") == "on_chat_model_stream":
+                chunk = ev["data"]["chunk"].content
+                if chunk:
+                    assistant_content += chunk
+        if assistant_content and self.conv_memory:
             await self.conv_memory.save_message(
-                conversation_id, Message(role="user", content=message)
+                conversation_id, Message(role="assistant", content=assistant_content)
             )
-            assistant_content = ""
-            for event in events_buffer:
-                if event["type"] == "token":
-                    assistant_content += event["data"]
-            if assistant_content:
-                await self.conv_memory.save_message(
-                    conversation_id, Message(role="assistant", content=assistant_content)
-                )
 
     async def _load_project_context(self, project_id: str) -> dict:
         from app.project.models import Project, ProjectConfig
@@ -129,6 +137,26 @@ class SuperAgent:
         )
 
         return ctx
+
+    async def create_conversation(self, project_id: str, user_id: str, title: str = "") -> str:
+        if self.conv_memory:
+            return await self.conv_memory.create_conversation(project_id, user_id, title)
+        return str(uuid.uuid4())
+
+    async def list_conversations(self, project_id: str, user_id: str) -> list[dict]:
+        if self.conv_memory:
+            return await self.conv_memory.list_conversations(project_id, user_id)
+        return []
+
+    async def get_conversation(self, project_id: str, user_id: str, conversation_id: str) -> dict | None:
+        if self.conv_memory:
+            return await self.conv_memory.get_conversation(project_id, user_id, conversation_id)
+        return None
+
+    async def delete_conversation(self, project_id: str, user_id: str, conversation_id: str) -> bool:
+        if self.conv_memory:
+            return await self.conv_memory.delete_conversation(project_id, user_id, conversation_id)
+        return True
 
 
 def get_super_agent(

@@ -20,7 +20,7 @@ class NewChatRequest(BaseModel):
 
 async def _stream_chat(agent: SuperAgent, project_id: str, user_id: str, message: str, conv_id: str | None, mode: str = "chat"):
     async for event in agent.chat_stream(project_id, user_id, message, conv_id, mode=mode):
-        yield f"event: {event['type']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+        yield f"event: {event['type']}\ndata: {event['data']}\n\n"
 
 
 @router.post("/projects/{project_id}/chat")

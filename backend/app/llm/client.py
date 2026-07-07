@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -61,7 +61,7 @@ class LLMClient:
         stream: bool = False,
         tools: list[ToolDef] | None = None,
         tool_choice: str = "auto",
-        response_format: type | None = None,
+        response_format: Literal["json_object"] | None = None,
     ) -> ChatResult:
         model_name = model or self.model_name
         model_def = _get_model(model_name)
@@ -80,8 +80,8 @@ class LLMClient:
             body["tools"] = [_tool_def_to_dict(t) for t in tools]
             body["tool_choice"] = tool_choice
 
-        if response_format is not None:
-            body["response_format"] = {"type": "json_object"}
+        if response_format == "json_object":
+            body["response_format"] = {"type": response_format}
 
         last_error: Exception | None = None
 
