@@ -1,6 +1,7 @@
-import { useEffect } from "react"
-import { Search, Plus, LogOut } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Search, Plus, LogOut, Trash2 } from "lucide-react"
 import { useAuth } from "../../context/AuthContext"
+import { getToken, clearToken } from "../../api/auth"
 
 interface HomeNavbarProps {
   searchQuery: string
@@ -10,6 +11,25 @@ interface HomeNavbarProps {
 
 export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick }: HomeNavbarProps) {
   const { user, logout } = useAuth()
+  const [deleting, setDeleting] = useState(false)
+
+  async function handleDeleteAccount() {
+    if (!window.confirm("确定要注销账号吗？所有项目数据将被永久删除，此操作不可恢复！")) return
+    setDeleting(true)
+    try {
+      const token = getToken()
+      const res = await fetch("/api/auth/me", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error("注销失败")
+      clearToken()
+      window.location.href = "/login"
+    } catch {
+      alert("注销失败")
+      setDeleting(false)
+    }
+  }
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -50,6 +70,14 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
       </button>
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-400 hidden sm:block">{user?.username || user?.email}</span>
+        <button
+          onClick={handleDeleteAccount}
+          disabled={deleting}
+          className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-500 hover:text-red-400 hover:bg-red-900/30 transition-all"
+          title="注销账号"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
         <button
           onClick={logout}
           className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-all"

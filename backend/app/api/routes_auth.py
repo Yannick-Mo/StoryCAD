@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
@@ -49,3 +50,13 @@ async def update_me(payload: dict, current_user: dict = Depends(get_current_user
     password = payload.get("password")
     service = UserService(db)
     return await service.update_profile(user_id, display_name=display_name, password=password)
+
+
+@router.delete("/me")
+async def delete_me(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    user_id = uuid.UUID(current_user["id"])
+    service = UserService(db)
+    ok = await service.delete_account(user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}

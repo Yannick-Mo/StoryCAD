@@ -196,8 +196,13 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
               <button onClick={() => navigate("/")} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             <div className="space-y-2 mb-6">
-              {["analyze_material", "plan_structure", "design_characters", "build_settings", "validate"].map(step => {
+              {["analyze_material", "plan_structure", "design_characters", "build_settings", "validate"].map((step, idx) => {
                 const evt = aiSteps.find(e => e.step === step)
+                const lastStep = aiSteps[aiSteps.length - 1]?.step
+                const current = !evt && aiGenerating && (
+                  lastStep === step || (idx === 0 && !lastStep)
+                )
+                const done = !!evt
                 const labels: Record<string, string> = {
                   analyze_material: "分析素材",
                   plan_structure: "规划结构",
@@ -205,18 +210,44 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                   build_settings: "生成世界观",
                   validate: "校验结果",
                 }
-                const icon = evt ? "✓" : aiSteps.length > 0 && aiSteps[aiSteps.length - 1].step === step ? "⏳" : "○"
-                const active = !!evt
                 return (
-                  <div key={step} className={`flex items-start gap-3 p-2 rounded-lg ${active ? 'bg-gray-800/60' : ''}`}>
-                    <span className={`text-sm w-5 ${active ? 'text-green-400' : 'text-gray-600'}`}>{icon}</span>
+                  <div key={step} className={`flex items-start gap-3 p-2 rounded-lg ${(done || current) ? 'bg-gray-800/60' : ''}`}>
+                    <span className={`text-sm w-5 ${done ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : 'text-gray-600'}`}>{done ? "✓" : current ? "⟳" : "○"}</span>
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm ${active ? 'text-gray-200' : 'text-gray-600'}`}>{labels[step]}</div>
-                      {evt?.preview && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap">{evt.preview}</div>}
+                      <div className={`text-sm ${current ? 'text-gray-200' : done ? 'text-gray-400' : 'text-gray-600'}`}>{labels[step]}</div>
+                      {evt?.preview && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap leading-relaxed">{evt.preview}</div>}
                     </div>
                   </div>
                 )
               })}
+              {(() => {
+                const sceneEvents = aiSteps.filter(e => e.step === "generate_scene_chapter")
+                const totalChapters = (() => {
+                  const plan = aiSteps.find(e => e.step === "plan_structure")
+                  if (!plan?.preview) return 0
+                  const m = plan.preview.match(/(\d+)章/)
+                  return m ? parseInt(m[1]) : 0
+                })()
+                const done = sceneEvents.length
+                const lastStep = aiSteps[aiSteps.length - 1]?.step
+                const current = lastStep === "generate_scene_chapter"
+                const allDone = totalChapters > 0 && done >= totalChapters
+                return (
+                  <div className={`flex items-start gap-3 p-2 rounded-lg ${(done > 0 || current) ? 'bg-gray-800/60' : ''}`}>
+                    <span className={`text-sm w-5 ${allDone ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : done > 0 ? 'text-amber-400' : 'text-gray-600'}`}>
+                      {allDone ? "✓" : current ? "⟳" : done > 0 ? "⟳" : "○"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm ${current || done > 0 ? 'text-gray-200' : 'text-gray-600'}`}>
+                        生成场景 {totalChapters > 0 ? `(${done}/${totalChapters})` : done > 0 ? `(${done})` : ""}
+                      </div>
+                      {current && sceneEvents.length > 0 && (
+                        <div className="text-xs text-gray-500 mt-0.5">{sceneEvents[sceneEvents.length - 1].preview}</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
             {!aiSteps.find(e => e.step === "done") && !aiSteps.find(e => e.step === "error") && (
               <div className="text-center text-sm text-gray-500 animate-pulse">

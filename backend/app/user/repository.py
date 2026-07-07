@@ -36,3 +36,11 @@ class UserRepository:
             setattr(user, key, value)
         await self.db.commit()
         return True
+
+    async def delete(self, user_id: uuid.UUID) -> bool:
+        user = await self.get_by_id(user_id)
+        if not user:
+            return False
+        await self.db.delete(user)
+        await self.db.commit()
+        return True

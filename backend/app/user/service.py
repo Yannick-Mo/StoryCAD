@@ -2,13 +2,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import jwt, JWTError
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from app.user.repository import UserRepository
 from app.config import settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class UserService:
@@ -17,11 +15,11 @@ class UserService:
 
     @staticmethod
     def _hash_password(password: str) -> str:
-        return pwd_context.hash(password)
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     @staticmethod
     def _verify_password(plain: str, hashed: str) -> bool:
-        return pwd_context.verify(plain, hashed)
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
 
     @staticmethod
     def _create_token(user_id: uuid.UUID) -> str:
@@ -61,6 +59,9 @@ class UserService:
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
         return {"id": str(user.id), "username": user.username, "email": user.email, "display_name": user.display_name}
+
+    async def delete_account(self, user_id: uuid.UUID) -> bool:
+        return await self.repo.delete(user_id)
 
     async def update_profile(self, user_id: uuid.UUID, display_name: Optional[str] = None, password: Optional[str] = None) -> dict:
         updates = {}

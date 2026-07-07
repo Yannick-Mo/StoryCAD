@@ -1,5 +1,5 @@
 // frontend/src/api/ai.ts
-import { apiPost } from './auth'
+import { apiPost, getToken } from './auth'
 
 export interface AiGenerateRequest {
   chapter_id: string
@@ -66,7 +66,8 @@ export function createFromMaterial(
   onDone: (projectId: string) => void,
   onError: (message: string) => void,
 ): () => void {
-  const token = localStorage.getItem('storycad_token')
+  const token = getToken()
+  if (!token) { onError('请先登录'); return () => {} }
   const url = `/api/projects/create-from-material`
   const controller = new AbortController()
 
