@@ -48,5 +48,8 @@ def register_routers():
     from app.api.routes_ai_v2 import router as ai_v2_router
     app.include_router(ai_v2_router)
 
+    from app.mcp.server import mcp
+    app.mount("/mcp", mcp.sse_app())
+
 
 register_routers()
