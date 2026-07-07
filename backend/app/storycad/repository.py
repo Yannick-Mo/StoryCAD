@@ -80,12 +80,15 @@ class StoryCADRepository:
     # ============================================================
 
     async def sync_editor_data(self, project_id: uuid.UUID, changes: dict) -> int:
+        has_changes = False
         for entity_type in ["acts", "chapters", "scenes", "edges", "characters",
                             "character_relations", "themes", "theme_chapters",
                             "projects"]:
             ops = changes.get(entity_type, {})
             if not ops:
                 continue
+            if any(ops.get(k) for k in ("created", "updated", "deleted")):
+                has_changes = True
             for delete_id in ops.get("deleted", []):
                 await self._delete_entity(entity_type, delete_id)
             for item in ops.get("created", []):
@@ -98,6 +101,9 @@ class StoryCADRepository:
         await self.db.flush()
         await self._recalc_chapter_counts(project_id)
         await self.db.commit()
+
+        if not has_changes:
+            return 0
 
         project_repo = ProjectRepository(self.db)
         pv = await project_repo.save_version(project_id, {"type": "editor_sync"})
