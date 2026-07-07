@@ -46,6 +46,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
 
   const store = useEditorStore(projectId)
   const data = store.data
+  const [layoutKey, setLayoutKey] = useState(0)
+  const handleAutoLayout = useCallback(() => setLayoutKey(k => k + 1), [])
 
   const handleActClick = useCallback((actId: string) => {
     if (!actId) { setSelectedActId(null); store.clearSelection(); return }
@@ -133,6 +135,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             }}
             onClearSelection={store.clearSelection}
             connectionMode={connectionMode}
+            resetKey={layoutKey}
           />
         )
       case 'narrative-char':
@@ -238,7 +241,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                   if (ch) { setSelectedChapter({ ...ch }); store.clearSelection() }
                 }
               }}
-              onLayout={() => {}}
+              onLayout={handleAutoLayout}
               onExport={handleExport}
             />
           )}

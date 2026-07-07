@@ -84,6 +84,7 @@ interface PlotCanvasProps {
   onSelectEdge: (edgeId: string) => void
   onClearSelection: () => void
   connectionMode: 'all' | EdgeType
+  resetKey?: number
 }
 
 export default function PlotCanvas({
@@ -92,7 +93,7 @@ export default function PlotCanvas({
   onAddEdge, onDeleteEdge, onChangeEdgeType, onReconnectEdge,
   onAddChapter, onDeleteChapter, onAddAct, onDeleteAct, onActResize,
   selection, onSelectNode, onSelectEdge, onClearSelection,
-  connectionMode,
+  connectionMode, resetKey = 0,
 }: PlotCanvasProps) {
   const { addToast } = useToast()
   const sortedActs = useMemo(() => [...acts].sort((a, b) => a.order - b.order), [acts])
@@ -196,6 +197,7 @@ export default function PlotCanvas({
   const rfRef = useRef<ReactFlowInstance | null>(null)
 
   // Sync nodes from data without resetting drag positions or manual group size
+  // When resetKey > 0, skip position preservation to force auto-layout
   useEffect(() => {
     setNodes(prev => {
       const prevMap = new Map(prev.map(n => [n.id, n]))
@@ -206,7 +208,7 @@ export default function PlotCanvas({
           const ps = prevNode.style || {}
           return {
             ...n,
-            position: prevNode.position ?? n.position,
+            position: resetKey ? n.position : (prevNode.position ?? n.position),
             style: {
               ...ns,
               width: Math.max((ns.width as number) || 300, (ps.width as number) || 300),
@@ -214,10 +216,10 @@ export default function PlotCanvas({
             },
           }
         }
-        return { ...n, position: prevNode?.position ?? n.position }
+        return { ...n, position: resetKey ? n.position : (prevNode?.position ?? n.position) }
       })
     })
-  }, [initialNodes, setNodes])
+  }, [initialNodes, setNodes, resetKey])
   // Sync data edges
   useEffect(() => { setRfEdges(rfEdges) }, [rfEdges, setRfEdges])
 
