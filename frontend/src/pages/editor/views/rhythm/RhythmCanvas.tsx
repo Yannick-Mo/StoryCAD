@@ -30,6 +30,15 @@ function paceNote(words: number, intensity: number): string {
 
 export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, onSelectChapter, onSaveRhythm }: RhythmCanvasProps) {
   const [editChapter, setEditChapter] = useState<{ id: string; title: string; values: any } | null>(null)
+
+  if (!rhythms || rhythms.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+        请先创建章节以查看节奏
+      </div>
+    )
+  }
+
   const totalW = Math.max(rhythms.length * (BAR_W + GAP) + PAD_L + PAD_R, 400)
 
   const actBoundaries = useMemo(() => {

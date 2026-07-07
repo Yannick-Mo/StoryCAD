@@ -37,8 +37,6 @@ export default function ThemeCanvas({ themes, chapters, selected, onSelect, onAd
             >
               {/* Hover actions */}
               <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                <button onClick={(e) => { e.stopPropagation(); onAddTheme() }}
-                  className="p-1.5 bg-gray-800 rounded-lg hover:bg-gray-700 text-xs text-gray-300">✎</button>
                 <button onClick={(e) => { e.stopPropagation(); onDeleteTheme(tIdx) }}
                   className="p-1.5 bg-gray-800 rounded-lg hover:bg-red-700 text-xs text-gray-300">✕</button>
               </div>
