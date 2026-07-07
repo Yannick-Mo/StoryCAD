@@ -1,14 +1,18 @@
-import { useMemo, useCallback, useState } from 'react'
+import { useMemo, useCallback, useState, useEffect } from 'react'
 import type { RhythmPoint, Chapter, Act } from '../../types'
 import { RhythmEditPanel } from './RhythmEditPanel'
+import { analyzeRhythm, type RhythmAnalysis } from '../../../api/rhythm'
 
 interface RhythmCanvasProps {
+  projectId: string
   rhythms: RhythmPoint[]
   chapters: Chapter[]
   acts: Act[]
   selectedIndex: number | null
   onSelectChapter: (index: number) => void
   onSaveRhythm: (chapterId: string, values: { action: number; suspense: number; emotion: number; humor: number; intensity: number }) => void
+  autoAnalyze?: boolean
+  onAnalysisDone?: () => void
 }
 
 const BAR_W = 40
@@ -28,8 +32,41 @@ function paceNote(words: number, intensity: number): string {
   return '适中'
 }
 
-export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, onSelectChapter, onSaveRhythm }: RhythmCanvasProps) {
+export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selectedIndex, onSelectChapter, onSaveRhythm, autoAnalyze, onAnalysisDone }: RhythmCanvasProps) {
   const [editChapter, setEditChapter] = useState<{ id: string; title: string; values: any } | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisResult, setAnalysisResult] = useState<RhythmAnalysis | null>(null)
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true)
+    try {
+      const result = await analyzeRhythm(projectId)
+      setAnalysisResult(result)
+      result.chapters.forEach(ch => {
+        const idx = rhythms.findIndex(r => r.chapterId === ch.chapter_id)
+        if (idx >= 0) {
+          onSaveRhythm(ch.chapter_id, {
+            action: ch.metrics.action,
+            suspense: ch.metrics.suspense,
+            emotion: ch.metrics.emotion,
+            humor: ch.metrics.humor,
+            intensity: ch.metrics.intensity,
+          })
+        }
+      })
+    } catch (e) {
+      console.error('Rhythm analysis failed:', e)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (autoAnalyze) {
+      handleAnalyze()
+      onAnalysisDone?.()
+    }
+  }, [autoAnalyze])
 
   if (!rhythms || rhythms.length === 0) {
     return (
@@ -136,17 +173,26 @@ export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, o
         </svg>
 
         {/* Legend */}
-        <div className="flex items-center gap-3 mt-1 ml-14">
-          {DIM_COLORS.map((c, i) => (
-            <div key={c} className="flex items-center gap-1 text-[10px] text-gray-500">
-              <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: c }} />
-              {DIM_LABELS[i]}
+        <div className="flex items-center justify-between mt-1 ml-14 mr-4">
+          <div className="flex items-center gap-3">
+            {DIM_COLORS.map((c, i) => (
+              <div key={c} className="flex items-center gap-1 text-[10px] text-gray-500">
+                <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: c }} />
+                {DIM_LABELS[i]}
+              </div>
+            ))}
+            <div className="flex items-center gap-1 text-[10px] text-gray-500">
+              <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+              综合强度
             </div>
-          ))}
-          <div className="flex items-center gap-1 text-[10px] text-gray-500">
-            <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-            综合强度
           </div>
+          <button
+            onClick={handleAnalyze}
+            disabled={analyzing}
+            className="flex items-center gap-1 px-3 py-1 rounded-full text-xs bg-gradient-to-r from-amber-700/80 to-amber-600/80 border border-amber-500/50 text-white hover:from-amber-600 hover:to-amber-500 disabled:opacity-50 transition-all"
+          >
+            {analyzing ? '分析中...' : '🤖 AI 分析'}
+          </button>
         </div>
       </div>
 
@@ -184,6 +230,25 @@ export default function RhythmCanvas({ rhythms, chapters, acts, selectedIndex, o
           </tbody>
         </table>
       </div>
+
+      {analysisResult && (
+        <div className="mt-4 p-3 rounded-lg bg-gray-800/60 border border-amber-800/30">
+          <h4 className="text-xs font-semibold text-amber-400 mb-2">📊 AI 分析结果</h4>
+          {(analysisResult.chapters.some(c => c.anomaly_label) || analysisResult.overall_assessment) && (
+            <div className="mb-2 space-y-1">
+              {analysisResult.chapters.filter(c => c.anomaly_label).map((ch, i) => (
+                <div key={i} className="text-xs px-2 py-1 rounded bg-yellow-900/30 text-yellow-300">
+                  🟡 {ch.title}: {ch.anomaly_label}
+                  {ch.ai_note && <span className="text-gray-400 block mt-0.5">💡 {ch.ai_note}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {analysisResult.overall_assessment && (
+            <p className="text-xs text-gray-400 leading-relaxed mt-2">{analysisResult.overall_assessment}</p>
+          )}
+        </div>
+      )}
 
       {editChapter && (
         <RhythmEditPanel
