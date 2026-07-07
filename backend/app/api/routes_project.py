@@ -22,11 +22,13 @@ async def create_project(payload: dict, current_user: dict = Depends(get_current
 async def list_projects(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    search: str = Query(""),
+    status: str = Query(""),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = ProjectService(db)
-    return await service.list_projects(uuid.UUID(current_user["id"]), page, size)
+    return await service.list_projects(uuid.UUID(current_user["id"]), page, size, search, status)
 
 
 @router.get("/{project_id}")

@@ -1,22 +1,23 @@
 export interface ProjectListItem {
   id: string
   title: string
+  genre?: string
   status: string
+  template_type?: string
+  total_words?: number
+  total_chapters?: number
+  total_scenes?: number
   created_at: string
+  updated_at?: string
 }
 
-// For homepage display — extends API data with mock fields
 export interface HomeProject extends ProjectListItem {
   coverClass: string
   coverChar: string
-  words: string
-  template: string
-  time: string
   stage: string
   stageType: string
   progress: number
   progressClass: string
-  updated: Date
 }
 
 export const COVER_GRADIENTS = ["grad-purple", "grad-blue", "grad-pink", "grad-gold", "grad-green", "grad-teal"] as const

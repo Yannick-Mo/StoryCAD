@@ -1,3 +1,5 @@
+import type { ProjectListItem } from "../types/project"
+
 const BASE = "/api/auth"
 
 export function getToken(): string | null {
@@ -136,8 +138,8 @@ export async function updateProfile(payload: { display_name?: string; password?:
 // Project CRUD
 const BASE_PROJECTS = "/api/projects"
 
-export async function listProjects(page = 1, size = 20): Promise<{ id: string; title: string; status: string; created_at: string }[]> {
-  return apiGet(`${BASE_PROJECTS}?page=${page}&size=${size}`)
+export async function listProjects(page = 1, size = 20, search = "", status = ""): Promise<{ items: ProjectListItem[]; total: number; page: number; size: number }> {
+  return apiGet(`${BASE_PROJECTS}?page=${page}&size=${size}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`)
 }
 
 export async function createProject(title: string, description?: string): Promise<{ id: string }> {

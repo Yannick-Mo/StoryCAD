@@ -20,7 +20,7 @@ export default function ProjectListPage() {
   const fetchProjects = useCallback(() => {
     setLoading(projects.length === 0)
     listProjects()
-      .then((data) => setProjects(data))
+      .then((data) => setProjects(data.items ?? data))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])

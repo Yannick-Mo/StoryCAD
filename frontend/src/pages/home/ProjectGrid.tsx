@@ -10,22 +10,16 @@ const STAGE_MAP: Record<string, { label: string; type: "progress" | "done" }> = 
   final: { label: "已完成", type: "done" },
 }
 
-const TEMPLATES = ["三幕式", "四幕结构", "英雄之旅", "救猫咪", "网文爽文节奏"]
-
 function enrichProject(p: ProjectListItem, index: number): HomeProject {
   const stage = STAGE_MAP[p.status] ?? STAGE_MAP.init
   return {
     ...p,
     coverClass: COVER_GRADIENTS[index % COVER_GRADIENTS.length],
     coverChar: p.title.charAt(0),
-    words: "—",
-    template: TEMPLATES[index % TEMPLATES.length],
-    time: index === 0 ? "刚刚" : `${index + 1}天前`,
     stage: stage.label,
     stageType: stage.type,
     progress: p.status === "final" ? 100 : p.status === "revising" ? 75 : p.status === "draft" ? 40 : 10,
     progressClass: PROGRESS_CLASSES[index % PROGRESS_CLASSES.length],
-    updated: new Date(Date.now() - index * 24 * 60 * 60 * 1000),
   }
 }
 
@@ -46,13 +40,12 @@ export default function ProjectGrid({ projects, searchQuery, loading, onDeletePr
   const filtered = enriched.filter((p) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
-      if (!p.title.toLowerCase().includes(q) && !p.template.toLowerCase().includes(q) && !p.stage.toLowerCase().includes(q)) return false
+      if (!p.title.toLowerCase().includes(q) && !p.stage.toLowerCase().includes(q)) return false
     }
     if (activeFilter === "progress") return p.stageType === "progress"
     if (activeFilter === "done") return p.stageType === "done"
     if (activeFilter === "recent") {
-      const diff = Date.now() - p.updated.getTime()
-      return diff / (1000 * 60 * 60 * 24) <= 7
+      return true
     }
     return true
   })
@@ -127,9 +120,10 @@ export default function ProjectGrid({ projects, searchQuery, loading, onDeletePr
                 <div className="p-4 flex flex-col gap-1.5">
                   <div className="font-bold text-sm text-gray-100">《{proj.title}》</div>
                   <div className="flex gap-3 text-xs text-gray-500">
-                    <span>📏 {proj.words}</span>
-                    <span>📐 {proj.template}</span>
-                    <span>🕐 {proj.time}</span>
+                    <span>{proj.total_words ? `${proj.total_words.toLocaleString()} 字` : '暂无字数'}</span>
+                    <span>{proj.total_chapters ? `${proj.total_chapters} 章` : ''}</span>
+                    {proj.template_type && <span>{proj.template_type}</span>}
+                    {proj.genre && <span>{proj.genre}</span>}
                   </div>
                   <div className="h-1 bg-gray-800 rounded-full mt-1 overflow-hidden">
                     <div className={`h-full rounded-full transition-all duration-500 ${proj.progressClass === "purple" ? "bg-purple-400" : proj.progressClass === "blue" ? "bg-blue-400" : proj.progressClass === "pink" ? "bg-pink-400" : proj.progressClass === "gold" ? "bg-yellow-400" : "bg-green-400"}`}

@@ -1,8 +1,11 @@
 import uuid
 from typing import Optional
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.project.repository import ProjectRepository
+from app.project.models import Project, ProjectConfig
+from app.storycad.models import Chapter, Scene
 
 
 class ProjectService:
@@ -30,9 +33,42 @@ class ProjectService:
             "created_at": project.created_at.isoformat(), "updated_at": project.updated_at.isoformat()
         }
 
-    async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20) -> list[dict]:
-        projects = await self.repo.list_projects(owner_id, page, size)
-        return [{"id": str(p.id), "title": p.title, "status": p.status, "created_at": p.created_at.isoformat()} for p in projects]
+    async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20, search: str = "", status: str = "") -> dict:
+        projects = await self.repo.list_projects(owner_id, page, size, search, status)
+
+        items = []
+        for p in projects:
+            ch_count = (await self.repo.db.execute(
+                select(func.count()).select_from(Chapter).where(Chapter.project_id == p.id)
+            )).scalar() or 0
+            sc_count = (await self.repo.db.execute(
+                select(func.count()).select_from(Scene).where(Scene.project_id == p.id)
+            )).scalar() or 0
+            words = (await self.repo.db.execute(
+                select(func.coalesce(func.sum(Chapter.total_words), 0)).where(Chapter.project_id == p.id)
+            )).scalar() or 0
+            config = (await self.repo.db.execute(
+                select(ProjectConfig).where(ProjectConfig.project_id == p.id)
+            )).scalar_one_or_none()
+
+            items.append({
+                "id": str(p.id),
+                "title": p.title,
+                "genre": p.genre,
+                "status": p.status,
+                "template_type": config.template_type if config else "",
+                "total_words": int(words),
+                "total_chapters": int(ch_count),
+                "total_scenes": int(sc_count),
+                "created_at": p.created_at.isoformat() if p.created_at else "",
+                "updated_at": p.updated_at.isoformat() if p.updated_at else "",
+            })
+
+        total = (await self.repo.db.execute(
+            select(func.count()).select_from(Project).where(Project.owner_id == owner_id)
+        )).scalar() or 0
+
+        return {"items": items, "total": total, "page": page, "size": size}
 
     async def update_project(self, project_id: uuid.UUID, owner_id: uuid.UUID, **kwargs) -> bool:
         project = await self.repo.get(project_id)

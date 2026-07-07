@@ -21,12 +21,14 @@ class ProjectRepository:
         result = await self.db.execute(select(Project).where(Project.id == project_id))
         return result.scalar_one_or_none()
 
-    async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20) -> list[Project]:
-        result = await self.db.execute(
-            select(Project).where(Project.owner_id == owner_id)
-            .order_by(desc(Project.created_at))
-            .offset((page - 1) * size).limit(size)
-        )
+    async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20, search: str = "", status: str = ""):
+        query = select(Project).where(Project.owner_id == owner_id)
+        if search:
+            query = query.where(Project.title.ilike(f"%{search}%"))
+        if status:
+            query = query.where(Project.status == status)
+        query = query.order_by(Project.updated_at.desc()).offset((page - 1) * size).limit(size)
+        result = await self.db.execute(query)
         return result.scalars().all()
 
     async def update(self, project_id: uuid.UUID, **kwargs) -> bool:
