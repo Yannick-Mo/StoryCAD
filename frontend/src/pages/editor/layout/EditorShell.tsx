@@ -19,6 +19,7 @@ import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
+import { saveSceneContent } from '../../../api/editor'
 import { ToastProvider } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import type { Chapter, Scene, EdgeType } from '../types'
@@ -256,9 +257,37 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 chapters={data.chapters.filter(c => c.actId === selectedActId)}
                 onClose={() => setSelectedActId(null)}
                 onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
-                onSceneSave={(chapterId, sceneId, content) => {
-                  const updated = data.chapters.find(c => c.id === chapterId)
-                  if (updated) setSelectedChapter({ ...updated })
+                projectId={projectId}
+                onSceneSave={async (chapterId, sceneId, content) => {
+                  setData(d => {
+                    if (!d) return d
+                    return {
+                      ...d,
+                      chapters: d.chapters.map(ch =>
+                        ch.id === chapterId
+                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                          : ch
+                      )
+                    }
+                  })
+                  try {
+                    const result = await saveSceneContent(projectId, sceneId, content)
+                    setData(d => {
+                      if (!d) return d
+                      return {
+                        ...d,
+                        chapters: d.chapters.map(ch =>
+                          ch.id === chapterId
+                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
+                            : ch
+                        )
+                      }
+                    })
+                    const updated = data.chapters.find(c => c.id === chapterId)
+                    if (updated) setSelectedChapter({ ...updated })
+                  } catch (e) {
+                    throw e
+                  }
                 }}
                 onOpenSceneEditor={(scene) => setEditingScene(scene)}
                 onUpdateAct={store.updateAct}
@@ -271,7 +300,34 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 chapter={data.chapters.find(c => c.id === selectedChapter.id) ?? selectedChapter}
                 projectId={projectId}
                 onClose={() => setSelectedChapter(null)}
-                onSceneSave={(chapterId, sceneId, content) => {
+                onSceneSave={async (chapterId, sceneId, content) => {
+                  setData(d => {
+                    if (!d) return d
+                    return {
+                      ...d,
+                      chapters: d.chapters.map(ch =>
+                        ch.id === chapterId
+                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                          : ch
+                      )
+                    }
+                  })
+                  try {
+                    const result = await saveSceneContent(projectId, sceneId, content)
+                    setData(d => {
+                      if (!d) return d
+                      return {
+                        ...d,
+                        chapters: d.chapters.map(ch =>
+                          ch.id === chapterId
+                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
+                            : ch
+                        )
+                      }
+                    })
+                  } catch (e) {
+                    throw e
+                  }
                   const updated = data.chapters.find(c => c.id === chapterId)
                   if (updated) setSelectedChapter({ ...updated })
                 }}

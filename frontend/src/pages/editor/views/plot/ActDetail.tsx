@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Act, Chapter, Scene } from '../../types'
+import { loadSceneContent } from '../../../../api/editor'
+import { useToast } from '../../components/Toast'
 
 interface ActDetailProps {
   act: Act
@@ -12,6 +14,7 @@ interface ActDetailProps {
   onUpdateScene: (chapterId: string, sceneId: string, updates: Partial<Pick<Scene, 'title' | 'povCharacter' | 'setting' | 'time' | 'summary'>>) => void
   onAddChapter: (actId: string) => void
   onDeleteScene: (chapterId: string, sceneId: string) => void
+  projectId?: string
 }
 
 const STATUS_OPTIONS = [
@@ -20,28 +23,53 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ActDetail({ act, chapters, onClose, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene }: ActDetailProps) {
+export default function ActDetail({ act, chapters, onClose, onSelectChapter, onSceneSave, onOpenSceneEditor, onUpdateAct, onUpdateScene, onAddChapter, onDeleteScene, projectId }: ActDetailProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [contentCache, setContentCache] = useState<Record<string, string>>({})
+  const { addToast } = useToast()
 
   const totalWords = chapters.reduce((s, c) => s + c.wordCount, 0)
   const totalScenes = chapters.reduce((s, c) => s + c.scenes.length, 0)
+
+  useEffect(() => {
+    if (!projectId) return
+    for (const ch of chapters) {
+      for (const sc of ch.scenes) {
+        if (sc.wordCount > 0 && !sc.content && !contentCache[sc.id]) {
+          loadSceneContent(projectId, sc.id)
+            .then(text => { if (text) setContentCache(prev => ({ ...prev, [sc.id]: text })) })
+            .catch(() => {})
+        }
+      }
+    }
+  }, [expandedId, projectId])
 
   const toggleExpand = (chId: string) => {
     setExpandedId(expandedId === chId ? null : chId)
     setEditSceneId(null)
   }
 
+  const sceneContent = (sc: Scene) => sc.content || contentCache[sc.id] || ''
+
   const startEdit = (scene: Scene) => {
     setEditSceneId(scene.id)
-    setEditContent(scene.content)
+    setEditContent(sceneContent(scene))
   }
 
-  const saveScene = (chapterId: string) => {
-    if (editSceneId) {
-      onSceneSave(chapterId, editSceneId, editContent)
+  const saveScene = async (chapterId: string) => {
+    if (!editSceneId) return
+    setSaving(true)
+    try {
+      await onSceneSave(chapterId, editSceneId, editContent)
+      addToast('保存成功', 'success')
       setEditSceneId(null)
+    } catch {
+      addToast('保存失败，请重试', 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -179,7 +207,7 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
                             placeholder="写小说正文..."
                           />
                           <div className="flex gap-2">
-                            <button onClick={() => saveScene(ch.id)} className="px-3 py-1 rounded-lg bg-amber-600 text-xs font-medium text-black hover:bg-amber-500 transition-colors">保存</button>
+                            <button onClick={() => saveScene(ch.id)} disabled={saving} className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${saving ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-amber-600 text-black hover:bg-amber-500'}`}>{saving ? '保存中...' : '保存'}</button>
                             <button onClick={() => setEditSceneId(null)} className="px-3 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
                           </div>
                         </div>
@@ -187,13 +215,13 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
                         <button
                           onClick={() => startEdit(scene)}
                           className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                            scene.content
+                            sceneContent(scene)
                               ? 'bg-gray-950/50 text-gray-400 hover:bg-gray-800 border border-gray-800'
                               : 'bg-gray-800/30 text-gray-600 hover:bg-gray-700 border border-dashed border-gray-700'
                           }`}
                         >
-                          {scene.content
-                            ? <span className="line-clamp-2 font-mono leading-relaxed">{scene.content}</span>
+                          {sceneContent(scene)
+                            ? <span className="line-clamp-2 font-mono leading-relaxed">{sceneContent(scene)}</span>
                             : '✏️ 点击开始写作...'}
                         </button>
                       )}

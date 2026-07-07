@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { Search, Plus, LogOut, Trash2 } from "lucide-react"
 import { useAuth } from "../../context/AuthContext"
 import { getToken, clearToken } from "../../api/auth"
+import ConfirmDialog from "../editor/components/ConfirmDialog"
+import { useToast } from "../editor/components/Toast"
 
 interface HomeNavbarProps {
   searchQuery: string
@@ -11,10 +13,11 @@ interface HomeNavbarProps {
 
 export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick }: HomeNavbarProps) {
   const { user, logout } = useAuth()
+  const { addToast } = useToast()
   const [deleting, setDeleting] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   async function handleDeleteAccount() {
-    if (!window.confirm("确定要注销账号吗？所有项目数据将被永久删除，此操作不可恢复！")) return
     setDeleting(true)
     try {
       const token = getToken()
@@ -26,8 +29,10 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
       clearToken()
       window.location.href = "/login"
     } catch {
-      alert("注销失败")
+      addToast("注销失败", "error")
       setDeleting(false)
+    } finally {
+      setDeleteDialogOpen(false)
     }
   }
 
@@ -43,6 +48,7 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
   }, [])
 
   return (
+    <>
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur-xl border-b border-gray-800 px-6 h-14 flex items-center gap-4">
       <a href="/" className="flex items-center gap-2 text-blue-400 font-bold text-lg no-underline shrink-0 hover:opacity-85 transition-opacity">
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
@@ -71,7 +77,7 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-400 hidden sm:block">{user?.username || user?.email}</span>
         <button
-          onClick={handleDeleteAccount}
+          onClick={() => setDeleteDialogOpen(true)}
           disabled={deleting}
           className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-gray-500 hover:text-red-400 hover:bg-red-900/30 transition-all"
           title="注销账号"
@@ -87,5 +93,15 @@ export default function HomeNavbar({ searchQuery, onSearchChange, onCreateClick 
         </button>
       </div>
     </nav>
+    <ConfirmDialog
+      open={deleteDialogOpen}
+      title="注销账号"
+      message="确定要注销账号吗？所有项目数据将被永久删除，此操作不可恢复！"
+      confirmText="确认注销"
+      cancelText="取消"
+      onConfirm={handleDeleteAccount}
+      onCancel={() => setDeleteDialogOpen(false)}
+    />
+    </>
   )
 }

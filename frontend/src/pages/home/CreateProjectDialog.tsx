@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { FilePlus2, FolderUp, X } from "lucide-react"
 import { createProject } from "../../api/auth"
 import { createFromMaterial, type ProgressEvent } from "../../api/ai"
+import { useToast } from "../editor/components/Toast"
 
 interface Props {
   open: boolean
@@ -16,6 +17,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
   const [materialText, setMaterialText] = useState("")
   const [aiSteps, setAiSteps] = useState<ProgressEvent[]>([])
   const [aiGenerating, setAiGenerating] = useState(false)
+  const { addToast } = useToast()
   const navigate = useNavigate()
 
   if (!open) return null
@@ -59,7 +61,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
         navigate(`/projects/${projectId}`)
       },
       (msg) => {
-        alert(msg)
+        addToast(msg, "error")
         setAiGenerating(false)
       },
     )

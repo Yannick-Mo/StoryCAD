@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Chapter, Scene } from '../../types'
 import AiAssistModal from '../../modals/AiAssistModal'
-import type { SceneOutlineItem } from '../../../api/ai'
+import type { SceneOutlineItem } from '../../../../api/ai'
+import { loadSceneContent } from '../../../../api/editor'
+import { useToast } from '../../components/Toast'
 
 interface ChapterDetailProps {
   chapter: Chapter | null
@@ -26,21 +28,44 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editGoal, setEditGoal] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [contentCache, setContentCache] = useState<Record<string, string>>({})
   const [aiMode, setAiMode] = useState<'goal' | 'outline' | 'writing' | null>(null)
+  const { addToast } = useToast()
+
+  useEffect(() => {
+    if (!projectId || !chapter) return
+    for (const sc of chapter.scenes) {
+      if (sc.wordCount > 0 && !sc.content && !contentCache[sc.id]) {
+        loadSceneContent(projectId, sc.id)
+          .then(text => { if (text) setContentCache(prev => ({ ...prev, [sc.id]: text })) })
+          .catch(() => {})
+      }
+    }
+  }, [chapter?.id, projectId])
 
   if (!chapter) return null
 
   const totalWords = chapter.scenes.reduce((s, sc) => s + sc.wordCount, 0)
 
+  const sceneContent = (sc: Scene) => sc.content || contentCache[sc.id] || ''
+
   const startEdit = (scene: Scene) => {
     setEditSceneId(scene.id)
-    setEditContent(scene.content)
+    setEditContent(sceneContent(scene))
   }
 
-  const saveScene = () => {
-    if (editSceneId) {
-      onSceneSave(chapter.id, editSceneId, editContent)
+  const saveScene = async () => {
+    if (!editSceneId) return
+    setSaving(true)
+    try {
+      await onSceneSave(chapter.id, editSceneId, editContent)
+      addToast('保存成功', 'success')
       setEditSceneId(null)
+    } catch {
+      addToast('保存失败，请重试', 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -186,7 +211,7 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
                           placeholder="在这里写小说正文..."
                         />
                         <div className="flex gap-2">
-                          <button onClick={saveScene} className="px-3 py-1 rounded-lg bg-amber-600 text-xs font-medium text-black hover:bg-amber-500 transition-colors">保存</button>
+                          <button onClick={saveScene} disabled={saving} className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${saving ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-amber-600 text-black hover:bg-amber-500'}`}>{saving ? '保存中...' : '保存'}</button>
                           <button onClick={() => setEditSceneId(null)} className="px-3 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
                         </div>
                       </div>
@@ -194,13 +219,13 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
                       <button
                         onClick={() => startEdit(scene)}
                         className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
-                          scene.content
+                          sceneContent(scene)
                             ? 'bg-gray-950/50 text-gray-400 hover:bg-gray-800 border border-gray-800'
                             : 'bg-gray-800/30 text-gray-600 hover:bg-gray-700 border border-dashed border-gray-700'
                         }`}
                       >
-                        {scene.content
-                          ? <span className="line-clamp-3 font-mono leading-relaxed">{scene.content}</span>
+                        {sceneContent(scene)
+                          ? <span className="line-clamp-3 font-mono leading-relaxed">{sceneContent(scene)}</span>
                           : '✏️ 点击开始写作...'}
                       </button>
                     )}

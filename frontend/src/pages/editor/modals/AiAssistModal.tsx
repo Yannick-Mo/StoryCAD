@@ -31,6 +31,12 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<GoalResult | OutlineResult | WritingResult | null>(null)
   const [applied, setApplied] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   const handleGenerate = async () => {
     setLoading(true)
@@ -144,10 +150,14 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => navigator.clipboard.writeText(r.content)}
-              className="flex-1 px-3 py-1.5 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition-colors"
+              onClick={() => handleCopy(r.content)}
+              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                copied
+                  ? 'bg-green-600 text-white scale-105'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
             >
-              复制到剪贴板
+              {copied ? '✓ 已复制' : '复制到剪贴板'}
             </button>
           </div>
         </div>

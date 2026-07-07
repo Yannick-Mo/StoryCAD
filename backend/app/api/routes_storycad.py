@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
 from app.project.service import ProjectService
 from app.storycad.repository import StoryCADRepository
-from app.storycad.models import Scene
+from app.storycad.models import Scene, Chapter
 from app.storycad.entity_map import ENTITY_MAP
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["storycad"])
@@ -84,11 +84,20 @@ async def save_scene_content(
     ok = await repo.save_scene_content(scene_id, project_id, content)
     if ok is None:
         raise HTTPException(status_code=404, detail="Scene not found")
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     result = await db.execute(select(Scene).where(Scene.id == scene_id))
     scene = result.scalar_one_or_none()
     if scene:
         scene.word_count = word_count
+        ch_total = await db.execute(
+            select(func.coalesce(func.sum(Scene.word_count), 0))
+            .where(Scene.chapter_id == scene.chapter_id)
+        )
+        ch_word_count = ch_total.scalar() or 0
+        await db.execute(
+            Chapter.__table__.update().where(Chapter.id == scene.chapter_id)
+            .values(total_words=ch_word_count)
+        )
     await db.commit()
     return {"ok": True, "word_count": word_count}
 

@@ -269,6 +269,12 @@ class StoryCADRepository:
             if obj:
                 from app.agent.utils import count_words
                 obj.word_count = count_words(scene_content)
+                sc_result = await self.db.execute(select(SceneContent).where(SceneContent.scene_id == entity_id))
+                sc = sc_result.scalar_one_or_none()
+                if sc:
+                    sc.content = scene_content
+                else:
+                    self.db.add(SceneContent(scene_id=entity_id, project_id=obj.project_id, content=scene_content))
 
     async def _delete_entity(self, entity_type: str, entity_id_str: str):
         model_class = ENTITY_MAP.get(entity_type)

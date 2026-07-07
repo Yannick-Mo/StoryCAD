@@ -3,6 +3,7 @@ import ProjectListPage from './pages/home'
 import ProjectPage from './pages/editor'
 import LoginPage from './pages/auth/LoginPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ToastProvider } from './pages/editor/components/Toast'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -21,12 +22,14 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
+      <ToastProvider>
+        <Routes>
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/" element={<ProtectedRoute><ProjectListPage /></ProtectedRoute>} />
         <Route path="/projects/:id" element={<ProtectedRoute><ProjectPage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ToastProvider>
     </AuthProvider>
   )
 }

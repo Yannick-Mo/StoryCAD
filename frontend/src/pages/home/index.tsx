@@ -10,12 +10,16 @@ import TemplateGrid from "./TemplateGrid"
 import Footer from "./Footer"
 import { listProjects, deleteProject } from "../../api/auth"
 import type { ProjectListItem } from "../../types/project"
+import ConfirmDialog from "../editor/components/ConfirmDialog"
+import { useToast } from "../editor/components/Toast"
 
 export default function ProjectListPage() {
   const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const { addToast } = useToast()
 
   const fetchProjects = useCallback(() => {
     setLoading(projects.length === 0)
@@ -27,14 +31,20 @@ export default function ProjectListPage() {
 
   useEffect(() => { fetchProjects() }, [fetchProjects])
 
-  const handleDelete = useCallback(async (id: string) => {
-    if (!window.confirm("确定要删除该项目吗？此操作不可恢复。")) return
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
     try {
-      await deleteProject(id)
-      setProjects(prev => prev.filter(p => p.id !== id))
+      await deleteProject(deleteTarget)
+      setProjects(prev => prev.filter(p => p.id !== deleteTarget))
     } catch {
-      alert("删除失败，请重试")
+      addToast("删除失败，请重试", "error")
+    } finally {
+      setDeleteTarget(null)
     }
+  }, [deleteTarget])
+
+  const handleDelete = useCallback((id: string) => {
+    setDeleteTarget(id)
   }, [])
 
   return (
@@ -50,6 +60,15 @@ export default function ProjectListPage() {
         <Footer />
       </div>
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除项目"
+        message="确定要删除该项目吗？此操作不可恢复。"
+        confirmText="确认删除"
+        cancelText="取消"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

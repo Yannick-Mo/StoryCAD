@@ -35,7 +35,7 @@ class ProjectService:
                 select(func.count()).select_from(Scene).where(Scene.project_id == p.id)
             )).scalar() or 0
             words = (await self.repo.db.execute(
-                select(func.coalesce(func.sum(Chapter.total_words), 0)).where(Chapter.project_id == p.id)
+                select(func.coalesce(func.sum(Scene.word_count), 0)).where(Scene.project_id == p.id)
             )).scalar() or 0
             config = (await self.repo.db.execute(
                 select(ProjectConfig).where(ProjectConfig.project_id == p.id)
