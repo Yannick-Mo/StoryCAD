@@ -19,11 +19,11 @@ export default function ProjectListPage() {
 
   const fetchProjects = useCallback(() => {
     setLoading(projects.length === 0)
-    listProjects()
+    listProjects(1, 50, searchQuery)
       .then((data) => setProjects(data.items ?? data))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [searchQuery])
 
   useEffect(() => { fetchProjects() }, [fetchProjects])
 
@@ -45,7 +45,7 @@ export default function ProjectListPage() {
         <HeroSection />
         <CreateCards onCreateClick={() => setCreateOpen(true)} />
         <StatsRow projectCount={projects.length} />
-        <ProjectGrid projects={projects} searchQuery={searchQuery} loading={loading} onDeleteProject={handleDelete} />
+        <ProjectGrid projects={projects} loading={loading} onDeleteProject={handleDelete} />
         <TemplateGrid />
         <Footer />
       </div>

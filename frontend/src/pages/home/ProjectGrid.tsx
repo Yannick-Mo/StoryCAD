@@ -25,22 +25,17 @@ function enrichProject(p: ProjectListItem, index: number): HomeProject {
 
 interface ProjectGridProps {
   projects: ProjectListItem[]
-  searchQuery: string
   loading: boolean
   onDeleteProject: (id: string) => void
 }
 
-export default function ProjectGrid({ projects, searchQuery, loading, onDeleteProject }: ProjectGridProps) {
+export default function ProjectGrid({ projects, loading, onDeleteProject }: ProjectGridProps) {
   const [activeFilter, setActiveFilter] = useState("all")
   const navigate = useNavigate()
 
   const enriched = projects.map((p, i) => enrichProject(p, i))
 
   const filtered = enriched.filter((p) => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      if (!p.title.toLowerCase().includes(q) && !p.stage.toLowerCase().includes(q)) return false
-    }
     if (activeFilter === "progress") return p.stageType === "progress"
     if (activeFilter === "done") return p.stageType === "done"
     if (activeFilter === "recent") {
