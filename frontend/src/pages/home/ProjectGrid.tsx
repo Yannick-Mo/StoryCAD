@@ -45,7 +45,9 @@ export default function ProjectGrid({ projects, searchQuery, loading, onDeletePr
     if (activeFilter === "progress") return p.stageType === "progress"
     if (activeFilter === "done") return p.stageType === "done"
     if (activeFilter === "recent") {
-      return true
+      if (!p.updated_at) return false
+      const diff = Date.now() - new Date(p.updated_at).getTime()
+      return diff / (1000 * 60 * 60 * 24) <= 7
     }
     return true
   })
