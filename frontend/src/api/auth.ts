@@ -35,7 +35,11 @@ export async function apiGet<T>(url: string): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) { clearToken(); window.location.href = "/login" }
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `API error: ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -50,7 +54,11 @@ export async function apiPost<T>(url: string, body?: unknown): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) { clearToken(); window.location.href = "/login" }
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `API error: ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -65,7 +73,11 @@ export async function apiPut<T>(url: string, body: unknown): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) { clearToken(); window.location.href = "/login" }
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `API error: ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -80,7 +92,11 @@ export async function apiPatch<T>(url: string, body: unknown): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) { clearToken(); window.location.href = "/login" }
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `API error: ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -94,7 +110,11 @@ export async function apiDelete<T = { ok: boolean }>(url: string): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) { clearToken(); window.location.href = "/login" }
     const text = await res.text().catch(() => "")
-    throw new Error(text ? JSON.parse(text).detail : `API error: ${res.status}`)
+    let detail = `HTTP ${res.status}`
+    if (text) {
+      try { detail = JSON.parse(text).detail ?? text } catch { detail = text.slice(0, 200) }
+    }
+    throw new Error(detail)
   }
   return res.json()
 }
@@ -135,6 +155,16 @@ export async function updateProfile(payload: { display_name?: string; password?:
   return apiPatch(`${BASE}/me`, payload)
 }
 
+export async function logout(): Promise<void> {
+  const token = getToken()
+  if (!token) return
+  await fetch(`${BASE}/logout`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  clearToken()
+}
+
 // Project CRUD
 const BASE_PROJECTS = "/api/projects"
 
@@ -142,12 +172,12 @@ export async function listProjects(page = 1, size = 20, search = "", status = ""
   return apiGet(`${BASE_PROJECTS}?page=${page}&size=${size}&search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`)
 }
 
-export async function createProject(title: string, description?: string): Promise<{ id: string }> {
+export async function createProject(title: string, description?: string): Promise<any> {
   return apiPost(`${BASE_PROJECTS}`, { title, description: description || "" })
 }
 
-export async function deleteProject(id: string): Promise<void> {
-  await apiDelete(`${BASE_PROJECTS}/${id}`)
+export async function deleteProject(id: string): Promise<{ ok: boolean }> {
+  return apiDelete(`${BASE_PROJECTS}/${id}`)
 }
 
 export async function updateProject(id: string, payload: Partial<{ title: string; description: string; status: string }>): Promise<{ ok: boolean }> {

@@ -1,6 +1,6 @@
 import { getToken } from './auth'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = '/api'
 
 export interface RhythmAnalysis {
   chapters: RhythmChapter[]
@@ -23,9 +23,14 @@ export interface RhythmChapter {
 
 export async function analyzeRhythm(projectId: string): Promise<RhythmAnalysis> {
   const token = getToken()
-  const resp = await fetch(`${API_BASE}/api/rhythm/projects/${projectId}/analyze`, {
+  const resp = await fetch(`${API_BASE}/rhythm/projects/${projectId}/analyze`, {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }

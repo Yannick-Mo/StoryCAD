@@ -3,7 +3,7 @@ import { apiPost, getToken } from './auth'
 
 export interface AiGenerateRequest {
   chapter_id: string
-  mode: 'goal' | 'outline' | 'writing'
+  mode: 'goal' | 'outline'
   prompt: string
 }
 
@@ -25,12 +25,7 @@ export interface OutlineResult {
   scenes: SceneOutlineItem[]
 }
 
-export interface WritingResult {
-  content: string
-  note: string | null
-}
-
-export type AiResult = GoalResult | OutlineResult | WritingResult
+export type AiResult = GoalResult | OutlineResult
 
 export async function generateAI(
   projectId: string,

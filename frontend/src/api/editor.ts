@@ -40,6 +40,28 @@ export async function saveSceneContent(projectId: string, sceneId: string, conte
   return apiPut(`/api/projects/${projectId}/scenes/${sceneId}/content`, { content })
 }
 
+export async function aiInline(
+  projectId: string,
+  sceneId: string,
+  action: 'polish' | 'expand' | 'compress',
+  selectedText: string,
+  fullContent: string,
+): Promise<{ result: string }> {
+  return apiPost(`/api/projects/${projectId}/scenes/${sceneId}/ai-inline`, {
+    action,
+    selected_text: selectedText,
+    full_content: fullContent,
+  })
+}
+
+export async function aiContinue(
+  projectId: string,
+  sceneId: string,
+  content: string,
+): Promise<{ suggestions: string[] }> {
+  return apiPost(`/api/projects/${projectId}/scenes/${sceneId}/ai-continue`, { content })
+}
+
 // ============================================================
 // Generic entity CRUD
 // ============================================================
@@ -118,6 +140,9 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       type: r.rel_type || "关联",
       label: r.label || "",
       description: r.description || "",
+      trust: r.trust ?? 50,
+      threat: r.threat ?? 50,
+      attraction: r.attraction ?? 50,
     })
   }
 
@@ -195,6 +220,6 @@ interface ApiScene { id: string; chapter_id: string; title: string; sort_order: 
 interface ApiEdge { id: string; source_id: string; target_id: string; edge_type: string; label: string; source_handle: string; target_handle: string }
 interface ApiCharacter { id: string; name: string; role: string; personality: string; appearance: string; background: string; motivation: string }
 interface ApiCharRelation { id: string; character_id: string; target_id: string; rel_type: string; label: string; description: string; trust: number; threat: number; attraction: number }
-interface ApiTheme { id: string; name: string; color: string; proposition: string }
+interface ApiTheme { id: string; name: string; color: string; proposition: string; note?: string; sort_order?: number }
 interface ApiThemeChapter { theme_id: string; chapter_id: string }
 

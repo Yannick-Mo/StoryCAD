@@ -167,12 +167,12 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
             </div>
             <div className="mb-6">
               <label className="block text-sm text-gray-400 mb-2">
-                创作素材 <span className="text-gray-600">（粘贴你的故事创意、角色设定、情节大纲...）</span>
+                创作素材 <span className="text-gray-600">（输入故事创意或点子，AI 会自动扩展搭建完整项目框架）</span>
               </label>
               <textarea
                 value={materialText}
                 onChange={e => setMaterialText(e.target.value)}
-                placeholder="例如：一个退隐杀手在边境小镇收到养女被绑架的消息，被迫重出江湖。小镇上所有人都藏着秘密，而他必须在三天内找到女儿..."
+                placeholder="例如：一个退隐杀手重出江湖（短点子，AI 会扩展）&#10;或粘贴详细素材（最多5000字，AI 严格遵循）"
                 className="w-full h-40 px-4 py-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-yellow-500/50 transition-colors resize-none"
                 maxLength={5000}
               />
@@ -198,7 +198,7 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
               <button onClick={() => navigate("/")} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             <div className="space-y-2 mb-6">
-              {["analyze_material", "plan_structure", "design_characters", "build_settings", "validate"].map((step, idx) => {
+              {["analyze_material", "plan_structure", "design_characters", "build_settings", "generate_all_scenes", "generate_edges", "validate"].map((step, idx) => {
                 const evt = aiSteps.find(e => e.step === step)
                 const lastStep = aiSteps[aiSteps.length - 1]?.step
                 const current = !evt && aiGenerating && (
@@ -210,46 +210,31 @@ export default function CreateProjectDialog({ open, onClose }: Props) {
                   plan_structure: "规划结构",
                   design_characters: "设计角色",
                   build_settings: "生成世界观",
+                  generate_all_scenes: "生成场景",
+                  generate_edges: "生成连线",
                   validate: "校验结果",
                 }
+                const plan = aiSteps.find(e => e.step === "plan_structure")
+                const totalChapters = plan?.preview ? (plan.preview.match(/(\d+)章/)?.[1] ?? "") : ""
+                const sceneCount = step === "generate_all_scenes" && done && evt?.preview
+                  ? (parseInt(evt.preview) || 0) : 0
                 return (
                   <div key={step} className={`flex items-start gap-3 p-2 rounded-lg ${(done || current) ? 'bg-gray-800/60' : ''}`}>
                     <span className={`text-sm w-5 ${done ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : 'text-gray-600'}`}>{done ? "✓" : current ? "⟳" : "○"}</span>
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm ${current ? 'text-gray-200' : done ? 'text-gray-400' : 'text-gray-600'}`}>{labels[step]}</div>
-                      {evt?.preview && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap leading-relaxed">{evt.preview}</div>}
-                    </div>
-                  </div>
-                )
-              })}
-              {(() => {
-                const sceneEvent = aiSteps.find(e => e.step === "generate_all_scenes")
-                const totalChapters = (() => {
-                  const plan = aiSteps.find(e => e.step === "plan_structure")
-                  if (!plan?.preview) return 0
-                  const m = plan.preview.match(/(\d+)章/)
-                  return m ? parseInt(m[1]) : 0
-                })()
-                const done = !!sceneEvent
-                const lastStep = aiSteps[aiSteps.length - 1]?.step
-                const current = lastStep === "generate_all_scenes"
-                const sceneCount = done && sceneEvent.preview ? (parseInt(sceneEvent.preview) || 0) : 0
-                return (
-                  <div className={`flex items-start gap-3 p-2 rounded-lg ${(done || current) ? 'bg-gray-800/60' : ''}`}>
-                    <span className={`text-sm w-5 ${done ? 'text-green-400' : current ? 'text-amber-400 animate-pulse' : 'text-gray-600'}`}>
-                      {done ? "✓" : current ? "⟳" : "○"}
-                    </span>
-                    <div className="flex-1 min-w-0">
                       <div className={`text-sm ${current ? 'text-gray-200' : done ? 'text-gray-400' : 'text-gray-600'}`}>
-                        生成场景{totalChapters > 0 ? ` (${totalChapters}章)` : ""}
+                        {labels[step]}{step === "generate_all_scenes" && totalChapters ? ` (${totalChapters}章)` : ""}
                       </div>
-                      {done && sceneCount > 0 && (
+                      {step === "generate_all_scenes" && done && sceneCount > 0 && (
                         <div className="text-xs text-gray-500 mt-0.5">共 {sceneCount} 个场景</div>
+                      )}
+                      {step !== "generate_all_scenes" && evt?.preview && (
+                        <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap leading-relaxed">{evt.preview}</div>
                       )}
                     </div>
                   </div>
                 )
-              })()}
+              })}
             </div>
             {!aiSteps.find(e => e.step === "done") && !aiSteps.find(e => e.step === "error") && (
               <div className="text-center text-sm text-gray-500 animate-pulse">

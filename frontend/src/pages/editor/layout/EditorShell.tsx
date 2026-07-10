@@ -17,12 +17,12 @@ import ThemeDetail from '../views/theme/ThemeDetail'
 import PreviewModal from '../modals/PreviewModal'
 import SceneEditor from '../modals/SceneEditor'
 import GlobalSettingsModal from '../modals/GlobalSettingsModal'
-import AiChatPanel from '../modals/AiChatPanel'
+import AiPanel from '../modals/AiChatPanel'
 import InspirationModal from '../modals/InspirationModal'
 import ConsistencyCheckModal from '../modals/ConsistencyCheckModal'
 import { useEditorViews } from '../hooks/useEditorViews'
 import { useEditorStore } from '../data/editorStore'
-import { saveSceneContent } from '../../../api/editor'
+import { loadEditorData, saveSceneContent } from '../../../api/editor'
 import { ToastProvider } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import type { Chapter, Scene, EdgeType } from '../types'
@@ -48,6 +48,8 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const [newThemeColor, setNewThemeColor] = useState('#d4a373')
   const [newThemeProposition, setNewThemeProposition] = useState('')
   const [aiChatOpen, setAiChatOpen] = useState(false)
+  const [aiContextView, setAiContextView] = useState<string>('chat')
+  const [aiContextId, setAiContextId] = useState<string | undefined>(undefined)
   const [inspirationOpen, setInspirationOpen] = useState(false)
   const [consistencyOpen, setConsistencyOpen] = useState(false)
   const [triggerRhythmAnalysis, setTriggerRhythmAnalysis] = useState(false)
@@ -74,7 +76,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
     setSelectedChapter(ch); setSelectedActId(null); store.selectNode('chapter', chapterId)
   }, [data, store])
 
-  const setData = useCallback(store.setData!, [])
+  const setData = useCallback(store.setData, [])
 
   const handleSceneSaved = useCallback((sceneId: string, content: string, wordCount: number) => {
     let updatedChapter: Chapter | undefined
@@ -101,6 +103,24 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const handleOpenSceneEditor = useCallback((scene: Scene) => {
     setEditingScene(scene)
   }, [])
+
+  const handleOpenAiPanel = useCallback((contextView: string, contextId?: string) => {
+    setAiContextView(contextView)
+    setAiContextId(contextId)
+    setAiChatOpen(true)
+  }, [])
+
+  const handleAiChatOpen = useCallback(() => {
+    setAiContextView('chat')
+    setAiContextId(undefined)
+    setAiChatOpen(true)
+  }, [])
+
+  const handleProjectUpdated = useCallback(() => {
+    loadEditorData(projectId).then(d => store.setData(d)).catch((err) => {
+      console.error('Failed to reload project data:', err)
+    })
+  }, [projectId, store])
 
   const hasPendingRef = useRef(store.hasPendingChanges)
   hasPendingRef.current = store.hasPendingChanges
@@ -256,32 +276,30 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 onSelectChapter={(chId) => { setSelectedActId(null); setSelectedChapter(data.chapters.find(c => c.id === chId) ?? null) }}
                 projectId={projectId}
                 onSceneSave={async (chapterId, sceneId, content) => {
+                  let updatedChapter: Chapter | undefined
                   setData(d => {
                     if (!d) return d
-                    return {
-                      ...d,
-                      chapters: d.chapters.map(ch =>
-                        ch.id === chapterId
-                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                          : ch
-                      )
-                    }
+                    const chs = d.chapters.map(ch =>
+                      ch.id === chapterId
+                        ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                        : ch
+                    )
+                    updatedChapter = chs.find(c => c.id === chapterId)
+                    return { ...d, chapters: chs }
                   })
                   try {
                     const result = await saveSceneContent(projectId, sceneId, content)
                     setData(d => {
                       if (!d) return d
-                      return {
-                        ...d,
-                        chapters: d.chapters.map(ch =>
-                          ch.id === chapterId
-                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
-                            : ch
-                        )
-                      }
+                      const chs = d.chapters.map(ch =>
+                        ch.id === chapterId
+                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
+                          : ch
+                      )
+                      updatedChapter = chs.find(c => c.id === chapterId)
+                      return { ...d, chapters: chs }
                     })
-                    const updated = data.chapters.find(c => c.id === chapterId)
-                    if (updated) setSelectedChapter({ ...updated })
+                    if (updatedChapter) setSelectedChapter({ ...updatedChapter })
                   } catch (e) {
                     throw e
                   }
@@ -298,35 +316,33 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 projectId={projectId}
                 onClose={() => setSelectedChapter(null)}
                 onSceneSave={async (chapterId, sceneId, content) => {
+                  let updatedChapter: Chapter | undefined
                   setData(d => {
                     if (!d) return d
-                    return {
-                      ...d,
-                      chapters: d.chapters.map(ch =>
-                        ch.id === chapterId
-                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
-                          : ch
-                      )
-                    }
+                    const chs = d.chapters.map(ch =>
+                      ch.id === chapterId
+                        ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content } : s) }
+                        : ch
+                    )
+                    updatedChapter = chs.find(c => c.id === chapterId)
+                    return { ...d, chapters: chs }
                   })
                   try {
                     const result = await saveSceneContent(projectId, sceneId, content)
                     setData(d => {
                       if (!d) return d
-                      return {
-                        ...d,
-                        chapters: d.chapters.map(ch =>
-                          ch.id === chapterId
-                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
-                            : ch
-                        )
-                      }
+                      const chs = d.chapters.map(ch =>
+                        ch.id === chapterId
+                          ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
+                          : ch
+                      )
+                      updatedChapter = chs.find(c => c.id === chapterId)
+                      return { ...d, chapters: chs }
                     })
+                    if (updatedChapter) setSelectedChapter({ ...updatedChapter })
                   } catch (e) {
                     throw e
                   }
-                  const updated = data.chapters.find(c => c.id === chapterId)
-                  if (updated) setSelectedChapter({ ...updated })
                 }}
                 onChapterSave={handleChapterGoalSave}
                 onOpenSceneEditor={(scene) => setEditingScene(scene)}
@@ -425,7 +441,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           )}
 
           <ActionButtons
-            onAIChat={() => setAiChatOpen(true)}
+            onAIChat={handleAiChatOpen}
             onInspiration={() => setInspirationOpen(true)}
             onRhythmAnalysis={handleRhythmAnalysis}
             onConsistencyCheck={() => setConsistencyOpen(true)}
@@ -512,16 +528,17 @@ export default function EditorShell({ projectId }: { projectId: string }) {
             chapterTitle={data.chapters.find(c => c.scenes.some(s => s.id === editingScene.id))?.title ?? ''}
             onClose={() => setEditingScene(null)}
             onSaved={handleSceneSaved}
+            onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
           />
         )}
 
         {aiChatOpen && (
-          <AiChatPanel
+          <AiPanel
             projectId={projectId}
             onClose={() => setAiChatOpen(false)}
-            onApply={(content: string) => {
-              console.log('AI content:', content)
-            }}
+            onProjectUpdated={handleProjectUpdated}
+            contextView={aiContextView}
+            contextId={aiContextId}
           />
         )}
 
@@ -529,7 +546,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
           <InspirationModal
             onClose={() => setInspirationOpen(false)}
             onApplyStarter={(title: string) => {
-              store.setData({ ...store.data, title })
+              if (store.data) store.setData({ ...store.data, projectTitle: title })
               setInspirationOpen(false)
             }}
           />
@@ -573,7 +590,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         }
         onConfirm={() => {
           if (!confirmDelete) return
-          if (confirmDelete.type === 'act') store.deleteAct(confirmDelete.id)
+          if (confirmDelete.type === 'act') { store.deleteAct(confirmDelete.id); setSelectedActId(null) }
           else if (confirmDelete.type === 'scene') {
             store.deleteScene(confirmDelete.chapterId!, confirmDelete.id)
           }

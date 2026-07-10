@@ -48,8 +48,9 @@ export default function LoginPage() {
 
           {isRegister && (
             <div>
-              <label className="block text-xs text-gray-400 mb-1">用户名</label>
+              <label htmlFor="login-username" className="block text-xs text-gray-400 mb-1">用户名</label>
               <input
+                id="login-username"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-amber-600"
@@ -60,8 +61,9 @@ export default function LoginPage() {
           )}
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">邮箱</label>
+            <label htmlFor="login-email" className="block text-xs text-gray-400 mb-1">邮箱</label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -72,8 +74,9 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">密码</label>
+            <label htmlFor="login-password" className="block text-xs text-gray-400 mb-1">密码</label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}

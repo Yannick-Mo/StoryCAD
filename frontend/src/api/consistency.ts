@@ -1,6 +1,6 @@
 import { getToken } from './auth'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = '/api'
 
 export interface ConsistencyIssue {
   check_type: string
@@ -22,11 +22,15 @@ export interface ConsistencyReport {
 
 export async function checkConsistency(projectId: string): Promise<ConsistencyReport> {
   const token = getToken()
-  const resp = await fetch(`${API_BASE}/api/consistency/projects/${projectId}/check`, {
+  const resp = await fetch(`${API_BASE}/consistency/projects/${projectId}/check`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: '{}',
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }

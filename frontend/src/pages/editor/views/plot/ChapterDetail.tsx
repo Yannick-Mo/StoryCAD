@@ -30,7 +30,7 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
   const [editGoal, setEditGoal] = useState('')
   const [saving, setSaving] = useState(false)
   const [contentCache, setContentCache] = useState<Record<string, string>>({})
-  const [aiMode, setAiMode] = useState<'goal' | 'outline' | 'writing' | null>(null)
+  const [aiMode, setAiMode] = useState<'goal' | 'outline' | null>(null)
   const { addToast } = useToast()
 
   useEffect(() => {
@@ -260,12 +260,7 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
             >
               ✨ 生成场景大纲
             </button>
-            <button
-              onClick={() => setAiMode('writing')}
-              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
-            >
-              ✍️ 辅助写作
-            </button>
+
           </div>
         </section>
       </div>

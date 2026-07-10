@@ -172,7 +172,7 @@ export default function PlotCanvas({
         target: e.targetId,
         sourceHandle,
         targetHandle,
-        type: 'bezier',
+        type: 'default',
         animated: isTimeline,
         selected: isSelected,
         style: {
@@ -529,7 +529,7 @@ export default function PlotCanvas({
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'bezier' }}
+        defaultEdgeOptions={{ type: 'default' }}
         onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
         fitView

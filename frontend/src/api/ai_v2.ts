@@ -1,6 +1,6 @@
 import { getToken } from './auth'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
 export interface Conversation {
   id: string
@@ -10,7 +10,7 @@ export interface Conversation {
 }
 
 export interface ChatEvent {
-  type: 'conv_id' | 'step' | 'token' | 'done'
+  type: 'conv_id' | 'step' | 'token' | 'done' | 'tool_start' | 'tool_done' | 'option' | 'plan' | 'project_updated'
   data: string
 }
 
@@ -28,96 +28,221 @@ export interface ConversationDetail {
   messages: Message[]
 }
 
-export function sendMessage(
-  projectId: string,
-  message: string,
-  conversationId: string | null,
-  onEvent: (event: ChatEvent) => void,
-  onError: (error: Error) => void,
-  onComplete: () => void,
-  mode: string = 'chat',
-): AbortController {
-  const controller = new AbortController()
-  const token = getToken()
+export interface SendMessageOptions {
+  projectId: string
+  message: string
+  conversationId: string | null
+  onToken: (token: string) => void
+  onToolStart?: (data: string) => void
+  onToolDone?: (data: string) => void
+  onOption?: (options: any[]) => void
+  onStep?: (step: string) => void
+  onConvId?: (id: string) => void
+  onProjectUpdated?: () => void
+  onDone?: () => void
+  onError: (error: Error) => void
+  onComplete?: () => void
+  mode?: string
+  contextView?: string
+  contextId?: string | null
+  signal?: AbortSignal
+}
 
-  fetch(`${API_BASE}/api/v2/projects/${projectId}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function parseError(resp: Response): Promise<string> {
+  try {
+    const text = await resp.text()
+    try {
+      const parsed = JSON.parse(text)
+      return parsed.detail || parsed.message || text
+    } catch {
+      return text || `HTTP ${resp.status}`
+    }
+  } catch {
+    return `HTTP ${resp.status}`
+  }
+}
+
+const HEARTBEAT_TIMEOUT = 90000
+const HEARTBEAT_INTERVAL = 10000
+
+export function sendMessage(options: SendMessageOptions): AbortController {
+  const controller = new AbortController()
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+
+  const eventHandlers: Record<string, (data: string) => void> = {
+    conv_id: (data) => options.onConvId?.(data),
+    step: (data) => options.onStep?.(data),
+    token: (data) => options.onToken(data),
+    done: () => options.onDone?.(),
+    tool_start: (data) => options.onToolStart?.(data),
+    tool_done: (data) => options.onToolDone?.(data),
+    option: (data) => {
+      try {
+        const parsed = JSON.parse(data)
+        if (Array.isArray(parsed)) options.onOption?.(parsed)
+      } catch { /* ignore malformed option data */ }
     },
-    body: JSON.stringify({ message, conversation_id: conversationId, mode }),
-    signal: controller.signal,
-  })
-    .then(async (resp) => {
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '')
-        throw new Error(text ? JSON.parse(text).detail || text : `HTTP ${resp.status}`)
+    plan: (data) => {
+      try {
+        const parsed = JSON.parse(data)
+        if (parsed.status === 'awaiting_confirmation' && parsed.steps?.length) {
+          const steps = parsed.steps.map((s: any) => s.description || s.tool).join('\n')
+          options.onToken(`\n\n📋 **计划方案**\n${steps}\n\n**确认执行？** (回复 "确认" 或 "好的")\n`)
+        }
+      } catch { /* ignore */ }
+    },
+    project_updated: () => options.onProjectUpdated?.(),
+    error: (data: string) => {
+      let msg = data
+      try {
+        const parsed = JSON.parse(data)
+        msg = parsed.detail || parsed.message || msg
+      } catch { /* plain text */ }
+      options.onError(new Error(msg))
+    },
+  }
+
+  const mode = options.mode ?? 'chat'
+
+  ;(async () => {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(await authHeaders()),
       }
 
-      const reader = resp.body!.getReader()
+      const resp = await fetch(`${API_BASE}/api/v2/projects/${options.projectId}/chat`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: options.message,
+          conversation_id: options.conversationId,
+          mode,
+          context_view: options.contextView,
+          context_id: options.contextId,
+        }),
+        signal: controller.signal,
+      })
+
+      if (!resp.ok) {
+        throw new Error(await parseError(resp))
+      }
+
+      if (!resp.body) {
+        throw new Error('Response has no body')
+      }
+
+      const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
       let currentEvent = ''
+      let currentData = ''
+      let lastData = Date.now()
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      const heartbeat = setInterval(() => {
+        if (Date.now() - lastData > HEARTBEAT_TIMEOUT) {
+          controller.abort()
+          options.onError(new Error('Connection timeout'))
+        }
+      }, HEARTBEAT_INTERVAL)
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim()
-          } else if (line.startsWith('data: ')) {
-            const rawData = line.slice(6).trim()
-            if (currentEvent === 'conv_id') {
-              onEvent({ type: 'conv_id', data: rawData })
-            } else if (currentEvent === 'step') {
-              onEvent({ type: 'step', data: rawData })
-            } else if (currentEvent === 'token') {
-              onEvent({ type: 'token', data: rawData })
-            } else if (currentEvent === 'done') {
-              onEvent({ type: 'done', data: rawData })
+          lastData = Date.now()
+          buffer += decoder.decode(value, { stream: true })
+          buffer = buffer.replace(/\r\n/g, '\n')
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (line === '') {
+              if (currentEvent && currentData) {
+                const handler = eventHandlers[currentEvent]
+                if (handler) handler(currentData)
+              }
+              currentEvent = ''
+              currentData = ''
+            } else if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim()
+            } else if (line.startsWith('data: ')) {
+              const dataLine = line.slice(6)
+              currentData = currentData ? currentData + '\n' + dataLine : dataLine.trim()
             }
           }
         }
+
+        if (currentEvent && currentData) {
+          const handler = eventHandlers[currentEvent]
+          if (handler) handler(currentData)
+        }
+      } finally {
+        clearInterval(heartbeat)
       }
 
-      onComplete()
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') onError(err)
-    })
+      options.onComplete?.()
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        options.onError(err)
+      }
+    }
+  })()
 
   return controller
 }
 
-export async function getConversations(projectId: string): Promise<Conversation[]> {
-  const token = getToken()
+export interface PlanPayload {
+  steps: Array<{ tool: string; params: Record<string, unknown>; description: string }>
+  status: string
+}
+
+export async function getConversations(projectId: string): Promise<{ conversations: Conversation[] }> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: await authHeaders(),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) throw new Error(await parseError(resp))
   return resp.json()
 }
 
 export async function getConversation(projectId: string, convId: string): Promise<ConversationDetail> {
-  const token = getToken()
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: await authHeaders(),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) throw new Error(await parseError(resp))
   return resp.json()
 }
 
 export async function deleteConversation(projectId: string, convId: string): Promise<void> {
-  const token = getToken()
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
     method: 'DELETE',
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: await authHeaders(),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) throw new Error(await parseError(resp))
+}
+
+export async function createConversation(projectId: string): Promise<{ conversation_id: string }> {
+  const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations`, {
+    method: 'POST',
+    headers: {
+      ...(await authHeaders()),
+      'Content-Type': 'application/json',
+    },
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    let detail = `Failed to create conversation: ${resp.status}`
+    try { detail = JSON.parse(text).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return resp.json()
 }

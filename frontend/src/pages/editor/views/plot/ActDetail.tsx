@@ -35,17 +35,17 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
   const totalScenes = chapters.reduce((s, c) => s + c.scenes.length, 0)
 
   useEffect(() => {
-    if (!projectId) return
-    for (const ch of chapters) {
-      for (const sc of ch.scenes) {
-        if (sc.wordCount > 0 && !sc.content && !contentCache[sc.id]) {
-          loadSceneContent(projectId, sc.id)
-            .then(text => { if (text) setContentCache(prev => ({ ...prev, [sc.id]: text })) })
-            .catch(() => {})
-        }
+    if (!projectId || !expandedId) return
+    const ch = chapters.find(c => c.id === expandedId)
+    if (!ch) return
+    for (const sc of ch.scenes) {
+      if (sc.wordCount > 0 && !sc.content && !contentCache[sc.id]) {
+        loadSceneContent(projectId, sc.id)
+          .then(text => { if (text) setContentCache(prev => ({ ...prev, [sc.id]: text })) })
+          .catch(() => {})
       }
     }
-  }, [expandedId, projectId])
+  }, [expandedId, projectId, chapters])
 
   const toggleExpand = (chId: string) => {
     setExpandedId(expandedId === chId ? null : chId)

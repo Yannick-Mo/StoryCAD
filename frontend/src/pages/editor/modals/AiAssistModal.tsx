@@ -2,22 +2,95 @@
 import { useState } from 'react'
 import type { Chapter } from '../types'
 import { generateAI } from '../../../api/ai'
-import type { GoalResult, OutlineResult, WritingResult, SceneOutlineItem } from '../../../api/ai'
+import type { GoalResult, OutlineResult, SceneOutlineItem } from '../../../api/ai'
 
 const MODE_LABELS: Record<string, string> = {
   goal: '生成章节目标',
   outline: '生成场景大纲',
-  writing: '辅助写作',
 }
 
 const MODE_PLACEHOLDERS: Record<string, string> = {
   goal: '可选：补充对章节的额外说明...',
   outline: '可选：补充你的规划偏好...',
-  writing: '描述你的写作需求，AI 将根据上下文生成内容...',
+}
+
+function GoalResultView({ result, onApplyGoal }: { result: GoalResult; onApplyGoal?: (goal: string) => void }) {
+  const [applied, setApplied] = useState(false)
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[10px] text-amber-500/80 mb-1">分析</div>
+        <p className="text-xs text-gray-300 leading-relaxed">{result.reasoning}</p>
+      </div>
+      <div>
+        <div className="text-[10px] text-amber-500/80 mb-1">目标</div>
+        <p className="text-sm text-amber-100 leading-relaxed bg-gray-800/60 rounded-lg p-3">{result.goal}</p>
+      </div>
+      {onApplyGoal && (
+        <button
+          onClick={() => { onApplyGoal(result.goal); setApplied(true) }}
+          disabled={applied}
+          className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            applied
+              ? 'bg-green-900/40 text-green-400'
+              : 'bg-amber-600 text-black hover:bg-amber-500'
+          }`}
+        >
+          {applied ? '已应用' : '应用到章节'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function OutlineResultView({ result, onApplyOutlines }: { result: OutlineResult; onApplyOutlines?: (outlines: SceneOutlineItem[]) => void }) {
+  const [applied, setApplied] = useState(false)
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[10px] text-amber-500/80 mb-1">规划思路</div>
+        <p className="text-xs text-gray-300 leading-relaxed">{result.planning}</p>
+      </div>
+      <div>
+        <div className="text-[10px] text-amber-500/80 mb-1">
+          场景列表 ({result.scenes.length})
+        </div>
+        <div className="space-y-2">
+          {result.scenes.map((sc, i) => (
+            <div key={i} className="bg-gray-800/60 rounded-lg p-2.5 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-500 w-4">{i + 1}</span>
+                <span className="text-xs font-medium text-gray-200">{sc.title}</span>
+              </div>
+              <div className="flex gap-3 text-[10px] text-gray-500 ml-6">
+                <span> {sc.pov_character}</span>
+                <span> {sc.setting}</span>
+                <span> {sc.scene_time}</span>
+              </div>
+              <p className="text-[11px] text-gray-400 ml-6">{sc.summary}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      {onApplyOutlines && (
+        <button
+          onClick={() => { onApplyOutlines(result.scenes); setApplied(true) }}
+          disabled={applied}
+          className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            applied
+              ? 'bg-green-900/40 text-green-400'
+              : 'bg-amber-600 text-black hover:bg-amber-500'
+          }`}
+        >
+          {applied ? '已添加' : '添加场景到章节'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 interface Props {
-  mode: 'goal' | 'outline' | 'writing'
+  mode: 'goal' | 'outline'
   projectId: string
   chapter: Chapter
   onClose: () => void
@@ -29,14 +102,8 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<GoalResult | OutlineResult | WritingResult | null>(null)
-  const [applied, setApplied] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+  const [result, setResult] = useState<GoalResult | OutlineResult | null>(null)
+  const [generationKey, setGenerationKey] = useState(0)
 
   const handleGenerate = async () => {
     setLoading(true)
@@ -49,119 +116,11 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
         prompt: prompt.trim(),
       })
       setResult(data)
-    } catch (e: any) {
-      setError(e.message || '生成失败，请稍后重试')
+      setGenerationKey(prev => prev + 1)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '生成失败，请稍后重试')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const renderResult = () => {
-    if (!result) return null
-
-    if (mode === 'goal') {
-      const r = result as GoalResult
-      return (
-        <div className="space-y-3">
-          <div>
-            <div className="text-[10px] text-amber-500/80 mb-1">分析</div>
-            <p className="text-xs text-gray-300 leading-relaxed">{r.reasoning}</p>
-          </div>
-          <div>
-            <div className="text-[10px] text-amber-500/80 mb-1">目标</div>
-            <p className="text-sm text-amber-100 leading-relaxed bg-gray-800/60 rounded-lg p-3">{r.goal}</p>
-          </div>
-          {onApplyGoal && (
-            <button
-              onClick={() => { onApplyGoal(r.goal); setApplied(true) }}
-              disabled={applied}
-              className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                applied
-                  ? 'bg-green-900/40 text-green-400'
-                  : 'bg-amber-600 text-black hover:bg-amber-500'
-              }`}
-            >
-              {applied ? '已应用' : '应用到章节'}
-            </button>
-          )}
-        </div>
-      )
-    }
-
-    if (mode === 'outline') {
-      const r = result as OutlineResult
-      return (
-        <div className="space-y-3">
-          <div>
-            <div className="text-[10px] text-amber-500/80 mb-1">规划思路</div>
-            <p className="text-xs text-gray-300 leading-relaxed">{r.planning}</p>
-          </div>
-          <div>
-            <div className="text-[10px] text-amber-500/80 mb-1">
-              场景列表 ({r.scenes.length})
-            </div>
-            <div className="space-y-2">
-              {r.scenes.map((sc, i) => (
-                <div key={i} className="bg-gray-800/60 rounded-lg p-2.5 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-500 w-4">{i + 1}</span>
-                    <span className="text-xs font-medium text-gray-200">{sc.title}</span>
-                  </div>
-                  <div className="flex gap-3 text-[10px] text-gray-500 ml-6">
-                    <span> {sc.pov_character}</span>
-                    <span> {sc.setting}</span>
-                    <span> {sc.scene_time}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-400 ml-6">{sc.summary}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          {onApplyOutlines && (
-            <button
-              onClick={() => { onApplyOutlines(r.scenes); setApplied(true) }}
-              disabled={applied}
-              className={`w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                applied
-                  ? 'bg-green-900/40 text-green-400'
-                  : 'bg-amber-600 text-black hover:bg-amber-500'
-              }`}
-            >
-              {applied ? '已添加' : '添加场景到章节'}
-            </button>
-          )}
-        </div>
-      )
-    }
-
-    if (mode === 'writing') {
-      const r = result as WritingResult
-      return (
-        <div className="space-y-3">
-          {r.note && (
-            <div className="text-[10px] text-amber-500/80 mb-1">AI 备注</div>
-          )}
-          {r.note && <p className="text-[11px] text-gray-400 italic">{r.note}</p>}
-          <div>
-            <div className="text-[10px] text-amber-500/80 mb-1">生成内容</div>
-            <div className="bg-gray-800/60 rounded-lg p-3 text-xs text-gray-300 leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
-              {r.content}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleCopy(r.content)}
-              className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                copied
-                  ? 'bg-green-600 text-white scale-105'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              {copied ? '✓ 已复制' : '复制到剪贴板'}
-            </button>
-          </div>
-        </div>
-      )
     }
   }
 
@@ -187,10 +146,17 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
 
         <textarea
           value={prompt}
-          onChange={e => setPrompt(e.target.value)}
+          onChange={e => {
+            setPrompt(e.target.value)
+            const ta = e.target
+            ta.style.height = 'auto'
+            ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+          }}
           placeholder={MODE_PLACEHOLDERS[mode]}
           disabled={loading}
-          className="w-full h-20 bg-gray-950 border border-gray-700 rounded-xl p-3 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed disabled:opacity-50"
+          rows={3}
+          className="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-xs text-gray-300 resize-none focus:outline-none focus:border-amber-600 leading-relaxed disabled:opacity-50"
+          style={{ minHeight: '5rem' }}
         />
 
         <div className="flex gap-2">
@@ -219,8 +185,9 @@ export default function AiAssistModal({ mode, projectId, chapter, onClose, onApp
         )}
 
         {result && !error && (
-          <div className="border-t border-gray-800 pt-3">
-            {renderResult()}
+          <div className="border-t border-gray-800 pt-3" key={generationKey}>
+            {mode === 'goal' && <GoalResultView result={result as GoalResult} onApplyGoal={onApplyGoal} />}
+            {mode === 'outline' && <OutlineResultView result={result as OutlineResult} onApplyOutlines={onApplyOutlines} />}
           </div>
         )}
       </div>

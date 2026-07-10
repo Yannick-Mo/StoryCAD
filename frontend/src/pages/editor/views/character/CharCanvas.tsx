@@ -86,7 +86,7 @@ export default function CharCanvas({
             target: rel.targetId,
             sourceHandle,
             targetHandle,
-            type: 'bezier',
+            type: 'default',
             label: (rel.label || rel.type).slice(0, 20) + ((rel.label || rel.type).length > 20 ? '…' : ''),
             selected: isSelected,
             style: { stroke: isSelected ? '#60a5fa' : '#8a8a8a', strokeWidth: isSelected ? 2 : 1.5 },
@@ -117,7 +117,7 @@ export default function CharCanvas({
           target: rel.targetId,
           sourceHandle,
           targetHandle,
-          type: 'bezier',
+          type: 'default',
           label: (rel.label || rel.type).slice(0, 20) + ((rel.label || rel.type).length > 20 ? '…' : ''),
           selected: false,
           style: { stroke: '#fbbf24', strokeWidth: 2 },
@@ -210,7 +210,7 @@ export default function CharCanvas({
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{ type: 'bezier' }}
+        defaultEdgeOptions={{ type: 'default' }}
         onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
         fitView

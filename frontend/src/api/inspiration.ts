@@ -1,6 +1,6 @@
 import { getToken } from './auth'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = '/api'
 
 export interface StoryStarter {
   title: string
@@ -22,23 +22,33 @@ export interface CreativeChallenge {
 
 export async function generateStarter(genre: string, style?: string, constraints?: string[]): Promise<StoryStarter> {
   const token = getToken()
-  const resp = await fetch(`${API_BASE}/api/inspiration/starter`, {
+  const resp = await fetch(`${API_BASE}/inspiration/starter`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ genre, style, constraints }),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }
 
 export async function batchGenerate(genres: string[], count?: number): Promise<StoryStarter[]> {
   const token = getToken()
-  const resp = await fetch(`${API_BASE}/api/inspiration/batch`, {
+  const resp = await fetch(`${API_BASE}/inspiration/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ genres, count }),
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }
 
@@ -48,18 +58,28 @@ export async function getChallenges(difficulty?: string, genre?: string): Promis
   if (difficulty) params.set('difficulty', difficulty)
   if (genre) params.set('genre', genre)
   const qs = params.toString()
-  const resp = await fetch(`${API_BASE}/api/inspiration/challenges${qs ? `?${qs}` : ''}`, {
+  const resp = await fetch(`${API_BASE}/inspiration/challenges${qs ? `?${qs}` : ''}`, {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }
 
 export async function getRandomChallenge(): Promise<CreativeChallenge> {
   const token = getToken()
-  const resp = await fetch(`${API_BASE}/api/inspiration/challenges/random`, {
+  const resp = await fetch(`${API_BASE}/inspiration/challenges/random`, {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  if (!resp.ok) {
+    const text = await resp.text();
+    let detail = `API error: ${resp.status}`;
+    try { detail = JSON.parse(text).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return resp.json()
 }
