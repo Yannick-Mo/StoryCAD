@@ -25,7 +25,7 @@ class AgentState(TypedDict):
     planned_steps: list[dict]
     current_step_index: int
     errors: list[str]  # Error messages
-    pending_plan: list[dict]
+    pending_plan: dict | list
     plan_confirmed: bool
     retry_context: dict | None
     _context_loaded: bool

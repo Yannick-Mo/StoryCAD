@@ -79,6 +79,48 @@ def _build_entity_context(project_ctx: dict) -> str:
     return entity_text
 
 
+def _validate_step_params(step: dict, tool_inst: BaseTool) -> list[str]:
+    """Validate step parameters against tool definition schema. Returns list of error messages."""
+    errors: list[str] = []
+    params = step.get("params", {})
+    schema = tool_inst.parameters
+    props = schema.get("properties", {})
+
+    for param_name, param_schema in props.items():
+        if param_name not in params:
+            continue
+
+        value = params[param_name]
+
+        # Type check
+        expected_type = param_schema.get("type", "string")
+        if expected_type == "integer":
+            if not isinstance(value, int):
+                errors.append(f"参数 {param_name}: 需要整数类型, 得到 {type(value).__name__}")
+        elif expected_type == "number":
+            if not isinstance(value, (int, float)):
+                errors.append(f"参数 {param_name}: 需要数字类型, 得到 {type(value).__name__}")
+        elif expected_type == "boolean":
+            if not isinstance(value, bool):
+                errors.append(f"参数 {param_name}: 需要布尔类型, 得到 {type(value).__name__}")
+
+        # String length check
+        if isinstance(value, str):
+            max_len = param_schema.get("maxLength")
+            if max_len and len(value) > max_len:
+                errors.append(f"参数 {param_name}: 长度 {len(value)} 超过上限 {max_len}")
+            min_len = param_schema.get("minLength")
+            if min_len and len(value) < min_len:
+                errors.append(f"参数 {param_name}: 长度 {len(value)} 不足 {min_len}")
+
+        # Enum check
+        enum_vals = param_schema.get("enum")
+        if enum_vals and value not in enum_vals:
+            errors.append(f"参数 {param_name}: '{value}' 不在允许值 {enum_vals} 中")
+
+    return errors
+
+
 def _validate_step(step: dict, tools: dict[str, BaseTool]) -> list[str]:
     """Validate a single plan step. Returns a list of error messages (empty = valid)."""
     step_errors: list[str] = []
@@ -116,6 +158,10 @@ def _validate_step(step: dict, tools: dict[str, BaseTool]) -> list[str]:
                 uuid.UUID(param_value)
             except (ValueError, AttributeError):
                 step_errors.append(f"Step '{tool_name}': param '{param_name}' is not a valid UUID")
+
+    # Schema-based parameter validation
+    schema_errors = _validate_step_params(step, inst)
+    step_errors.extend(schema_errors)
 
     return step_errors
 
@@ -178,11 +224,13 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
             }
 
         validated: list[dict] = []
+        all_validation_errors: list[str] = []
         for s in steps_list[:MAX_PLAN_STEPS]:
             step_errors = _validate_step(s, tools)
             if step_errors:
                 for err in step_errors:
                     errors.append(err)
+                    all_validation_errors.append(err)
                     logger.warning("Plan step validation: %s", err)
                 continue
             validated.append(s)
@@ -201,7 +249,11 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
             "planned_steps": validated,
             "current_step_index": 0,
             "current_intent": "complex",
-            "pending_plan": validated if has_write else [],
+            "pending_plan": {
+                "steps": validated,
+                "reasoning": "",
+                "validation_errors": all_validation_errors,
+            } if has_write else [],
             "plan_confirmed": not has_write,
             "retry_context": None,
             "intermediate_steps": steps + [
