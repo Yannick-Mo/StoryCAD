@@ -43,6 +43,17 @@ class SuperAgent:
             self._history_manager = HistoryManager()
         return self._history_manager
 
+    @staticmethod
+    def _extract_changes(tool_call: dict) -> dict:
+        """Extract meaningful change details from a tool call's parameters.
+        Filters out internal routing keys and empty values."""
+        skip_keys = {"project_id", "user_id", "conversation_id", "id"}
+        changes = {}
+        for key, value in tool_call.get("parameters", {}).items():
+            if key not in skip_keys and value is not None and value != "":
+                changes[key] = str(value)[:200]  # truncate long values
+        return changes
+
     async def _emit_tool_events(self, final_values: dict):
         """Yield tool_done, option, plan, and project_updated events from final state."""
         tool_results = final_values.get("tool_results", [])
@@ -70,11 +81,26 @@ class SuperAgent:
 
         write_tools = [tr.get("tool") for tr in visible_results if tr.get("success")]
         if write_tools:
+            # Build detailed tool info with parameter changes
+            tool_details = []
+            for tr in visible_results:
+                if tr.get("success"):
+                    tool_call = tr.get("tool_call", {})
+                    if isinstance(tool_call, dict):
+                        changes = self._extract_changes(tool_call)
+                    else:
+                        changes = {}
+                    tool_details.append({
+                        "name": tr.get("tool", "unknown"),
+                        "changes": changes,
+                    })
+            
             yield {
                 "type": "project_updated",
                 "data": json.dumps(
                     {
                         "tools_executed": write_tools,
+                        "tool_details": tool_details,
                         "all_success": all(tr.get("success", True) for tr in visible_results),
                     },
                     ensure_ascii=False,
