@@ -43,6 +43,44 @@ class SuperAgent:
             self._history_manager = HistoryManager()
         return self._history_manager
 
+    async def _emit_tool_events(self, final_values: dict):
+        """Yield tool_done, option, plan, and project_updated events from final state."""
+        tool_results = final_values.get("tool_results", [])
+        visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
+        for tr in visible_results:
+            yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
+
+        options = final_values.get("current_options", [])
+        if options:
+            yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
+
+        pending_plan = final_values.get("pending_plan", [])
+        plan_confirmed = final_values.get("plan_confirmed", False)
+        if pending_plan and not plan_confirmed:
+            yield {
+                "type": "plan",
+                "data": json.dumps(
+                    {
+                        "steps": pending_plan,
+                        "status": "awaiting_confirmation",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+
+        write_tools = [tr.get("tool") for tr in visible_results if tr.get("success")]
+        if write_tools:
+            yield {
+                "type": "project_updated",
+                "data": json.dumps(
+                    {
+                        "tools_executed": write_tools,
+                        "all_success": all(tr.get("success", True) for tr in visible_results),
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+
     async def chat_stream(
         self,
         project_id: str,
@@ -174,44 +212,12 @@ class SuperAgent:
                     final_values = state.values
             except Exception as exc:
                 log.error("final_state_error | error={}", exc, exc_info=True)
+                yield {"type": "error", "data": json.dumps({"message": "Failed to get final state"})}
 
         # Phase 3: Emit tool results before response
         if final_values:
-            tool_results = final_values.get("tool_results", [])
-            visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
-            for tr in visible_results:
-                yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
-
-            options = final_values.get("current_options", [])
-            if options:
-                yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
-
-            pending_plan = final_values.get("pending_plan", [])
-            plan_confirmed = final_values.get("plan_confirmed", False)
-            if pending_plan and not plan_confirmed:
-                yield {
-                    "type": "plan",
-                    "data": json.dumps(
-                        {
-                            "steps": pending_plan,
-                            "status": "awaiting_confirmation",
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-
-            write_tools_executed = [tr.get("tool") for tr in visible_results if tr.get("success")]
-            if write_tools_executed:
-                yield {
-                    "type": "project_updated",
-                    "data": json.dumps(
-                        {
-                            "tools_executed": write_tools_executed,
-                            "all_success": all(tr.get("success", True) for tr in visible_results),
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
+            async for evt in self._emit_tool_events(final_values):
+                yield evt
 
         # Phase 4: Flush buffered response tokens
         if token_buffer:
