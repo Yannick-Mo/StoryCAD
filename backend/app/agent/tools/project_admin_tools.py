@@ -506,6 +506,7 @@ async def _write_new_project(
     db: AsyncSession,
     state: dict,
     owner_id: uuid.UUID,
+    do_commit: bool = True,
 ) -> uuid.UUID:
     repo = StoryCADRepository(db)
     project_title = state.get("project_title", "未命名项目")
@@ -625,5 +626,6 @@ async def _write_new_project(
     if gs:
         project.global_settings = gs
 
-    await db.commit()
+    if do_commit:
+        await db.commit()
     return project_id
