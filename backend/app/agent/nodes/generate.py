@@ -12,7 +12,6 @@ import yaml
 
 from app.agent.cowriter.mode import CoWriterMode
 from app.agent.guard import check_output_safety
-from app.agent.prompts import render_prompt
 from app.agent.state import AgentState
 from app.config import settings
 from app.llm.client import LLMClient
@@ -22,9 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration — can be overridden via env in production
 MAX_SYSTEM_TOKENS = 8000
-MAX_SYS_CHARS = settings.llm_max_sys_chars
 MAX_RAG_CHARS = settings.llm_max_rag_chars
-_MAX_NON_PRIORITY_PARTS = 5
 
 
 @dataclass
@@ -82,19 +79,14 @@ _EXAMPLE = """# ——— 回复结构示例 ———
 您觉得这些方向如何？需要我进一步展开某个建议吗？"""
 
 # ── Self-reflection prompts ──────────────────────────────────────────
-_EVALUATION_CRITERIA = [
-    ("completeness", "回复是否完整覆盖了用户请求的全部内容？"),
-    ("accuracy", "事实和项目引用是否正确？(UUID、角色名、章节编号)"),
-    ("actionability", "如适用，是否包含具体的后续步骤或建议？"),
-    ("conciseness", "回复是否简洁，没有不必要的重复？"),
-    ("safety", "回复是否避免了有害或不安全的内容？"),
-]
-
 _EVALUATION_SYSTEM_PROMPT = """你是一个严格的内容评审员。请评估以下回复的质量。
 
-对每个维度给出1-5分并说明理由：
-
-{criteria}
+对每个维度给出1-5分：
+- completeness：回复是否完整覆盖了用户请求的全部内容？
+- accuracy：事实和项目引用是否正确？(UUID、角色名、章节编号)
+- actionability：如适用，是否包含具体的后续步骤或建议？
+- conciseness：回复是否简洁，没有不必要的重复？
+- safety：回复是否避免了有害或不安全的内容？
 
 评分标准:
 - 5: 优秀，无需改进
@@ -103,29 +95,24 @@ _EVALUATION_SYSTEM_PROMPT = """你是一个严格的内容评审员。请评估�
 - 2: 较差，需要大幅改进
 - 1: 很差，完全不合格
 
-如果任一维度 ≤ 2 分，或平均分 < 3.5，请在最后一行写 "需要改进: 是"。
-否则写 "需要改进: 否"。
+如果任一维度 ≤ 2 分，或平均分 < 3.5，则 should_improve 为 true。
 
 回复内容:
 {draft}
 
-用户请求: {user_query}"""
+用户请求: {user_query}
+
+输出 ONLY JSON（不要其他文本）：
+{{"should_improve": true/false, "reason": "改进理由"}}"""
 
 
-def _summarize_tool_results(results: list[dict]) -> str:
-    """Summarize tool results briefly for the evaluation prompt."""
-    lines = []
-    for r in results:
-        tool = r.get("tool", "unknown")
-        ok = r.get("success", False)
-        if ok:
-            data = r.get("data", "")
-            if isinstance(data, str):
-                data = data[:200]
-            lines.append(f"[{tool}] OK: {data}")
-        else:
-            lines.append(f"[{tool}] FAIL: {r.get('error', '?')}")
-    return "\n".join(lines[:5])
+def _format_tool_data(raw_data: object, max_len: int = 500) -> str:
+    """Format tool result data for LLM consumption (dict/list → JSON)."""
+    if isinstance(raw_data, (dict, list)):
+        s = json.dumps(raw_data, ensure_ascii=False)[:max_len]
+    else:
+        s = str(raw_data)[:max_len]
+    return s
 
 
 _PERSONA_LOCK = asyncio.Lock()
@@ -167,7 +154,7 @@ def _trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKE
     for sec in sections:
         tokens = _estimate_tokens(sec.text)
         if sec.tier <= 1:
-            # P0 and P1: always include
+            # P0 and P1: always include (but proportional truncation if over budget later)
             result_parts.append(sec.text)
             used += tokens
         elif sec.tier == 2:
@@ -192,7 +179,20 @@ def _trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKE
     result = "\n\n".join(result_parts)
 
     if used > budget:
-        logger.warning("system prompt over budget: %d > %d tokens", used, budget)
+        logger.warning("system prompt over budget: %d > %d tokens, applying proportional truncation", used, budget)
+        # Proportional truncation: all tiers share the pain
+        ratio = budget / max(used, 1)
+        truncated_parts = []
+        new_used = 0
+        for part in result_parts:
+            trunc_len = int(len(part) * ratio)
+            if trunc_len > 60:
+                truncated = part[:trunc_len]
+                truncated_parts.append(truncated)
+                new_used += _estimate_tokens(truncated)
+        result = "\n\n".join(truncated_parts)
+        used = new_used
+        logger.info("proportional truncation: %d -> %d tokens", used, new_used)
 
     return result
 
@@ -287,7 +287,8 @@ async def _build_system_prompt(state: AgentState) -> str:
         for r in tool_results[:5]:
             icon = "✓" if r.get("success") else "✗"
             tool_name = r.get("tool", "unknown")
-            content = r.get("data") if r.get("success") else r.get("error", "?")
+            raw = r.get("data") if r.get("success") else r.get("error", "?")
+            content = _format_tool_data(raw)
             result_lines.append(f"{icon} {tool_name}：{content}")
         sections.append(_ContextSection(tier=1, label="tool_results", text="\n".join(result_lines)))
 
@@ -298,10 +299,18 @@ async def _build_system_prompt(state: AgentState) -> str:
         sections.append(_ContextSection(tier=1, label="errors", text="\n".join(error_lines)))
 
     if pending_plan and not plan_confirmed:
+        if isinstance(pending_plan, dict):
+            plan_steps = pending_plan.get("steps", [])
+            plan_reasoning = pending_plan.get("reasoning", "")
+        else:
+            plan_steps = pending_plan
+            plan_reasoning = ""
         plan_lines = ["待执行的计划（等待用户确认）："]
-        for i, step in enumerate(pending_plan, 1):
+        if plan_reasoning:
+            plan_lines.append(f"理由：{plan_reasoning}")
+        for i, step in enumerate(plan_steps, 1):
             plan_lines.append(f"{i}. {step.get('description') or step.get('tool', '')}")
-        plan_lines.append("请询问用户是否确认执行此计划。")
+        plan_lines.append("请询问用户确认是否执行此计划。")
         sections.append(_ContextSection(tier=1, label="pending_plan", text="\n".join(plan_lines)))
 
     if current_options:
@@ -421,13 +430,9 @@ def create_generate_node(llm_client: LLMClient):
             if should_reflect:
                 yield {"type": "step", "data": "自我评估..."}
 
-                # Phase 2 — self-evaluation with timeout guard
+                # Phase 2 — self-evaluation with JSON output + timeout guard
                 last_user_msg = user_msgs[-1].content or ""
-                criteria_text = "\n".join(
-                    f"- {name}：{desc}" for name, desc in _EVALUATION_CRITERIA
-                )
                 eval_prompt_text = _EVALUATION_SYSTEM_PROMPT.format(
-                    criteria=criteria_text,
                     draft=draft,
                     user_query=last_user_msg,
                 )
@@ -436,23 +441,21 @@ def create_generate_node(llm_client: LLMClient):
                         llm_client.chat(
                             messages=[Message(role="user", content=eval_prompt_text)],
                             temperature=0.1,
+                            response_format="json_object",
                             request_id=state.get("trace_id", ""),
                         ),
                         timeout=8.0,
                     )
-                    eval_text = eval_content.content or ""
+                    eval_data = json.loads(eval_content.content or "{}")
+                    should_improve = bool(eval_data.get("should_improve", False))
                 except asyncio.TimeoutError:
                     logger.warning("self-evaluation timed out after 8s, using draft as-is")
                     should_improve = False
-                    eval_text = ""
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except (json.JSONDecodeError, Exception) as e:
                     logger.warning("Self-evaluation failed, using first draft: %s", e)
                     should_improve = False
-                    eval_text = ""
-                else:
-                    should_improve = "需要改进: 是" in eval_text
 
                 if should_improve:
                     yield {"type": "step", "data": "优化回复..."}
@@ -468,11 +471,13 @@ def create_generate_node(llm_client: LLMClient):
                                 ),
                             ),
                         )
+                        # Allow up to 2x draft length or 2048, whichever is larger
+                        improved_max_tokens = max(2048, int(len(draft) * 0.75))
                         improved_result = await asyncio.wait_for(
                             llm_client.chat(
                                 messages=improved_msgs,
                                 temperature=0.5,
-                                max_tokens=1024,
+                                max_tokens=improved_max_tokens,
                                 request_id=state.get("trace_id", ""),
                             ),
                             timeout=15.0,

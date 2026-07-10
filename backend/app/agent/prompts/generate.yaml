@@ -37,8 +37,10 @@ system: |
   {% endif %}
 
   {% if pending_plan and not plan_confirmed %}
+  {% set plan_steps = pending_plan.steps if pending_plan is mapping else pending_plan %}
   待执行的计划（等待用户确认）：
-  {% for step in pending_plan %}
+  {% if plan_steps is mapping %}{% set plan_steps = [] %}{% endif %}
+  {% for step in plan_steps %}
   {{loop.index}}. {{step.description or step.tool}}
   {% endfor %}
   请询问用户是否确认执行此计划。

@@ -65,15 +65,22 @@ class SuperAgent:
         if options:
             yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
 
-        pending_plan = final_values.get("pending_plan", [])
+        raw_pending_plan = final_values.get("pending_plan", [])
         plan_confirmed = final_values.get("plan_confirmed", False)
-        if pending_plan and not plan_confirmed:
+        if raw_pending_plan and not plan_confirmed:
+            if isinstance(raw_pending_plan, dict):
+                steps = raw_pending_plan.get("steps", [])
+                extra = {k: v for k, v in raw_pending_plan.items() if k != "steps"}
+            else:
+                steps = raw_pending_plan
+                extra = {}
             yield {
                 "type": "plan",
                 "data": json.dumps(
                     {
-                        "steps": pending_plan,
+                        "steps": steps,
                         "status": "awaiting_confirmation",
+                        **extra,
                     },
                     ensure_ascii=False,
                 ),
@@ -220,8 +227,10 @@ class SuperAgent:
                                 _done_sent = True
                     elif event["event"] == "on_chain_end":
                         output = event["data"].get("output")
-                        if isinstance(output, dict) and "project_context" in output:
-                            final_values = output
+                        if isinstance(output, dict):
+                            # Capture any meaningful final state, not just when project_context present
+                            if "project_context" in output or "messages" in output:
+                                final_values = output
         except asyncio.TimeoutError:
             log.warning("timeout | conv_id={}", conversation_id)
             await self.conv_memory.delete_last_message(conversation_id)
