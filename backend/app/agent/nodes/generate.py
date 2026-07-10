@@ -82,32 +82,34 @@ _EXAMPLE = """# ——— 回复结构示例 ———
 您觉得这些方向如何？需要我进一步展开某个建议吗？"""
 
 # ── Self-reflection prompts ──────────────────────────────────────────
-_EVALUATION_SYSTEM_PROMPT = """你是一个AI回复质量评估员。评估小说写作助手的回复质量。
+_EVALUATION_CRITERIA = [
+    ("completeness", "回复是否完整覆盖了用户请求的全部内容？"),
+    ("accuracy", "事实和项目引用是否正确？(UUID、角色名、章节编号)"),
+    ("actionability", "如适用，是否包含具体的后续步骤或建议？"),
+    ("conciseness", "回复是否简洁，没有不必要的重复？"),
+    ("safety", "回复是否避免了有害或不安全的内容？"),
+]
 
-评估标准（只输出JSON）：
-1. quality_score: 整数1-5
-   - 5 = 建议具体可执行，包含改写前后对比，引用项目实际内容
-   - 4 = 有用建议但缺少具体示例
-   - 3 = 一般性建议，缺乏可操作性
-   - 2 = 过于笼统，没有帮助
-   - 1 = 明显有问题（幻觉、矛盾）
-2. should_improve: true/false —— 仅当quality_score >= 4 时为false
-3. issues: 问题列表（最多3条，空列表代表没问题）
-4. feedback: 改进方向（如果should_improve为true）
+_EVALUATION_SYSTEM_PROMPT = """你是一个严格的内容评审员。请评估以下回复的质量。
 
-高质量回复特征：
-- 建议具体："第3段第2句的对话太直白" 而非 "对话可以更好"
-- 包含改写前后对比
-- 引用项目实际内容
-- 分析原因而非指出表面问题
-- 使用结构化排版（列表、加粗）
+对每个维度给出1-5分并说明理由：
 
-低质量回复特征：
-- "这段可以写得更好" 类的空话
-- 没有具体例子
-- 没有引用项目实际内容（但如果工具未返回相关内容，不扣分）
+{criteria}
 
-输出 ONLY JSON，不要任何其他文本：{"quality_score": int, "should_improve": bool, "issues": list, "feedback": ""}"""
+评分标准:
+- 5: 优秀，无需改进
+- 4: 良好，有小瑕疵
+- 3: 及格，有明显不足
+- 2: 较差，需要大幅改进
+- 1: 很差，完全不合格
+
+如果任一维度 ≤ 2 分，或平均分 < 3.5，请在最后一行写 "需要改进: 是"。
+否则写 "需要改进: 否"。
+
+回复内容:
+{draft}
+
+用户请求: {user_query}"""
 
 
 def _summarize_tool_results(results: list[dict]) -> str:
@@ -417,68 +419,68 @@ def create_generate_node(llm_client: LLMClient):
                 should_reflect = False
 
             if should_reflect:
-                yield {"_stream_token": "⏳ 自我评估..."}
+                yield {"type": "step", "data": "自我评估..."}
 
-                # Phase 2 — self-evaluation
-                evaluation: dict = {}
+                # Phase 2 — self-evaluation with timeout guard
+                last_user_msg = user_msgs[-1].content or ""
+                criteria_text = "\n".join(
+                    f"- {name}：{desc}" for name, desc in _EVALUATION_CRITERIA
+                )
+                eval_prompt_text = _EVALUATION_SYSTEM_PROMPT.format(
+                    criteria=criteria_text,
+                    draft=draft,
+                    user_query=last_user_msg,
+                )
                 try:
-                    last_user_msg = user_msgs[-1].content or ""
-                    eval_msgs = [
-                        Message(role="system", content=_EVALUATION_SYSTEM_PROMPT),
-                        Message(
-                            role="user",
-                            content=(
-                                f"用户问题：{last_user_msg}\n\n"
-                                f"AI回复：{draft}\n\n"
-                                f"工具结果摘要：\n{_summarize_tool_results(tool_results)}"
-                            ),
+                    eval_content = await asyncio.wait_for(
+                        llm_client.chat(
+                            messages=[Message(role="user", content=eval_prompt_text)],
+                            temperature=0.1,
+                            request_id=state.get("trace_id", ""),
                         ),
-                    ]
-                    eval_result = await llm_client.chat(
-                        messages=eval_msgs,
-                        temperature=0.1,
-                        response_format="json_object",
-                        request_id=state.get("trace_id", ""),
+                        timeout=8.0,
                     )
-                    evaluation = json.loads(eval_result.content or "{}")
-                    if not isinstance(evaluation, dict):
-                        evaluation = {}
+                    eval_text = eval_content.content or ""
+                except asyncio.TimeoutError:
+                    logger.warning("self-evaluation timed out after 8s, using draft as-is")
+                    should_improve = False
+                    eval_text = ""
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.warning("Self-evaluation failed, using first draft: %s", e)
-                    evaluation = {}
+                    should_improve = False
+                    eval_text = ""
+                else:
+                    should_improve = "需要改进: 是" in eval_text
 
-                should_improve = evaluation.get("should_improve", False)
-                quality_score = evaluation.get("quality_score", 0)
-
-                if should_improve and quality_score < 4:
-                    yield {"_stream_token": "⏳ 优化回复..."}
-                    # Phase 3 — generate improved version
+                if should_improve:
+                    yield {"type": "step", "data": "优化回复..."}
                     try:
-                        feedback = evaluation.get("feedback", "")
-                        logger.info(
-                            "Self-reflection improving response (score: %s/5, issues: %s)",
-                            quality_score,
-                            evaluation.get("issues", []),
-                        )
                         improved_msgs = list(msgs_with_sys)
                         improved_msgs.append(
                             Message(
                                 role="user",
                                 content=(
-                                    f"[系统内部自检] 你刚才的回复质量评分{quality_score}/5。"
-                                    f"需要改进的方向：{feedback}\n"
-                                    f"请重新回复。注：这是自我修正，非用户新问题，不要提及修正过程。"
+                                    f"[系统内部自检] 上一条回复质量不达标，请参考以下反馈重新生成：\n"
+                                    f"{eval_text}\n"
+                                    f"注：这是自我修正，非用户新问题，不要提及修正过程。"
                                 ),
                             ),
                         )
-                        improved_result = await llm_client.chat(
-                            messages=improved_msgs,
-                            temperature=0.7,
-                            request_id=state.get("trace_id", ""),
+                        improved_result = await asyncio.wait_for(
+                            llm_client.chat(
+                                messages=improved_msgs,
+                                temperature=0.5,
+                                max_tokens=1024,
+                                request_id=state.get("trace_id", ""),
+                            ),
+                            timeout=15.0,
                         )
                         full_content = improved_result.content or draft
+                    except asyncio.TimeoutError:
+                        logger.warning("improvement timed out after 15s, using draft as-is")
+                        full_content = draft
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
