@@ -225,6 +225,7 @@ async def _build_system_prompt(state: AgentState) -> str:
 
     proj = project_ctx.get("project", {})
     title = proj.get("title", "Unnamed Project")
+    genre = proj.get("genre", "")
 
     tool_results = state.get("tool_results", [])
     errors = state.get("errors", [])
@@ -257,9 +258,25 @@ async def _build_system_prompt(state: AgentState) -> str:
 
     # Tier 0 — critical: persona, project identity
     sections.append(_ContextSection(tier=0, label="persona", text=persona))
-    sections.append(_ContextSection(tier=0, label="project_title", text=f"你正在协助用户创作小说《{title}》。"))
+    project_title = f"你正在协助用户创作小说《{title}》。"
+    if genre:
+        project_title += f"\n类型：{genre}"
+    sections.append(_ContextSection(tier=0, label="project_title", text=project_title))
 
-    # Tier 1 — high: structure, tool results, plan, options
+    # Tier 1 — high: structure, characters, tool results, plan, options
+    chars = project_ctx.get("characters", [])
+    if chars:
+        char_lines = ["角色列表："]
+        for c in chars:
+            name = c.get("name", "?")
+            role = c.get("role", "")
+            personality = c.get("personality", "")
+            if personality:
+                char_lines.append(f"- {name}（{role}）：{personality[:200]}")
+            else:
+                char_lines.append(f"- {name}（{role}）")
+        sections.append(_ContextSection(tier=1, label="characters", text="\n".join(char_lines)))
+
     if project_structure:
         sections.append(_ContextSection(tier=1, label="project_structure", text=f"项目结构：{project_structure}"))
 
@@ -302,9 +319,31 @@ async def _build_system_prompt(state: AgentState) -> str:
     if retry_count > 0:
         sections.append(_ContextSection(tier=1, label="retry_note", text="注意：上次工具执行出错，请调整后重试。"))
 
-    # Tier 2 — medium: RAG, guidelines, rules
+    # Tier 3 — low: extra tool results (beyond the first 5)
+    if len(tool_results) > 5:
+        extra = [f"{'✓' if r.get('success') else '✗'} {r.get('tool', '?')}" for r in tool_results[5:]]
+        sections.append(_ContextSection(tier=3, label="extra_tool_results", text="其他工具执行：" + "；".join(extra)))
+
+    # Tier 2 — medium: RAG, themes, relations, guidelines, rules
     if rag_text:
         sections.append(_ContextSection(tier=2, label="rag_context", text=f"参考知识：\n{rag_text}"))
+
+    themes = project_ctx.get("themes", [])
+    if themes:
+        theme_names = [t.get("name", "") for t in themes if t.get("name")]
+        if theme_names:
+            sections.append(_ContextSection(tier=2, label="themes", text="主题：" + "、".join(theme_names)))
+
+    relations = project_ctx.get("relations", [])
+    if relations:
+        rel_lines = ["角色关系："]
+        for r in relations[:10]:
+            char_a = r.get("from", "?")
+            char_b = r.get("to", "?")
+            rel_type = r.get("type", "")
+            trust = r.get("trust", 0)
+            rel_lines.append(f"- {char_a} → {char_b}：{rel_type}（信任度：{trust}）")
+        sections.append(_ContextSection(tier=2, label="relations", text="\n".join(rel_lines)))
 
     sections.append(_ContextSection(tier=2, label="output_guide", text=_OUTPUT_GUIDE))
 
