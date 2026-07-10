@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
 from app.agent.consistency.checker import ConsistencyChecker
 
 
@@ -16,6 +18,7 @@ class ConsistencyCheckTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
+            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
             checker = ConsistencyChecker(db)
             report = await checker.check_all(kwargs["project_id"])
             return ToolResult(success=True, data=report.model_dump(mode="json"))
@@ -36,6 +39,7 @@ class RhythmAnalyzeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
+            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
             from app.agent.rhythm.analyzer import RhythmAnalyzer
             project_id = kwargs["project_id"]
             analyzer = RhythmAnalyzer(db)

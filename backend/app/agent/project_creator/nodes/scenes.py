@@ -1,14 +1,21 @@
-# backend/app/agent/project_creator/nodes/scenes.py
 import asyncio
-from app.agent.client import LLMClient
 from app.agent.project_creator.state import MaterialState, SceneDef
-from app.agent.utils import parse_json, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.llm.types import Message
 
 
-def _raw_chars_text(raw_chars: list[dict]) -> str:
-    if not raw_chars:
-        return "暂无角色"
-    return "\n".join(f"- {c['name']}: {c.get('description', '')}" for c in raw_chars)
+def _chars_text(raw_chars: list[dict], designed_chars: list[dict]) -> str:
+    parts = []
+    if raw_chars:
+        parts.append("素材中提及的角色：")
+        for c in raw_chars:
+            parts.append(f"- {c.get('name', '')}: {c.get('description', '')}")
+    if designed_chars:
+        parts.append("已设计的角色：")
+        for c in designed_chars:
+            info = f"- {c.get('name', '')} ({c.get('role', '')}): {c.get('personality', '')}"
+            parts.append(info)
+    return "\n".join(parts) if parts else "暂无角色"
 
 
 async def _generate_one_chapter(
@@ -18,29 +25,28 @@ async def _generate_one_chapter(
     chapter_title: str,
     chapter_goal: str,
     characters_raw: list[dict],
+    designed_chars: list[dict],
     world_elements: str,
 ) -> list[SceneDef]:
-    client = LLMClient()
+    client = get_shared_client()
     system_raw = load_project_prompt("material_scenes")
     try:
         system = system_raw.format(
             act_name=act_name,
             chapter_title=chapter_title,
             chapter_goal=chapter_goal,
-            characters_raw_text=_raw_chars_text(characters_raw),
+            characters_raw_text=_chars_text(characters_raw, designed_chars),
             world_elements=world_elements,
         )
     except KeyError:
         system = system_raw
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "请为这一章规划场景"},
+    messages: list[Message] = [
+        Message(role="system", content=system),
+        Message(role="user", content="请为这一章规划场景"),
     ]
-    raw = await client.chat(messages, temperature=0.6, max_tokens=2048)
-    try:
-        parsed = parse_json(raw)
-    except Exception:
-        return []
+    result = await client.chat(messages, temperature=0.6, max_tokens=2048)
+    raw = result.content or ""
+    parsed = await parse_json_safe(raw, client, messages)
     scene_dicts = parsed.get("scenes", [])
     scenes: list[SceneDef] = []
     for sc in scene_dicts:
@@ -66,6 +72,7 @@ async def generate_all_scenes(state: MaterialState) -> dict:
         chapter_title: str,
         chapter_goal: str,
         characters_raw: list[dict],
+        designed_chars: list[dict],
         world_elements: str,
     ) -> list[SceneDef]:
         async with sem:
@@ -75,6 +82,7 @@ async def generate_all_scenes(state: MaterialState) -> dict:
                 chapter_title,
                 chapter_goal,
                 characters_raw,
+                designed_chars,
                 world_elements,
             )
 
@@ -87,6 +95,7 @@ async def generate_all_scenes(state: MaterialState) -> dict:
                 chapter.get("title", ""),
                 chapter.get("goal", ""),
                 state.get("characters_raw", []),
+                state.get("characters", []),
                 state.get("world_elements", ""),
             ))
 

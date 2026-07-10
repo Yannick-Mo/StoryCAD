@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
 from app.project.models import Project, ProjectConfig
-from app.storycad.models import Chapter, Scene, SceneContent
+from app.storycad.models import Act, Chapter, Scene, SceneContent
 from app.storycad.repository import StoryCADRepository
 from app.project.repository import ProjectRepository
 from app.utils import row_to_dict
@@ -23,6 +25,7 @@ class ReadProjectTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             proj_repo = ProjectRepository(db)
             project = await proj_repo.get(pid)
             if not project:
@@ -54,6 +57,7 @@ class ReadChapterTool(BaseTool):
             chapter = result.scalar_one_or_none()
             if not chapter:
                 return ToolResult(success=False, error="Chapter not found")
+            await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
             scenes_result = await db.execute(
                 select(Scene).where(Scene.chapter_id == ch_id).order_by(Scene.sort_order)
             )
@@ -83,6 +87,7 @@ class ReadSceneTool(BaseTool):
             scene = result.scalar_one_or_none()
             if not scene:
                 return ToolResult(success=False, error="Scene not found")
+            await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
             content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
             sc_content = content_result.scalar_one_or_none()
             data = row_to_dict(scene)
@@ -95,6 +100,7 @@ class ReadSceneTool(BaseTool):
 class CreateSceneTool(BaseTool):
     name = "create_scene"
     description = "在指定章节中创建新场景"
+    is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
@@ -114,6 +120,7 @@ class CreateSceneTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             ch_id = uuid.UUID(kwargs["chapter_id"])
             repo = StoryCADRepository(db)
             scene_data = {
@@ -131,15 +138,11 @@ class CreateSceneTool(BaseTool):
             if content:
                 sc_id = uuid.UUID(created["id"])
                 db.add(SceneContent(scene_id=sc_id, project_id=pid, content=content))
-                await db.flush()
-            from app.agent.utils import count_words
-            if content:
+                from app.agent.utils import count_words
                 word_count = count_words(content)
-                result = await db.execute(select(Scene).where(Scene.id == uuid.UUID(created["id"])))
-                scene_obj = result.scalar_one_or_none()
+                scene_obj = await db.get(Scene, sc_id)
                 if scene_obj:
                     scene_obj.word_count = word_count
-                await db.flush()
             await db.commit()
             return ToolResult(success=True, data=created)
         except Exception as e:
@@ -150,6 +153,7 @@ class CreateSceneTool(BaseTool):
 class UpdateSceneTool(BaseTool):
     name = "update_scene"
     description = "更新场景内容、标题、POV、地点、时间、梗概等"
+    is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
@@ -167,6 +171,9 @@ class UpdateSceneTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             sc_id = uuid.UUID(kwargs["scene_id"])
+            scene_result = await db.get(Scene, sc_id)
+            if scene_result:
+                await verify_project_owner(db, scene_result.project_id, kwargs.get("user_id"))
             repo = StoryCADRepository(db)
             update_data = {"id": str(sc_id)}
             for field in ("title", "summary", "pov_character", "setting", "scene_time"):
@@ -179,22 +186,145 @@ class UpdateSceneTool(BaseTool):
                 content = kwargs["content"]
                 result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
                 sc = result.scalar_one_or_none()
+                scene_obj = await db.get(Scene, sc_id)
                 if sc:
                     sc.content = content
-                else:
-                    result = await db.execute(select(Scene).where(Scene.id == sc_id))
-                    scene_obj = result.scalar_one_or_none()
-                    if scene_obj:
-                        db.add(SceneContent(scene_id=sc_id, project_id=scene_obj.project_id, content=content))
-                from app.agent.utils import count_words
-                word_count = count_words(content)
-                result = await db.execute(select(Scene).where(Scene.id == sc_id))
-                scene_obj = result.scalar_one_or_none()
+                elif scene_obj:
+                    db.add(SceneContent(scene_id=sc_id, project_id=scene_obj.project_id, content=content))
                 if scene_obj:
-                    scene_obj.word_count = word_count
-                await db.flush()
+                    from app.agent.utils import count_words
+                    scene_obj.word_count = count_words(content)
             await db.commit()
             return ToolResult(success=True, data=updated)
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
+class ReadFullProjectTool(BaseTool):
+    name = "read_full_project"
+    description = "加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "project_id": {"type": "string", "description": "项目ID"},
+        },
+        "required": ["project_id"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            from app.agent.context import ContextBuilder
+            builder = ContextBuilder(db)
+            ctx = await builder.build_full(pid)
+            return ToolResult(success=True, data=ctx)
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
+
+
+class SetChapterGoalTool(BaseTool):
+    name = "set_chapter_goal"
+    description = "设置章节的写作目标"
+    is_write_operation = True
+    parameters = {
+        "type": "object",
+        "properties": {
+            "chapter_id": {"type": "string", "description": "章节ID"},
+            "goal": {"type": "string", "description": "章节目标文本"},
+        },
+        "required": ["chapter_id", "goal"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            ch_id = uuid.UUID(kwargs["chapter_id"])
+            goal = kwargs["goal"]
+            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
+            ch = result.scalar_one_or_none()
+            if ch:
+                await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
+            if not ch:
+                return ToolResult(success=False, error="Chapter not found")
+            ch.goal = goal
+            await db.commit()
+            return ToolResult(success=True, data={"chapter_id": str(ch_id), "goal": goal})
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
+class UpdateChapterTool(BaseTool):
+    name = "update_chapter"
+    description = "更新章节信息（标题、状态、目标）"
+    is_write_operation = True
+    parameters = {
+        "type": "object",
+        "properties": {
+            "chapter_id": {"type": "string", "description": "章节ID"},
+            "title": {"type": "string", "description": "章节标题"},
+            "status": {"type": "string", "description": "状态（draft/revising/final）"},
+            "goal": {"type": "string", "description": "章节目标"},
+        },
+        "required": ["chapter_id"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            ch_id = uuid.UUID(kwargs["chapter_id"])
+            result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
+            ch = result.scalar_one_or_none()
+            if not ch:
+                return ToolResult(success=False, error="Chapter not found")
+            await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
+            if "title" in kwargs:
+                ch.title = kwargs["title"]
+            if "status" in kwargs:
+                valid_statuses = {"draft", "revising", "final"}
+                if kwargs["status"] not in valid_statuses:
+                    return ToolResult(
+                        success=False,
+                        error=f"Invalid status '{kwargs['status']}'. Must be one of {valid_statuses}",
+                    )
+                ch.status = kwargs["status"]
+            if "goal" in kwargs:
+                ch.goal = kwargs["goal"]
+            await db.commit()
+            return ToolResult(success=True, data={"chapter_id": str(ch_id), "title": ch.title, "status": ch.status})
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
+class UpdateActTool(BaseTool):
+    name = "update_act"
+    description = "更新幕信息（名称、颜色）"
+    is_write_operation = True
+    parameters = {
+        "type": "object",
+        "properties": {
+            "act_id": {"type": "string", "description": "幕ID"},
+            "name": {"type": "string", "description": "幕名称"},
+            "color": {"type": "string", "description": "颜色代码"},
+        },
+        "required": ["act_id"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            act_id = uuid.UUID(kwargs["act_id"])
+            result = await db.execute(select(Act).where(Act.id == act_id))
+            act = result.scalar_one_or_none()
+            if not act:
+                return ToolResult(success=False, error="Act not found")
+            await verify_project_owner(db, act.project_id, kwargs.get("user_id"))
+            if "name" in kwargs:
+                act.name = kwargs["name"]
+            if "color" in kwargs:
+                act.color = kwargs["color"]
+            await db.commit()
+            return ToolResult(success=True, data={"act_id": str(act_id), "name": act.name})
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))

@@ -1,22 +1,22 @@
 # backend/app/agent/orchestrator.py
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.client import LLMClient
+from app.llm.client import LLMClient
 from app.agent.context import ContextBuilder
 from app.agent.agents.goal_agent import GoalAgent
 from app.agent.agents.outline_agent import OutlineAgent
-from app.agent.agents.writing_agent import WritingAgent
+
 
 
 class AgentOrchestrator:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, llm_client: LLMClient | None = None):
         self.db = db
-        self.client = LLMClient()
+        self._llm_client = llm_client or LLMClient()
+        self.client = self._llm_client
         self.context_builder = ContextBuilder(db)
         self.agents = {
             "goal": GoalAgent(),
             "outline": OutlineAgent(),
-            "writing": WritingAgent(),
         }
 
     async def generate(self, project_id: uuid.UUID, chapter_id: uuid.UUID, mode: str, user_prompt: str) -> dict:

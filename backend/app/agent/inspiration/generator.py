@@ -77,14 +77,22 @@ class InspirationGenerator:
         try:
             return json.loads(result.content)
         except json.JSONDecodeError:
-            import re
-            match = re.search(r'\{(?:[^{}]|\{[^{}]*\})*\}', result.content, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except json.JSONDecodeError:
-                    return None
-            return None
+            pass
+        import re
+        json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', result.content)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+        try:
+            start = result.content.find('{')
+            end = result.content.rfind('}')
+            if start != -1 and end > start:
+                return json.loads(result.content[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+        return None
 
     async def generate_challenge(
         self,

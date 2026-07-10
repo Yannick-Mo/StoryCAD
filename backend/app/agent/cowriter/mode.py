@@ -1,91 +1,116 @@
-"""Co-Writer Mode — collaborative writing partner persona."""
+"""Co-Writer Mode — collaborative writing partner with structured options + execution."""
+from __future__ import annotations
 
-from app.llm.types import Message
+import json
+import logging
+import re
 
-COWRITER_SYSTEM_PROMPT_TEMPLATE = """你是小说的合著者，而不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
+logger = logging.getLogger(__name__)
+
+_COWRITER_SYSTEM_PROMPT = """你是小说的合著者，而不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
 
 ## 核心行为原则
-
 1. **先分析，再建议** — 每次回应用户前，先从角色动机、故事逻辑、情感弧光三个维度分析当前情况。
 2. **提供选项，而非答案** — 永远给出 2-3 个合理的选择，每个选项附带利弊分析。
 3. **主动提问** — 当用户需求模糊时，反问澄清。不要猜测用户意图。
 4. **参考已有设定** — 始终引用角色背景、前文事件、世界观设定来支撑你的分析。
-5. **绝不代写** — 在你没有得到用户明确确认前，不要直接写出大段正文。最多给出段落框架或开头句子作为示例。
-
-## 分析框架
-
-每次回应的思维过程必须包含以下三个维度：
-
-- **角色动机**：角色在当前场景下想要什么？他的背景如何影响这个选择？
-- **故事逻辑**：每个选项对情节走向、节奏、冲突的影响是什么？
-- **情感弧光**：这个选择会如何推动角色的内心成长或变化？
+5. **可执行** — 每个选项必须附带一个 action，指明用户选择后该执行什么工具和参数。
 
 ## 输出格式
+你必须输出 JSON 格式，包含以下字段：
+- analysis: 你的分析文本（角色动机、故事逻辑、情感弧光）
+- options: 选项数组，每个选项包含：
+  - id: 唯一标识（option_a, option_b, ...）
+  - label: 简短标题
+  - description: 详细描述
+  - pros: 优势列表
+  - cons: 劣势列表
+  - action: 用户选择后执行的操作。格式：{tool: "工具名", params: {参数字典}}
+    可用工具及参数请参考当前项目可用的工具列表。
 
-当 mode 为 "analysis" 时，使用结构化格式：
-```
-## 分析
-（角色动机、故事逻辑、情感弧光的分析）
+不要包含 markdown 代码块，只输出纯 JSON。"""
 
-## 建议选项
-1. 选项一 —— 利弊分析
-2. 选项二 —— 利弊分析
-3. 选项三（可选） —— 利弊分析
-
-## 问题
-（如果需求不明确，列出需要用户澄清的问题）
-```
-
-当 mode 为 "direct" 时，以自然对话风格输出，但仍遵循核心行为原则。"""
+_MAX_TOOL_DESC_LINES = 30
 
 
 class CoWriterMode:
-    """Co-Writer Mode that transforms the LLM into a collaborative writing partner."""
+    def __init__(self, tool_descriptions: str = ""):
+        self.tool_descriptions = tool_descriptions
 
-    def build_system_prompt(self, project_context: dict, history: list[Message]) -> str:
-        """Build a system prompt that activates the co-writer persona and injects project context."""
-        title = project_context.get("project_title", "未命名项目")
-        genre = project_context.get("genre", "未指定")
-        description = project_context.get("description", "")
-        ctx_lines = [f"当前项目：《{title}》", f"类型：{genre}"]
-        if description:
-            ctx_lines.append(f"简介：{description}")
+    def build_system_prompt(self, project_context: dict, history: list) -> str:
+        proj = project_context.get("project", {})
+        title = proj.get("title", "未命名项目")
+        genre = proj.get("genre", "未指定")
+        description = proj.get("description", "")
 
-        summary = self._summarize_history(history)
+        acts = project_context.get("acts", []) if isinstance(project_context, dict) else []
+        chars = project_context.get("characters", []) if isinstance(project_context, dict) else []
+
+        act_count = len(acts)
+        chapter_count = sum(len(a.get("chapters", [])) for a in acts)
+        scene_count = sum(sum(len(ch.get("scenes", [])) for ch in a.get("chapters", [])) for a in acts)
+        char_count = len(chars)
 
         parts = [
-            COWRITER_SYSTEM_PROMPT_TEMPLATE,
+            _COWRITER_SYSTEM_PROMPT,
             "",
-            "## 项目上下文",
+            "## 项目概况",
+            f"书名：《{title}》 | 类型：{genre}",
+            f"结构：{act_count}幕 / {chapter_count}章 / {scene_count}场景 / {char_count}角色",
         ]
-        parts.extend(ctx_lines)
-        if summary:
-            parts.append("")
-            parts.append("## 对话摘要")
-            parts.append(summary)
+        if description:
+            parts.append(f"简介：{description}")
+
+        skills = project_context.get("active_skills", [])
+        if skills:
+            parts.append(f"已启用技能：{', '.join(skills)}")
+
+        if self.tool_descriptions:
+            truncated = self._truncate_tool_descriptions(self.tool_descriptions)
+            parts.append(f"\n## 可用工具\n{truncated}")
+
+        if chars:
+            parts.append("\n## 角色一览")
+            for c in chars[:10]:
+                parts.append(f"- {c.get('name')}（{c.get('role','')}）")
+
+        if acts:
+            parts.append("\n## 章节结构")
+            for a in acts:
+                chs = a.get("chapters", [])
+                ch_list = ", ".join(f"{ch.get('sort_order',0)}. {ch.get('title','')}" for ch in chs[:5])
+                parts.append(f"【{a.get('name','')}】{ch_list}")
+                if len(chs) > 5:
+                    parts.append(f"  ...还有{len(chs)-5}章")
 
         return "\n".join(parts)
 
-    def format_response(self, raw_content: str, mode: str = "analysis") -> str:
-        """Format the LLM response with structured sections."""
-        if mode == "analysis":
-            sections = self._ensure_sections(raw_content)
-            return sections
-        return raw_content
+    @staticmethod
+    def _truncate_tool_descriptions(desc: str) -> str:
+        lines = desc.split("\n")
+        if len(lines) <= _MAX_TOOL_DESC_LINES:
+            return desc
+        return "\n".join(lines[:_MAX_TOOL_DESC_LINES]) + f"\n  ...还有{len(lines) - _MAX_TOOL_DESC_LINES}个工具未列出"
 
-    def _summarize_history(self, history: list[Message]) -> str:
-        relevant = [m for m in history if m.role in ("user", "assistant")]
-        if not relevant:
-            return ""
-        recent = relevant[-6:]
-        lines = []
-        for m in recent:
-            prefix = "用户" if m.role == "user" else "AI"
-            content = (m.content or "")[:200]
-            lines.append(f"[{prefix}] {content}")
-        return "\n".join(lines)
+    @staticmethod
+    def _strip_code_fence(text: str) -> str:
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n```\s*$", "", text)
+        return text
 
-    def _ensure_sections(self, content: str) -> str:
-        if content.strip().startswith("##"):
-            return content
-        return f"## 分析\n\n{content}"
+    def parse_response(self, raw_content: str) -> dict:
+        text = self._strip_code_fence(raw_content.strip())
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError("JSON response is not a dict")
+            return data
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("CoWriter JSON parse failed: %s", e)
+            return {
+                "analysis": text,
+                "options": [],
+                "parse_error": True,
+                "error": str(e),
+            }

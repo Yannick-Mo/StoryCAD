@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import uuid
@@ -7,34 +8,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project
 from app.storycad.models import Character, Chapter, Scene, SceneContent, ChapterEdge
 from app.agent.consistency.models import ConsistencyIssue, ConsistencyReport
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import LLMClient
 from app.llm.types import Message
 from app.utils import row_to_dict
 import logging
 
 logger = logging.getLogger(__name__)
 
-
 _SYSTEM_PROMPT = "你是一个故事一致性分析专家。请以纯JSON格式输出分析结果，不要包含markdown代码块标记或其他非JSON内容。"
 
 
 def _parse_llm_issues(content: str) -> list[ConsistencyIssue]:
-    json_match = re.search(r'(\{[^{}]*\}|\[[^\[\]]*\])', content, re.DOTALL)
-    if not json_match:
-        return []
+    json_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', content)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(1))
+            items = data if isinstance(data, list) else data.get("issues", [])
+            if isinstance(items, list):
+                return [ConsistencyIssue(**item) for item in items if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            pass
     try:
-        data = json.loads(json_match.group(0))
+        data = json.loads(content)
+        items = data if isinstance(data, list) else data.get("issues", [])
+        if isinstance(items, list):
+            return [ConsistencyIssue(**item) for item in items if isinstance(item, dict)]
     except json.JSONDecodeError:
-        return []
-    items = data if isinstance(data, list) else data.get("issues", [])
-    if not isinstance(items, list):
-        return []
-    return [ConsistencyIssue(**item) for item in items if isinstance(item, dict)]
+        pass
+    start = content.find('[')
+    end = content.rfind(']')
+    if start != -1 and end > start:
+        try:
+            data = json.loads(content[start:end + 1])
+            items = data if isinstance(data, list) else data.get("issues", [])
+            if isinstance(items, list):
+                return [ConsistencyIssue(**item) for item in items if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            pass
+    return []
 
 
 class ConsistencyChecker:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, llm_client: LLMClient | None = None):
         self.db = db
+        self._llm = llm_client or LLMClient()
+        self._loaded_characters: list[dict] | None = None
+        self._loaded_chapters: list[dict] | None = None
+        self._loaded_scenes: list[dict] | None = None
+        self._loaded_contents: dict[str, str] | None = None
 
     async def check_all(self, project_id: str) -> ConsistencyReport:
         pid = uuid.UUID(project_id)
@@ -52,10 +73,29 @@ class ConsistencyChecker:
         )
         edges = [row_to_dict(e) for e in result_edges.scalars().all()]
 
-        char_issues = await self.check_character(characters, chapters, scenes, contents)
-        timeline_issues = await self.check_timeline(chapters, scenes, edges)
-        world_issues = await self.check_world_rules(characters, scenes, global_settings)
-        all_issues = char_issues + timeline_issues + world_issues
+        char_task = self._check_char_llm(characters, chapters, scenes, contents)
+        timeline_task = self._check_timeline_llm(chapters, scenes, edges)
+        world_task = self._check_world_llm(global_settings, characters, scenes)
+        llm_results = await asyncio.gather(char_task, timeline_task, world_task, return_exceptions=True)
+
+        self._loaded_characters = characters
+        self._loaded_chapters = chapters
+        self._loaded_scenes = scenes
+        self._loaded_contents = contents
+
+        all_issues = []
+        fallbacks = [
+            (self._rule_characters, (characters, scenes, chapters)),
+            (self._rule_timeline, (chapters, scenes)),
+            (self._rule_world, (global_settings, characters, scenes)),
+        ]
+        for i, ((fallback, args), result) in enumerate(zip(fallbacks, llm_results)):
+            if isinstance(result, Exception):
+                logger.warning("LLM check %d failed, using rule fallback: %s", i, result)
+            elif isinstance(result, list) and result:
+                all_issues.extend(result)
+                continue
+            all_issues.extend(fallback(*args))
 
         errors = sum(1 for i in all_issues if i.severity == "error")
         warnings = sum(1 for i in all_issues if i.severity == "warning")
@@ -73,110 +113,88 @@ class ConsistencyChecker:
             timestamp=datetime.now(timezone.utc),
         )
 
-    async def check_character(self, project_id_or_characters=None, chapters=None, scenes=None, contents_map=None):
-        if isinstance(project_id_or_characters, str):
-            pid = uuid.UUID(project_id_or_characters)
-            characters = await self._load_characters(pid)
-            if not characters:
-                return []
-            chapters = await self._load_chapters(pid)
-            scenes = await self._load_scenes(pid)
-            contents_map = await self._load_contents(scenes)
-        else:
-            characters = project_id_or_characters
-            if not characters:
-                return []
+    async def _check_char_llm(self, characters, chapters, scenes, contents_map) -> list[ConsistencyIssue] | None:
+        if not characters:
+            return None
+        prompt = self._build_character_prompt(characters, chapters, scenes, contents_map)
+        result = await self._llm.chat(
+            messages=[
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=prompt),
+            ],
+        )
+        return _parse_llm_issues(result.content) if result.content else None
 
-        try:
-            try:
-                llm = LLMClient()
-                prompt = self._build_character_prompt(characters, chapters, scenes, contents_map)
-                result = await llm.chat(
-                    messages=[
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=prompt),
-                    ],
-                )
-                if result.content:
-                    return _parse_llm_issues(result.content)
-            except (KeyError, LLMError) as e:
-                logger.warning("LLM check failed, falling back: %s", e)
+    async def _check_timeline_llm(self, chapters, scenes, edges) -> list[ConsistencyIssue] | None:
+        if not chapters and not scenes:
+            return None
+        prompt = self._build_timeline_prompt(chapters, scenes, edges or [])
+        result = await self._llm.chat(
+            messages=[
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=prompt),
+            ],
+        )
+        return _parse_llm_issues(result.content) if result.content else None
 
-            return self._rule_characters(characters, scenes, chapters)
-        except Exception as e:
-            logger.error("Unexpected error in check: %s", e, exc_info=True)
+    async def _check_world_llm(self, global_settings, characters, scenes) -> list[ConsistencyIssue] | None:
+        prompt = self._build_world_prompt(global_settings, characters, scenes)
+        result = await self._llm.chat(
+            messages=[
+                Message(role="system", content=_SYSTEM_PROMPT),
+                Message(role="user", content=prompt),
+            ],
+        )
+        return _parse_llm_issues(result.content) if result.content else None
+
+    async def check_character(self, project_id: str) -> list[ConsistencyIssue]:
+        pid = uuid.UUID(project_id)
+        characters = await self._load_characters(pid)
+        if not characters:
             return []
-
-    async def check_timeline(self, project_id_or_chapters=None, scenes=None, edges=None):
-        if isinstance(project_id_or_chapters, str):
-            pid = uuid.UUID(project_id_or_chapters)
-            chapters = await self._load_chapters(pid)
-            scenes = await self._load_scenes(pid)
-            if not chapters and not scenes:
-                return []
-            result_edges = await self.db.execute(
-                select(ChapterEdge).where(ChapterEdge.project_id == pid)
-            )
-            edges = [row_to_dict(e) for e in result_edges.scalars().all()]
-        else:
-            chapters = project_id_or_chapters or []
-            if scenes is None:
-                scenes = []
-            if not chapters and not scenes:
-                return []
-
+        chapters = await self._load_chapters(pid)
+        scenes = await self._load_scenes(pid)
+        contents_map = await self._load_contents(scenes)
         try:
-            try:
-                llm = LLMClient()
-                prompt = self._build_timeline_prompt(chapters, scenes, edges or [])
-                result = await llm.chat(
-                    messages=[
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=prompt),
-                    ],
-                )
-                if result.content:
-                    return _parse_llm_issues(result.content)
-            except (KeyError, LLMError) as e:
-                logger.warning("LLM check failed, falling back: %s", e)
+            issues = await self._check_char_llm(characters, chapters, scenes, contents_map)
+            if issues:
+                return issues
+        except Exception:
+            pass
+        return self._rule_characters(characters, scenes, chapters)
 
-            return self._rule_timeline(chapters, scenes)
-        except Exception as e:
-            logger.error("Unexpected error in check: %s", e, exc_info=True)
+    async def check_timeline(self, project_id: str) -> list[ConsistencyIssue]:
+        pid = uuid.UUID(project_id)
+        chapters = await self._load_chapters(pid)
+        scenes = await self._load_scenes(pid)
+        if not chapters and not scenes:
             return []
-
-    async def check_world_rules(self, project_id_or_characters=None, scenes=None, global_settings=""):
-        if isinstance(project_id_or_characters, str):
-            pid = uuid.UUID(project_id_or_characters)
-            proj = await self.db.execute(
-                select(Project).where(Project.id == pid)
-            )
-            proj_obj = proj.scalar_one_or_none()
-            global_settings = proj_obj.global_settings if proj_obj else ""
-            characters = await self._load_characters(pid)
-            scenes = await self._load_scenes(pid)
-        else:
-            characters = project_id_or_characters or []
-
+        result_edges = await self.db.execute(
+            select(ChapterEdge).where(ChapterEdge.project_id == pid)
+        )
+        edges = [row_to_dict(e) for e in result_edges.scalars().all()]
         try:
-            try:
-                llm = LLMClient()
-                prompt = self._build_world_prompt(global_settings, characters, scenes)
-                result = await llm.chat(
-                    messages=[
-                        Message(role="system", content=_SYSTEM_PROMPT),
-                        Message(role="user", content=prompt),
-                    ],
-                )
-                if result.content:
-                    return _parse_llm_issues(result.content)
-            except (KeyError, LLMError) as e:
-                logger.warning("LLM check failed, falling back: %s", e)
+            issues = await self._check_timeline_llm(chapters, scenes, edges)
+            if issues:
+                return issues
+        except Exception:
+            pass
+        return self._rule_timeline(chapters, scenes)
 
-            return self._rule_world(global_settings, characters, scenes)
-        except Exception as e:
-            logger.error("Unexpected error in check: %s", e, exc_info=True)
-            return []
+    async def check_world_rules(self, project_id: str) -> list[ConsistencyIssue]:
+        pid = uuid.UUID(project_id)
+        proj = await self.db.execute(select(Project).where(Project.id == pid))
+        proj_obj = proj.scalar_one_or_none()
+        global_settings = proj_obj.global_settings if proj_obj else ""
+        characters = await self._load_characters(pid)
+        scenes = await self._load_scenes(pid)
+        try:
+            issues = await self._check_world_llm(global_settings, characters, scenes)
+            if issues:
+                return issues
+        except Exception:
+            pass
+        return self._rule_world(global_settings, characters, scenes)
 
     # ---- helpers ----
 

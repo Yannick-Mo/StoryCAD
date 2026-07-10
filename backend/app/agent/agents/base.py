@@ -1,53 +1,64 @@
-# backend/app/agent/agents/base.py
-import yaml
-from pathlib import Path
-from pydantic import BaseModel
-from app.agent.client import LLMClient
+from __future__ import annotations
+
+import json
+import logging
+
+from pydantic import BaseModel, ValidationError
+
+from app.llm.client import LLMClient
+from app.llm.types import Message
+from app.agent.prompts import render_prompt
 from app.agent.utils import parse_json
 
-
-PROMPT_DIR = Path(__file__).parent.parent / "prompts"
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
     prompt_name: str = ""
     output_schema: type[BaseModel] = BaseModel
 
-    def _load_yaml(self, name: str) -> dict:
-        path = PROMPT_DIR / f"{name}.yaml"
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-
-    def _load_persona(self) -> str:
-        data = self._load_yaml("persona")
-        return data.get("system", "")
-
-    def _system_prompt(self, context: dict, user_prompt: str) -> str:
-        data = self._load_yaml(self.prompt_name)
-        template = data.get("system", "")
-        persona = self._load_persona()
+    async def _system_prompt(self, context: dict, user_prompt: str) -> str:
+        persona_path = "persona"
+        persona_data = render_prompt(persona_path)
+        persona = persona_data if persona_data else ""
 
         skill_names = context.get("active_skills") or []
         if skill_names:
             persona = f"已启用技能：{', '.join(skill_names)}\n" + persona
 
-        try:
-            prompt = template.format(persona=persona, **context, user_prompt=user_prompt)
-        except KeyError:
-            prompt = template
+        kwargs = {"persona": persona, "user_prompt": user_prompt}
+        kwargs.update(context)
+
+        result = render_prompt(self.prompt_name, **kwargs)
+        if not result:
+            logger.error("Failed to render prompt '%s'", self.prompt_name)
+            return persona
 
         rag_context = context.get("rag_context") or ""
         if rag_context:
-            prompt += f"\n\n参考知识：\n{rag_context}"
+            result += f"\n\n参考知识：\n{rag_context}"
 
-        return prompt
+        return result
 
     async def run(self, client: LLMClient, context: dict, user_prompt: str) -> BaseModel:
-        system = self._system_prompt(context, user_prompt)
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": "请按 JSON 格式输出"},
+        system = await self._system_prompt(context, user_prompt)
+        messages: list[Message] = [
+            Message(role="system", content=system),
+            Message(role="user", content="请按 JSON 格式输出"),
         ]
-        raw = await client.chat(messages)
-        parsed = parse_json(raw)
-        return self.output_schema.model_validate(parsed)
+        result = await client.chat(messages)
+        raw = result.content or ""
+        try:
+            parsed = parse_json(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("JSON parse failed on first attempt: %s. Retrying with strict JSON instruction.", e)
+            messages.append(Message(role="assistant", content=raw))
+            messages.append(Message(role="user", content="请输出合法 JSON 格式。不要包含任何 markdown 代码块标记，只输出纯 JSON。"))
+            result = await client.chat(messages)
+            raw = result.content or ""
+            parsed = parse_json(raw)
+        try:
+            return self.output_schema.model_validate(parsed)
+        except ValidationError as e:
+            logger.error("Schema validation failed for agent output: %s", e)
+            return self.output_schema.model_validate({})

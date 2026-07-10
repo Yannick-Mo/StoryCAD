@@ -1,6 +1,6 @@
-from app.agent.client import LLMClient
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import parse_json, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.llm.types import Message
 
 
 def _raw_chars_text(raw_chars: list[dict]) -> str:
@@ -10,7 +10,7 @@ def _raw_chars_text(raw_chars: list[dict]) -> str:
 
 
 async def design_characters(state: MaterialState) -> dict:
-    client = LLMClient()
+    client = get_shared_client()
     system_raw = load_project_prompt("material_characters")
     try:
         system = system_raw.format(
@@ -22,16 +22,14 @@ async def design_characters(state: MaterialState) -> dict:
     except KeyError:
         system = system_raw
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "请设计角色"},
+    messages: list[Message] = [
+        Message(role="system", content=system),
+        Message(role="user", content="请设计角色"),
     ]
 
-    raw = await client.chat(messages, temperature=0.7, max_tokens=4096)
-    try:
-        parsed = parse_json(raw)
-    except Exception:
-        parsed = {}
+    result = await client.chat(messages, temperature=0.5, max_tokens=4096)
+    raw = result.content or ""
+    parsed = await parse_json_safe(raw, client, messages)
 
     characters = parsed.get("characters", [])
     for c in characters:

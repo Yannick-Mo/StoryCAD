@@ -39,6 +39,15 @@ class CharacterDef(TypedDict):
     motivation: str
 
 
+class EdgeDef(TypedDict):
+    source_act_idx: int
+    source_chapter_idx: int
+    target_act_idx: int
+    target_chapter_idx: int
+    type: str  # 'timeline' | 'causal' | 'foreshadow' | 'character' | 'theme'
+    label: str
+
+
 class RelationDef(TypedDict):
     char_name: str
     target_name: str
@@ -60,5 +69,6 @@ class MaterialState(TypedDict):
     scenes: Annotated[list[SceneDef], operator.add]
     characters: list[CharacterDef]
     relations: list[RelationDef]
+    edges: list[EdgeDef]
     global_settings: str
     errors: list[str]

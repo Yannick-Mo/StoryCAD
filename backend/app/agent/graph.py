@@ -1,161 +1,203 @@
-import json
+from __future__ import annotations
+
+import re
 from typing import Any
+
+from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
-from langgraph.graph import StateGraph, START, END
+
+from app.agent.context import ContextBuilder
+from app.agent.nodes import (
+    create_classify_intent_node,
+    create_execute_tool_node,
+    create_generate_node,
+    create_load_context_node,
+    create_plan_node,
+)
 from app.agent.state import AgentState
 from app.agent.tools import get_tool_registry
 from app.llm.client import LLMClient
-from app.llm.types import Message, ToolCall, ToolDef
-from app.agent.cowriter.mode import CoWriterMode
+
+INTENT_TO_NODE: dict[str, str] = {
+    "simple_q": "generate",
+    "tool_call": "execute_tool",
+    "cowriter": "execute_tool",
+    "cowriter_choice": "execute_tool",
+    "complex": "plan",
+    "plan_confirm": "execute_tool",
+}
+
+# ---- Fast-path detection for general questions ----
+# These patterns reliably indicate a general writing question or greeting
+# that does NOT require project context or tool calling.
+_FAST_PATH_PATTERNS = [
+    re.compile(r"^(如何|怎么|怎样|如何才|怎样才能|怎么才|如何可以|怎么可以)"),
+    re.compile(r"^(什么是|什么叫|什么是)"),
+    re.compile(r"^(可以|能)\S{,4}(告诉|解释|推荐|介绍|说说|问)"),
+    re.compile(r"^(请问|请教|想问|想请教|想问问|想了解)"),
+    re.compile(r"^(好的|可以|谢谢|感谢|ok|yes|明白|知道了|收到)"),
+    re.compile(r"^(你好|您好|hello|hi|hey|早上好|下午好|晚上好|在吗|在不在)"),
+    re.compile(r"^(what|how|why|when|where|who|can you|could you)"),
+]
+
+_FAST_PATH_BLOCK_KEYWORDS = [
+    "第", "章", "节", "幕",
+    "角色", "人物", "主角", "配角", "反派", "配角",
+    "场景", "故事", "小说", "项目",
+    "修改", "改", "创建", "新增", "删除", "更新",
+    "写", "读", "看", "查", "分析", "检查",
+    "write", "create", "edit", "delete", "add", "remove", "update", "rewrite",
+]
 
 
-def build_super_graph(db: AsyncSession) -> StateGraph:
-    tools = get_tool_registry(db)
+def _is_general_question(state: AgentState) -> bool:
+    """Return True iff the latest user message is a general question
+    that can skip context loading and intent classification.
 
-    async def classify_intent(state: AgentState) -> dict:
-        last_msg = state["messages"][-1] if state["messages"] else None
-        if not last_msg or last_msg.role not in ("user", "tool"):
-            return {"current_intent": "simple_q"}
+    Must be conservative: only fast-path when we are highly confident
+    the message has no project-specific intent.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return False
 
-        content = last_msg.content or ""
-        tool_names = ", ".join(tools.keys()) if tools else "无"
-        system_text = (
-            f"你是意图分类器。根据用户请求决定意图类别：\n"
-            f"可用工具：{tool_names}\n"
-            f"- simple_q：可以直接回答的简单问题\n"
-            f"- tool_call：需要使用特定工具的请求\n"
-            f"- complex：需要多步推理或子代理的复杂请求\n"
-            f"如果请求匹配某个可用工具，调用该工具。否则只输出意图类别。"
-        )
+    last = messages[-1]
+    if last.role != "user":
+        return False
 
-        msgs = [
-            Message(role="system", content=system_text),
-            Message(role="user", content=content),
-        ]
+    content = (last.content or "").strip()
 
-        tool_defs = []
-        for t_name, t_inst in tools.items():
-            d = t_inst.to_openai_tool()
-            tool_defs.append(ToolDef(type=d["type"], function=d["function"]))
+    # Only fast-path short messages (< 120 chars)
+    if len(content) > 120:
+        return False
 
-        client = LLMClient()
-        result = await client.chat(messages=msgs, tools=tool_defs or None)
+    # If any project keyword is present, do NOT fast-path
+    content_lower = content.lower()
+    for kw in _FAST_PATH_BLOCK_KEYWORDS:
+        if kw in content_lower:
+            return False
 
-        if result.tool_calls:
-            return {
-                "current_intent": "tool_call",
-                "tool_calls": result.tool_calls,
-                "intermediate_steps": state.get("intermediate_steps", [])
-                + [{"action": "classify", "intent": "tool_call"}],
-            }
+    # Must match at least one general-question pattern
+    for pat in _FAST_PATH_PATTERNS:
+        if pat.search(content_lower):
+            return True
 
-        raw = (result.content or "").strip().lower()
-        if "complex" in raw:
-            intent = "complex"
-        else:
-            intent = "simple_q"
+    return False
 
-        return {
-            "current_intent": intent,
-            "intermediate_steps": state.get("intermediate_steps", [])
-            + [{"action": "classify", "intent": intent}],
-        }
+def _get_or_create_llm(llm_client: LLMClient | None = None) -> LLMClient:
+    return llm_client or LLMClient()
 
-    async def execute_tool(state: AgentState) -> dict:
-        intent = state["current_intent"]
-        results: list[dict] = []
-        steps: list[dict] = list(state.get("intermediate_steps", []))
 
-        if intent == "tool_call":
-            tool_calls = state.get("tool_calls", [])
-            for tc in tool_calls:
-                fn_name = ""
-                args: dict[str, Any] = {}
-                if tc.function:
-                    fn_name = tc.function.get("name", "")
-                    try:
-                        args = json.loads(tc.function.get("arguments", "{}"))
-                    except (json.JSONDecodeError, TypeError):
-                        args = {}
-                inst = tools.get(fn_name)
-                if inst:
-                    try:
-                        tr = await inst.run(db=db, **args)
-                        r = {"tool": fn_name, "success": tr.success, "data": tr.data}
-                        if tr.error:
-                            r["error"] = tr.error
-                        results.append(r)
-                        steps.append({"action": fn_name, "args": args, "result": r})
-                    except Exception as e:
-                        results.append({"tool": fn_name, "success": False, "error": str(e)})
-                        steps.append({"action": fn_name, "args": args, "error": str(e)})
-
-        elif intent == "complex":
-            sub_results = await _run_sub_agents(state, db)
-            steps.append({"action": "sub_agents", "results": sub_results})
-
-        return {
-            "tool_results": results,
-            "intermediate_steps": steps,
-            "sub_agent_results": state.get("sub_agent_results", {}),
-        }
-
-    async def generate(state: AgentState) -> dict:
-        client = LLMClient()
-        msgs = list(state["messages"])
-
-        project_ctx = state.get("project_context", {})
-        title = project_ctx.get("project_title", "未命名项目")
-        sys_parts = [f"你是资深中文小说编辑与写作导师，正在协助用户创作《{title}》。"]
-
-        rag = state.get("rag_context", [])
-        if rag:
-            sys_parts.append(f"\n参考知识：\n" + "\n".join(str(r) for r in rag))
-
-        tool_results = state.get("tool_results", [])
-        if tool_results:
-            sys_parts.append("\n工具执行结果：\n" + json.dumps(tool_results, ensure_ascii=False))
-
-        if state.get("mode") == "cowriter":
-            cw = CoWriterMode()
-            sys_parts.append(cw.build_system_prompt(project_ctx, list(state["messages"])))
-
-        msgs.insert(0, Message(role="system", content="\n".join(sys_parts)))
-
-        result = await client.chat(messages=msgs)
-        assistant_msg = Message(role="assistant", content=result.content)
-        msgs.append(assistant_msg)
-
-        return {"messages": msgs}
-
-    builder = StateGraph(AgentState)
-
-    builder.add_node("classify_intent", classify_intent)
-    builder.add_node("execute_tool", execute_tool)
-    builder.add_node("generate", generate)
-
-    builder.add_edge(START, "classify_intent")
-    builder.add_conditional_edges(
-        "classify_intent",
-        _route_intent,
-        {
-            "simple_q": "generate",
-            "tool_call": "execute_tool",
-            "complex": "execute_tool",
-        },
-    )
-    builder.add_edge("execute_tool", "generate")
-    builder.add_edge("generate", END)
-
-    return builder
+def _build_tool_descriptions(all_tools: dict) -> str:
+    return "\n".join(f"- {t.name}: {t.description}" for t in all_tools.values())
 
 
 def _route_intent(state: AgentState) -> str:
     return state.get("current_intent", "simple_q")
 
 
-async def _run_sub_agents(state: AgentState, db: AsyncSession) -> dict[str, Any]:
-    project_id = state.get("project_id") or (state.get("project_context") or {}).get("project_id")
-    if not project_id:
-        return {"note": "缺少 project_id，无法运行子代理"}
-    return {"status": "deferred", "note": "复杂请求的子代理路由待实现"}
+def _route_after_plan(state: AgentState) -> str:
+    plan_confirmed: bool = state.get("plan_confirmed", False)
+    pending: list = state.get("pending_plan", [])
+    if plan_confirmed:
+        return "execute_tool"
+    if not pending:
+        return "generate"
+    return "execute_tool"
+
+
+def _route_after_tool(state: AgentState) -> str:
+    retry: int = state.get("retry_count", 0)
+    max_retry: int = state.get("max_retries", 3)
+    results: list[dict] = state.get("tool_results", [])
+    has_error: bool = any(not r.get("success", True) for r in results)
+
+    if has_error and retry < max_retry:
+        return "retry"
+
+    step_idx: int = state.get("current_step_index", 0)
+    planned: list[dict] = state.get("planned_steps", [])
+
+    # If retries exhausted but steps remain, advance past them
+    # (the _execute_planned_step handler already force-advances the
+    #  step index; if we still see remaining steps, go to generate)
+    if has_error and retry >= max_retry:
+        return "continue"
+
+    if step_idx < len(planned):
+        return "continue_plan"
+
+    return "continue"
+
+
+def _route_from_start(state: AgentState) -> str:
+    """Route the initial message: fast-path → generate, or normal flow."""
+    if _is_general_question(state):
+        return "fast_path"
+    if state.get("_context_loaded", False):
+        return "skip_load"
+    return "load"
+
+
+def build_super_graph(
+    db: AsyncSession,
+    llm_client: LLMClient | None = None,
+    redis_client: Any | None = None,
+) -> StateGraph:
+    llm = _get_or_create_llm(llm_client)
+    all_tools = get_tool_registry(db, llm_client=llm)
+    context_builder = ContextBuilder(db, redis_client=redis_client)
+
+    builder = StateGraph(AgentState)
+
+    builder.add_node("load_full_context", create_load_context_node(context_builder))
+
+    dynamic_classify = create_classify_intent_node(all_tools, llm)
+    builder.add_node("classify_intent", dynamic_classify)
+
+    dynamic_plan = create_plan_node(all_tools, llm)
+    builder.add_node("plan", dynamic_plan)
+
+    tool_descriptions = _build_tool_descriptions(all_tools)
+    dynamic_execute = create_execute_tool_node(all_tools, llm, db, tool_descriptions)
+    builder.add_node("execute_tool", dynamic_execute)
+
+    builder.add_node("generate", create_generate_node(llm))
+
+    # START → fast_path = skip everything, go straight to generate
+    builder.add_conditional_edges(
+        START,
+        _route_from_start,
+        {
+            "fast_path": "generate",
+            "load": "load_full_context",
+            "skip_load": "classify_intent",
+        },
+    )
+    builder.add_edge("load_full_context", "classify_intent")
+
+    builder.add_conditional_edges(
+        "classify_intent",
+        _route_intent,
+        INTENT_TO_NODE,
+    )
+
+    builder.add_conditional_edges(
+        "plan",
+        _route_after_plan,
+        {"execute_tool": "execute_tool", "generate": "generate"},
+    )
+
+    builder.add_conditional_edges(
+        "execute_tool",
+        _route_after_tool,
+        {
+            "continue": "generate",
+            "retry": "execute_tool",
+            "continue_plan": "execute_tool",
+        },
+    )
+
+    builder.add_edge("generate", END)
+
+    return builder

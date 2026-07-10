@@ -1,12 +1,12 @@
-from app.agent.client import LLMClient
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import parse_json, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.llm.types import Message
 
 COLORS = ["#f97316", "#8b5cf6", "#06b6d4", "#ec4899", "#10b981"]
 
 
 async def plan_structure(state: MaterialState) -> dict:
-    client = LLMClient()
+    client = get_shared_client()
     system_raw = load_project_prompt("material_structure")
     try:
         system = system_raw.format(
@@ -18,16 +18,14 @@ async def plan_structure(state: MaterialState) -> dict:
     except KeyError:
         system = system_raw
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": "请规划完整的幕-章结构"},
+    messages: list[Message] = [
+        Message(role="system", content=system),
+        Message(role="user", content="请规划完整的幕-章结构"),
     ]
 
-    raw = await client.chat(messages, temperature=0.5, max_tokens=4096)
-    try:
-        parsed = parse_json(raw)
-    except Exception:
-        parsed = {}
+    result = await client.chat(messages, temperature=0.5, max_tokens=4096)
+    raw = result.content or ""
+    parsed = await parse_json_safe(raw, client, messages)
 
     acts = parsed.get("acts", [])
     for i, act in enumerate(acts):

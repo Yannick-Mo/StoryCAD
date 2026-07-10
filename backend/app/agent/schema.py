@@ -20,11 +20,6 @@ class OutlineOutput(BaseModel):
     scenes: list[SceneOutlineItem]
 
 
-class WritingOutput(BaseModel):
-    content: str
-    note: str | None = None
-
-
 class CharacterOutput(BaseModel):
     name: str | None = None
     role: str | None = None

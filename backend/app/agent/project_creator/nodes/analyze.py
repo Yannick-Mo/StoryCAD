@@ -1,22 +1,22 @@
-from app.agent.client import LLMClient
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import parse_json, load_project_prompt
+from app.agent.utils import get_shared_client, parse_json_safe, load_project_prompt
+from app.llm.types import Message
 
 
 async def analyze_material(state: MaterialState) -> dict:
-    client = LLMClient()
+    client = get_shared_client()
     system_prompt = load_project_prompt("material_analyze")
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"素材内容：\n\n{state['material']}"},
+    material = state.get("material", "")
+
+    messages: list[Message] = [
+        Message(role="system", content=system_prompt),
+        Message(role="user", content=f"素材内容：\n\n{material}"),
     ]
 
-    raw = await client.chat(messages, temperature=0.3)
-    try:
-        parsed = parse_json(raw)
-    except Exception:
-        parsed = {}
+    result = await client.chat(messages, temperature=0.3)
+    raw = result.content or ""
+    parsed = await parse_json_safe(raw, client, messages)
 
     return {
         "genre": parsed.get("genre", ""),

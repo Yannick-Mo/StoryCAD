@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
 from app.knowledge.rag import RAGEngine
 
 
@@ -19,6 +21,8 @@ class SearchKnowledgeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
+            if kwargs.get("project_id"):
+                await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
             engine = RAGEngine(db)
             result = await engine.retrieve_context(
                 project_id=kwargs.get("project_id"),

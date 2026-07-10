@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
 from app.storycad.models import Character, CharacterRelation
 from app.storycad.repository import StoryCADRepository
 from app.utils import row_to_dict
@@ -35,6 +37,7 @@ class ListCharactersTool(BaseTool):
 class CreateCharacterTool(BaseTool):
     name = "create_character"
     description = "创建新角色"
+    is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
@@ -52,10 +55,23 @@ class CreateCharacterTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            name = kwargs["name"]
             repo = StoryCADRepository(db)
+            existing = await db.execute(
+                select(Character).where(
+                    Character.project_id == pid,
+                    Character.name == name,
+                )
+            )
+            if existing.scalar_one_or_none():
+                return ToolResult(
+                    success=False,
+                    error=f"A character named '{name}' already exists in this project",
+                )
             data = {
                 "project_id": str(pid),
-                "name": kwargs["name"],
+                "name": name,
                 "role": kwargs.get("role", "supporting"),
                 "personality": kwargs.get("personality", ""),
                 "appearance": kwargs.get("appearance", ""),
@@ -73,6 +89,7 @@ class CreateCharacterTool(BaseTool):
 class UpdateCharacterTool(BaseTool):
     name = "update_character"
     description = "更新角色信息"
+    is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
@@ -90,6 +107,11 @@ class UpdateCharacterTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             char_id = uuid.UUID(kwargs["character_id"])
+            result = await db.execute(select(Character).where(Character.id == char_id))
+            char_obj = result.scalar_one_or_none()
+            if not char_obj:
+                return ToolResult(success=False, error="Character not found")
+            await verify_project_owner(db, char_obj.project_id, kwargs.get("user_id"))
             repo = StoryCADRepository(db)
             data = {"id": str(char_id)}
             for field in ("name", "role", "personality", "appearance", "background", "motivation"):
@@ -108,6 +130,7 @@ class UpdateCharacterTool(BaseTool):
 class UpdateRelationTool(BaseTool):
     name = "update_relation"
     description = "更新角色关系"
+    is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
@@ -128,6 +151,7 @@ class UpdateRelationTool(BaseTool):
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             repo = StoryCADRepository(db)
             relation_id = kwargs.get("relation_id")
             if relation_id:
@@ -141,6 +165,11 @@ class UpdateRelationTool(BaseTool):
                 await db.commit()
                 return ToolResult(success=True, data=updated)
             else:
+                if "character_id" not in kwargs or "target_id" not in kwargs:
+                    return ToolResult(
+                        success=False,
+                        error="character_id and target_id are required when creating a new relation (no relation_id provided)",
+                    )
                 data = {
                     "project_id": str(pid),
                     "character_id": str(uuid.UUID(kwargs["character_id"])),
