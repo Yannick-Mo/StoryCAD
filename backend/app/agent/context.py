@@ -406,7 +406,7 @@ class ContextBuilder:
                 "id": str(proj.id),
                 "title": proj.title,
                 "genre": proj.genre or "",
-                "logline": proj.logline or "",
+                "logline": getattr(proj, "logline", "") or "",
                 "status": proj.status or "",
             },
             "acts": acts_data,
@@ -541,8 +541,12 @@ class ContextBuilder:
         if not _is_meaningful_query(query_hint):
             return ""
         rag_query = query_hint[:200] if query_hint else f"{genre} 创作指南 写作技巧"
-        return await self.rag_engine.retrieve_context(
-            project_id=None,
-            genre=genre,
-            query=rag_query,
-        )
+        try:
+            return await self.rag_engine.retrieve_context(
+                project_id=None,
+                genre=genre or None,
+                query=rag_query,
+            )
+        except Exception:
+            logger.warning("RAG context retrieval failed, proceeding without it")
+            return ""

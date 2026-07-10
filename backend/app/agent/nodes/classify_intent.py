@@ -33,6 +33,7 @@ _REJECT_KEYWORDS = [
     "不同意", "不确认", "不执行", "不开始",
     "reject", "deny",
     "不想执行", "不要执行",
+    "不需要", "不采纳",
 ]
 
 _REJECT_PATTERNS = [
@@ -43,6 +44,8 @@ _CONFIRM_KEYWORDS = [
     "确认", "执行", "好的", "可以", "同意", "开始",
     "yes", "ok", "confirm", "execute", "go ahead",
     "就这么办", "就这样", "行", "好", "批准", "approve",
+    "直接采用", "就按这个", "就这么做", "直接执行", "开始执行",
+    "就按你说的", "就用这个", "听你的",
 ]
 
 
@@ -113,12 +116,14 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             # (don't return early)
 
         # --- Cowriter choice detection ---
-        is_cowriter_choice = cowriter_active and any(
-            kw in content for kw in [
-                "选a", "选b", "选c", "选1", "选2", "选3",
-                "option a", "option b", "option c",
-                "方案a", "方案b", "方案c", "我选",
-            ]
+        is_cowriter_choice = cowriter_active and (
+            "[option:" in content or any(
+                kw in content for kw in [
+                    "选a", "选b", "选c", "选1", "选2", "选3",
+                    "option a", "option b", "option c",
+                    "方案a", "方案b", "方案c", "我选",
+                ]
+            )
         )
         # "选择" alone is too broad — require additional context
         if cowriter_active and not is_cowriter_choice and "选择" in content:
@@ -127,8 +132,21 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                     "我选择", "选择方案", "选择第", "选择a", "选择b", "选择c",
                 ]
             )
+        # Natural language adoption (e.g. "直接采用", "就用这个")
+        current_options = state.get("current_options", [])
+        if cowriter_active and not is_cowriter_choice and current_options:
+            adoption_kw = ["直接采用", "就用这个", "就按这个", "采用", "就这个", "直接写"]
+            is_cowriter_choice = any(kw in content for kw in adoption_kw)
         if is_cowriter_choice and cowriter_active:
             return {"current_intent": "cowriter_choice"}
+
+        # --- Direct write: user says "帮我写" without prior options ---
+        if cowriter_active and not current_options:
+            direct_write_kw = ["帮我写", "帮我创作", "帮我生成", "直接写一段",
+                               "write a", "write for me", "write me"]
+            if any(kw in content for kw in direct_write_kw):
+                logger.debug("Direct write detected in cowriter mode, routing to simple_q")
+                return {"current_intent": "simple_q"}
 
         # --- LLM classification (no tool definitions passed) ---
         tool_descriptions = get_tool_descriptions(tools)
@@ -138,6 +156,16 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             project_ctx = state.get("project_context", {})
             rag_text = project_ctx.get("rag_context", "")
 
+            # Last AI response for conversational context
+            last_ai_response = ""
+            if state.get("messages"):
+                for msg in reversed(state["messages"]):
+                    if msg.role == "assistant":
+                        last_ai_response = (msg.content or "")[:500]
+                        break
+
+            current_options = state.get("current_options", [])
+
             system_text = render_prompt("classify_intent", **{
                 "has_pending_plan": has_pending_plan,
                 "retry_count": state.get("retry_count", 0),
@@ -145,6 +173,8 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 "last_errors": "; ".join(last_errors) if last_errors else "none",
                 "mode": current_mode,
                 "rag_context": rag_text[:1000],
+                "last_ai_response": last_ai_response,
+                "current_options": current_options,
             })
             if not system_text:
                 system_text = (

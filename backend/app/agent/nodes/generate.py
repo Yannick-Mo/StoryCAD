@@ -10,7 +10,6 @@ from pathlib import Path
 import aiofiles
 import yaml
 
-from app.agent.cowriter.mode import CoWriterMode
 from app.agent.guard import check_output_safety
 from app.agent.state import AgentState
 from app.config import settings
@@ -34,11 +33,62 @@ _PERSONA_CACHE: str | None = None
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 
 # ── Static prompt sections (preserved verbatim from generate.yaml) ──
-_OUTPUT_GUIDE = """# ——— 输出指南 ———
+_OUTPUT_GUIDE = """# ——— 输出格式规范（必须严格遵守，否则显示异常） ———
+## 通用
 - 使用中文回复（除非用户用其他语言写作）
-- 使用 markdown 结构化排版（列表、标题、加粗强调），保持可读性
 - 每段不超过3句话，便于阅读
-- 简洁直接，避免空话套话"""
+- 简洁直接，避免空话套话
+
+## Markdown 语法规则（以下每条都会影响显示效果）
+### 规则 1：所有标记符号后必须加空格
+`##` → `## 标题` ✅     `##标题` ❌（会显示为普通文字）
+`-` → `- 列表项` ✅     `-列表项` ❌
+`>` → `> 引用` ✅       `>引用` ❌
+`1.` → `1. 条目` ✅     `1.条目` ❌
+
+### 规则 2：标题前后必须有空白行
+```
+上一段结束
+
+## 这是标题
+
+这是标题后的段落
+```
+如果没有空行，标题会和相邻文字混在一起，无法正常渲染。
+
+### 规则 3：列表前后必须有空白行
+```
+前提段落
+
+- 项目一
+- 项目二
+
+后续段落
+```
+
+### 规则 4：段落之间用空行分隔
+错误写法（堆在一起）：
+```
+第一段文字。第二段文字。第三段文字。
+```
+正确写法（空行分隔）：
+```
+第一段文字。
+
+第二段文字。
+
+第三段文字。
+```
+
+### 规则 5：推荐使用的格式
+- `##` / `###` — 分隔主题段落，每段聚焦一个要点
+- `**加粗**` — 标出关键词或结论
+- `- 无序` / `1. 有序` — 归纳多个条目
+- `> 块引用` — 引用原文或示例
+- `| 表格 |` — 展示对比信息"""
+
+_MODE_DECLARATION_CHAT = "# ——— 当前模式：对话模式（只读，不可写入）———"
+_MODE_DECLARATION_COWRITER = "# ——— 当前模式：协作模式（可读写，提供创作建议）———"
 
 _CHAT_MODE_RESTRICTIONS = """# ——— 对话模式限制 ———
 - 当前为对话模式，只能读取和分析，不能执行任何写操作
@@ -66,15 +116,26 @@ _EXAMPLE = """# ——— 回复结构示例 ———
 好的，我已经查看了第三章当前的反派描写。以下是分析：
 
 ## 现有问题
-反派"陈默"目前的动机较为单薄——他阻挠主角的原因只是"嫉妒"，缺少深层背景支撑。
+反派"陈默"目前的动机较为单薄——他阻挠主角的原因只是**嫉妒**，缺少深层背景支撑。
 
 ## 建议
 1. **增加前史**：可以给陈默加一段与主角在大学时期的竞争关系，让现在的冲突有历史渊源
 2. **明确目标**：陈默真正想要的是什么？不仅仅是阻止主角，而是——挽回某个过去的错误？
 
+| 维度 | 当前状态 | 建议方向 |
+|------|----------|----------|
+| 动机 | 单薄（嫉妒） | 增加前史事件 |
+| 行为 | 可预测 | 增加矛盾选择 |
+| 成长 | 无弧线 | 设计转折点 |
+
 ## 改动示例
 > 原文："陈默不想让主角成功，因为他嫉妒。"
 > 建议改为："陈默看着主角的方案，手指微微发抖。三年前，正是类似的项目让他失去了教授的信任。"
+
+## 优先级
+- **高**：先完善陈默的前史设定
+- **中**：调整第三章对峙戏的情绪层次
+- **低**：后续章节增加陈默的"人性时刻"
 
 您觉得这些方向如何？需要我进一步展开某个建议吗？"""
 
@@ -104,6 +165,46 @@ _EVALUATION_SYSTEM_PROMPT = """你是一个严格的内容评审员。请评估�
 
 输出 ONLY JSON（不要其他文本）：
 {{"should_improve": true/false, "reason": "改进理由"}}"""
+
+
+# Detect JSON at start (possibly wrapped in code fence)
+_COWRITER_FENCE_RE = re.compile(r'^\s*(?:```\w*\n?)?\s*\{')
+# Also detect JSON with analysis key anywhere in the string
+_COWRITER_HAS_ANALYSIS_RE = re.compile(r'"analysis"\s*:')
+
+def _extract_cowriter_json(text: str) -> tuple[str, list[dict]]:
+    """If the LLM output is a cowriter-style JSON blob, extract the analysis
+    text and options. Returns (cleaned_text, options_list)."""
+    stripped = text.strip()
+    # Quick check: does it contain "analysis" key?
+    if not _COWRITER_HAS_ANALYSIS_RE.search(stripped):
+        return text, []
+    # Quick check: does it look like JSON (starts with {)?
+    if not _COWRITER_FENCE_RE.match(stripped):
+        return text, []
+
+    # Strip code fences
+    if stripped.startswith("```"):
+        stripped = re.sub(r'^```\w*\n?', '', stripped)
+        stripped = re.sub(r'\n```\s*$', '', stripped)
+
+    if not stripped.startswith("{"):
+        return text, []
+
+    try:
+        data = json.loads(stripped)
+        if isinstance(data, dict):
+            # Try "analysis" first, fallback to "response" or "text"
+            for key in ("analysis", "response", "text"):
+                content = data.get(key)
+                if isinstance(content, str) and content.strip():
+                    options = data.get("options", [])
+                    if not isinstance(options, list):
+                        options = []
+                    return content, options
+        return text, []
+    except (json.JSONDecodeError, ValueError):
+        return text, []
 
 
 def _format_tool_data(raw_data: object, max_len: int = 500) -> str:
@@ -208,7 +309,12 @@ async def _build_fast_path_prompt(state: AgentState) -> str:
 # ——— 输出指南 ———
 - 使用中文回复
 - 简洁直接，每段不超过3句话
-- 使用 markdown 结构化排版（列表、加粗），保持可读性
+- 用空行分隔段落/标题/列表，不要堆在一起
+- 使用 markdown 排版，注意：
+  · `##` 或 `###` 后必须加空格，前后要空行 → `## 标题`
+  · `**加粗**` 标记关键词
+  · `-` 列表或 `1.` 列表后必须加空格，前后要空行
+  · `> 引用` 后必须加空格，前后要空行
 - 如果是写作问题，提供具体可执行的建议，附简短示例
 - 如果是闲聊/问候，简短友好回应即可
 
@@ -249,17 +355,14 @@ async def _build_system_prompt(state: AgentState) -> str:
     success_count = sum(1 for r in tool_results if r.get("success"))
     total_count = len(tool_results)
 
-    cowriter_prompt = ""
-    if cowriter_active:
-        cw = CoWriterMode()
-        cowriter_prompt = cw.build_system_prompt(project_ctx, list(state["messages"]))
-
     persona = await _load_persona()
 
     sections: list[_ContextSection] = []
 
-    # Tier 0 — critical: persona, project identity
+    # Tier 0 — critical: persona, mode, project identity
     sections.append(_ContextSection(tier=0, label="persona", text=persona))
+    mode_declaration = _MODE_DECLARATION_COWRITER if cowriter_active else _MODE_DECLARATION_CHAT
+    sections.append(_ContextSection(tier=0, label="mode", text=mode_declaration))
     project_title = f"你正在协助用户创作小说《{title}》。"
     if genre:
         project_title += f"\n类型：{genre}"
@@ -323,9 +426,6 @@ async def _build_system_prompt(state: AgentState) -> str:
             opt_lines.append(f"  缺点：{cons}")
         opt_lines.append("引导用户做出选择。")
         sections.append(_ContextSection(tier=1, label="current_options", text="\n".join(opt_lines)))
-
-    if cowriter_active and cowriter_prompt:
-        sections.append(_ContextSection(tier=1, label="cowriter_prompt", text=cowriter_prompt))
 
     if retry_count > 0:
         sections.append(_ContextSection(tier=1, label="retry_note", text="注意：上次工具执行出错，请调整后重试。"))
@@ -497,8 +597,13 @@ def create_generate_node(llm_client: LLMClient):
         # ── Cowriter fast path: use analysis text directly, skip LLM call ──
         if not full_content and state.get("mode") == "cowriter":
             for tr in tool_results:
-                if tr.get("tool") == "cowriter_analysis" and tr.get("data"):
-                    full_content = tr["data"]
+                if tr.get("tool") == "cowriter_analysis" and tr.get("success"):
+                    full_content = tr.get("data", "") or ""
+                    # Defensive: if data looks like raw JSON, extract the actual text
+                    if full_content.startswith("{"):
+                        cleaned, _ = _extract_cowriter_json(full_content)
+                        if cleaned != full_content:
+                            full_content = cleaned
                     chunks = re.split(r'(?<=[。！？.!?\n])', full_content)
                     for chunk in chunks:
                         trimmed = chunk.strip()
@@ -510,13 +615,13 @@ def create_generate_node(llm_client: LLMClient):
         if not full_content:
             sys_content = await _build_system_prompt(state)
             msgs_with_sys = [Message(role="system", content=sys_content)] + msgs
+            raw_tokens: list[str] = []
             try:
                 async for token in llm_client.chat_stream_tokens(
                     messages=msgs_with_sys,
                     request_id=state.get("trace_id", ""),
                 ):
-                    full_content += token
-                    yield {"_stream_token": token}
+                    raw_tokens.append(token)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -532,6 +637,23 @@ def create_generate_node(llm_client: LLMClient):
                     "_stream_done": True,
                 }
                 return
+
+            full_content = "".join(raw_tokens)
+
+            # Intercept cowriter-style JSON → extract analysis text + options
+            cleaned, extracted_options = _extract_cowriter_json(full_content)
+            if cleaned != full_content:  # JSON was detected and extracted
+                full_content = cleaned
+                if extracted_options:
+                    yield {"current_options": extracted_options, "_stream_done": False}
+                chunks = re.split(r'(?<=[。！？.!?\n])', full_content)
+                for chunk in chunks:
+                    trimmed = chunk.strip()
+                    if trimmed:
+                        yield {"_stream_token": trimmed}
+            else:
+                for token in raw_tokens:
+                    yield {"_stream_token": token}
 
         #
         # ── Finalize: safety check, persist, yield done ──

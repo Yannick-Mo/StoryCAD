@@ -2,9 +2,20 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useResizePanel } from '../../../hooks/useResizePanel'
 import { sendMessage, getConversations } from '../../../api/ai_v2'
 import type { Conversation } from '../../../api/ai_v2'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type { Components } from 'react-markdown'
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 11)
+}
+
+function normalizeMarkdown(text: string): string {
+  return text
+    .replace(/(?<=\n|^)#{1,6}(?!\s|#)/g, m => m + ' ')
+    .replace(/(?<=\n|^)[-*+](?!\s|\[)/g, m => m + ' ')
+    .replace(/(?<=\n|^)>+(?!\s)/g, m => m + ' ')
+    .replace(/(?<=\n|^)\d+\.(?!\s)/g, m => m + ' ')
 }
 
 const UI_TEXT = {
@@ -181,6 +192,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
 
   const clear = useCallback(() => {
     setConversationId(null)
+    convIdRef.current = null
     setMessages([])
     setError(null)
     setStep(null)
@@ -205,17 +217,64 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   }
 }
 
+const markdownComponents: Components = {
+  h1: ({ children }) => <h1 className="text-base font-bold text-amber-100 mt-3 mb-1.5">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-sm font-bold text-amber-100/90 mt-2.5 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-semibold text-gray-100 mt-2 mb-0.5">{children}</h3>,
+  p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc list-outside ml-4 mb-1.5 space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal list-outside ml-4 mb-1.5 space-y-0.5">{children}</ol>,
+  li: ({ children }) => <li className="text-gray-200 pl-1">{children}</li>,
+  strong: ({ children }) => <strong className="font-bold text-amber-200/90">{children}</strong>,
+  em: ({ children }) => <em className="italic text-gray-300">{children}</em>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-amber-600/50 pl-3 my-1.5 text-gray-400 italic">{children}</blockquote>
+  ),
+  pre: ({ children }) => (
+    <pre className="bg-gray-950/80 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono border border-gray-700/50">{children}</pre>
+  ),
+  code: ({ className, children, ...props }) => {
+    const isBlock = className?.startsWith('language-')
+    return isBlock ? (
+      <code className={`${className || ''} text-amber-300/90 block`} {...props}>{children}</code>
+    ) : (
+      <code className="bg-gray-950/60 rounded px-1 py-0.5 text-xs font-mono text-amber-300/80" {...props}>{children}</code>
+    )
+  },
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 underline underline-offset-2">{children}</a>
+  ),
+  table: ({ children }) => (
+    <div className="overflow-x-auto my-2">
+      <table className="min-w-full text-xs border-collapse border border-gray-700">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-gray-700 bg-gray-900/50 px-2 py-1 text-amber-200 font-medium text-left">{children}</th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-gray-700 px-2 py-1 text-gray-300">{children}</td>
+  ),
+  hr: () => <hr className="border-gray-700 my-2" />,
+}
+
 function MessageBubble({ msg }: { msg: DisplayMessage }) {
+  const isUser = msg.role === 'user'
+  const displayContent = isUser ? msg.content.replace(/^\[option:\w+\]\s*/, '') : msg.content
   return (
-    <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} select-text`}>
       <div
-        className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
-          msg.role === 'user'
-            ? 'bg-amber-600 text-black rounded-br-sm'
+        className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
+          isUser
+            ? 'bg-amber-600 text-black whitespace-pre-wrap rounded-br-sm'
             : 'bg-gray-800 text-gray-200 rounded-bl-sm'
         }`}
       >
-        {msg.content}
+        {isUser ? displayContent : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {normalizeMarkdown(displayContent)}
+          </ReactMarkdown>
+        )}
       </div>
     </div>
   )
@@ -351,13 +410,7 @@ export default function AiChatPanel({
 
   const handleOptionSelect = useCallback((option: OptionItem) => {
     setInput('')
-    const msg = `[option:${option.id}] ${option.label}`
-    chat.setMessages(prev => [...prev, {
-      id: generateId(),
-      role: 'user',
-      content: msg,
-    }])
-    chat.send(msg, onProjectUpdated)
+    chat.send(`[option:${option.id}] ${option.label}`, onProjectUpdated)
   }, [chat, onProjectUpdated])
 
   const handlePlanConfirm = useCallback(() => {

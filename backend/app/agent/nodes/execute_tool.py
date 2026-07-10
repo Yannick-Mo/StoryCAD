@@ -371,6 +371,20 @@ async def _execute_cowriter(
         options = parsed.get("options", [])
         analysis = parsed.get("analysis", "")
 
+        # Defensive: if analysis looks like raw JSON (parse_response fell back),
+        # try to extract the actual text from it
+        if analysis.startswith("{"):
+            try:
+                raw = json.loads(analysis)
+                if isinstance(raw, dict):
+                    for key in ("analysis", "response", "text", "content"):
+                        val = raw.get(key)
+                        if isinstance(val, str) and val.strip():
+                            analysis = val
+                            break
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         return {
             "current_options": options,
             "tool_results": [
@@ -453,18 +467,20 @@ async def _execute_cowriter_choice(
         tool_name = action.get("tool", "")
         params = action.get("params", {})
 
-        # Defer write operations to plan confirmation flow
+        # Auto-confirm: user asked to write directly, skip plan confirmation
+        _AUTO_CONFIRM_KW = [
+            "直接写入", "直接写", "直接采用并", "立即执行",
+            "按上述写入", "按你说的写入", "按建议写入",
+            "就按上述", "就按你说的", "立刻写入",
+            "write it", "just write", "write directly",
+        ]
+        auto_confirm = any(kw in user_content.lower() for kw in _AUTO_CONFIRM_KW)
+
         tool_inst = tools.get(tool_name)
-        if tool_inst and tool_inst.is_write_operation:
-            step = {
-                "tool": tool_name,
-                "params": params,
-            }
+        if tool_inst and tool_inst.is_write_operation and not auto_confirm:
+            step = {"tool": tool_name, "params": params}
             return {
-                "pending_plan": {
-                    "steps": [step],
-                    "reasoning": selected.get("description", "协写操作"),
-                },
+                "pending_plan": {"steps": [step], "reasoning": selected.get("description", "协写操作")},
                 "current_intent": "plan_confirm",
                 "current_options": [],
             }
@@ -500,6 +516,7 @@ async def _execute_cowriter_choice(
         "retry_count": state.get("retry_count", 0)
         + (1 if has_error else 0),
         "errors": errors,
+        "current_options": [],
     }
 
 
@@ -539,6 +556,15 @@ def create_execute_tool_node(
 
         pending_plan = state.get("pending_plan", [])
         plan_confirmed = state.get("plan_confirmed", False)
+
+        # Auto-confirm pending plan from a previous round (persisted via conversation memory)
+        if pending_plan and not plan_confirmed:
+            plan_confirmed = True
+            # Bridge: cowriter choices store steps inside pending_plan dict
+            if isinstance(pending_plan, dict):
+                cowriter_steps = pending_plan.get("steps", [])
+                if cowriter_steps and not state.get("planned_steps"):
+                    state["planned_steps"] = cowriter_steps
 
         if pending_plan and plan_confirmed:
             return await _execute_planned_step(state, tools, db)

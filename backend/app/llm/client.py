@@ -5,6 +5,7 @@ import json
 import os
 import re
 from typing import Any, AsyncGenerator, Literal
+from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -99,11 +100,17 @@ class LLMClient:
         self.api_key = api_key or settings.llm_api_key
         self.base_url = base_url or settings.llm_base_url
         self.fallback_models = fallback_models or _resolve_fallback_models()
-        proxy_url = getattr(settings, "llm_proxy", None) or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+        proxy_url = self._resolve_proxy()
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             proxy=proxy_url if proxy_url else None,
+            trust_env=proxy_url is not None,
         )
+
+    @staticmethod
+    def _resolve_proxy() -> str | None:
+        """Resolve proxy URL for LLM calls. Only uses llm_proxy setting, not system env vars."""
+        return getattr(settings, "llm_proxy", None) or None
 
     async def close(self) -> None:
         await self._client.aclose()

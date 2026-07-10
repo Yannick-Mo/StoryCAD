@@ -13,6 +13,17 @@ system: |
   参考知识：
   {{rag_context}}
   {% endif %}
+  {% if last_ai_response %}
+  上一条 AI 回复（用于理解对话上下文）：
+  {{ last_ai_response }}
+  {% endif %}
+  {% if current_options %}
+  当前提供给用户的选项列表（对应 intent 为 cowriter_choice 的候选）：
+  {% for opt in current_options %}
+  - {{ opt.label or '未命名' }}：{{ opt.description or '' }}
+  {% endfor %}
+  如果用户正在选择其中一个选项（包括自然语言表达如"直接采用"、"就用这个"、"第一个"），应判为 cowriter_choice。
+  {% endif %}
 
   # ——— 分类指南 ———
   判断核心区分：
@@ -71,6 +82,14 @@ system: |
   示例6：
   用户："把第三章场景2的天气改成下雨"
   意图：{"intent": "tool_call", "reason": "明确要求修改已有内容，需要调用更新工具"}
+
+  示例7：（cowriter 模式，有 current_options）
+  用户："直接采用"
+  意图：{"intent": "cowriter_choice", "reason": "用户选择了之前给出的选项"}
+  
+  示例8：（有 pending_plan 待确认）
+  用户："就按这个执行"
+  意图：{"intent": "plan_confirm", "reason": "用户确认执行待定计划"}
 
   # ——— 输出要求 ———
   输出 ONLY 合法 JSON，不附带任何其他文本、markdown 代码块或注释：

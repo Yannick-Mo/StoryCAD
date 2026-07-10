@@ -18,7 +18,7 @@ _COWRITER_SYSTEM_PROMPT = """你是小说的合著者，而不是代笔人。你
 
 ## 输出格式
 你必须输出 JSON 格式，包含以下字段：
-- analysis: 你的分析文本（角色动机、故事逻辑、情感弧光）
+- analysis: 你的分析文本（使用 markdown 排版：标题、列表、加粗强调），注意 markdown 符号后必须加空格（如 `## 标题`）让分析更清晰易读
 - options: 选项数组，每个选项包含：
   - id: 唯一标识（option_a, option_b, ...）
   - label: 简短标题

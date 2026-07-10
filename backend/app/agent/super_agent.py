@@ -32,7 +32,10 @@ class SuperAgent:
         self._llm_client = llm_client
         self.graph = build_super_graph(db, llm_client=self._llm_client, redis_client=redis_client)
         self.checkpointer = SizeBoundedCheckpointer(thread_ttl=3600)
-        self.app = self.graph.compile(checkpointer=self.checkpointer)
+        self.app = self.graph.compile(
+            checkpointer=self.checkpointer,
+            recursion_limit=100,
+        )
         self.conv_memory = ConversationMemory(redis_client)
         self._history_manager: HistoryManager | None = None
         self.input_guard = InputGuard(rate_limiter=RateLimiter())
@@ -158,6 +161,8 @@ class SuperAgent:
         if context_id:
             project_context["current_view_id"] = context_id
 
+        saved_pending_plan, saved_options = await self.conv_memory.load_agent_state(conversation_id)
+
         initial_state: AgentState = {
             "project_id": project_id,
             "user_id": user_id,
@@ -173,11 +178,11 @@ class SuperAgent:
             "intermediate_steps": [],
             "retry_count": 0,
             "max_retries": 3,
-            "current_options": [],
+            "current_options": saved_options,
             "planned_steps": [],
             "current_step_index": 0,
             "errors": [],
-            "pending_plan": [],
+            "pending_plan": saved_pending_plan,
             "plan_confirmed": False,
             "retry_context": None,
             "search_results": [],
@@ -197,6 +202,7 @@ class SuperAgent:
         # Phase 1: Buffer tokens during graph execution
         token_buffer: list[str] = []
         final_values: dict | None = None
+        cached_options: list = []  # persisted across node boundaries
 
         try:
             async with asyncio.timeout(_CHAT_STREAM_TIMEOUT):
@@ -223,6 +229,13 @@ class SuperAgent:
                             if token:
                                 token_buffer.append(token)
                                 continue
+                            opts = chunk.get("current_options")
+                            if opts is not None:
+                                cached_options = opts
+                                if final_values is None:
+                                    final_values = {}
+                                final_values["current_options"] = opts
+                                continue
                             if chunk.get("_stream_done"):
                                 _done_sent = True
                     elif event["event"] == "on_chain_end":
@@ -231,6 +244,9 @@ class SuperAgent:
                             # Capture any meaningful final state, not just when project_context present
                             if "project_context" in output or "messages" in output:
                                 final_values = output
+                                # Restore current_options if the output overwrote them
+                                if "current_options" not in output and cached_options:
+                                    final_values["current_options"] = cached_options
         except asyncio.TimeoutError:
             log.warning("timeout | conv_id={}", conversation_id)
             await self.conv_memory.delete_last_message(conversation_id)
@@ -254,6 +270,11 @@ class SuperAgent:
         if final_values:
             async for evt in self._emit_tool_events(final_values):
                 yield evt
+            await self.conv_memory.save_agent_state(
+                conversation_id,
+                final_values.get("pending_plan", []),
+                final_values.get("current_options", []),
+            )
 
         # Phase 4: Flush buffered response tokens
         if token_buffer:
@@ -263,7 +284,8 @@ class SuperAgent:
         elif final_values:
             messages = final_values.get("messages", [])
             if messages:
-                content = messages[-1].get("content", "")
+                last = messages[-1]
+                content = last.content if hasattr(last, "content") else last.get("content", "")
                 if content:
                     assistant_content = content
                     yield {"type": "token", "data": content}

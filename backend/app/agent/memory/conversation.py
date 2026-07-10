@@ -169,6 +169,31 @@ class ConversationMemory:
             return meta
         return None
 
+    async def save_agent_state(self, conversation_id: str, pending_plan: dict | list, current_options: list[dict]) -> None:
+        data = json.dumps({"pending_plan": pending_plan, "current_options": current_options}, ensure_ascii=False)
+        if self._redis:
+            await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "agent_state", data)
+        else:
+            async with self._lock:
+                if conversation_id in self._meta:
+                    self._meta[conversation_id]["agent_state"] = data
+
+    async def load_agent_state(self, conversation_id: str) -> tuple:
+        raw = None
+        if self._redis:
+            raw = await self._redis.hget(f"{_CONV_PREFIX}{conversation_id}", "agent_state")
+        else:
+            async with self._lock:
+                meta = self._meta.get(conversation_id, {})
+                raw = meta.get("agent_state")
+        if raw:
+            try:
+                state = json.loads(raw)
+                return state.get("pending_plan", []), state.get("current_options", [])
+            except (json.JSONDecodeError, TypeError):
+                return [], []
+        return [], []
+
     async def delete_last_message(self, conversation_id: str) -> None:
         if self._redis:
             await self._redis.rpop(f"{_CONV_MSGS_PREFIX}{conversation_id}")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -25,64 +24,8 @@ INTENT_TO_NODE: dict[str, str] = {
     "cowriter_choice": "execute_tool",
     "complex": "plan",
     "plan_confirm": "execute_tool",
+    "execute_tool": "execute_tool",
 }
-
-# ---- Fast-path detection for general questions ----
-# These patterns reliably indicate a general writing question or greeting
-# that does NOT require project context or tool calling.
-_FAST_PATH_PATTERNS = [
-    re.compile(r"^(如何|怎么|怎样|如何才|怎样才能|怎么才|如何可以|怎么可以)"),
-    re.compile(r"^(什么是|什么叫|什么是)"),
-    re.compile(r"^(可以|能)\S{,4}(告诉|解释|推荐|介绍|说说|问)"),
-    re.compile(r"^(请问|请教|想问|想请教|想问问|想了解)"),
-    re.compile(r"^(好的|可以|谢谢|感谢|ok|yes|明白|知道了|收到)"),
-    re.compile(r"^(你好|您好|hello|hi|hey|早上好|下午好|晚上好|在吗|在不在)"),
-    re.compile(r"^(what|how|why|when|where|who|can you|could you)"),
-]
-
-_FAST_PATH_BLOCK_KEYWORDS = [
-    "第", "章", "节", "幕",
-    "角色", "人物", "主角", "配角", "反派",
-    "场景", "小说", "项目",
-    "修改", "创建", "新增", "删除", "更新",
-    "分析", "检查",
-    "create", "edit", "delete", "add", "remove", "update", "rewrite",
-]
-
-
-def _is_general_question(state: AgentState) -> bool:
-    """Return True iff the latest user message is a general question
-    that can skip context loading and intent classification.
-
-    Must be conservative: only fast-path when we are highly confident
-    the message has no project-specific intent.
-    """
-    messages = state.get("messages", [])
-    if not messages:
-        return False
-
-    last = messages[-1]
-    if last.role != "user":
-        return False
-
-    content = (last.content or "").strip()
-
-    # Only fast-path short messages (< 120 chars)
-    if len(content) > 120:
-        return False
-
-    # If any project keyword is present, do NOT fast-path
-    content_lower = content.lower()
-    for kw in _FAST_PATH_BLOCK_KEYWORDS:
-        if kw in content_lower:
-            return False
-
-    # Must match at least one general-question pattern
-    for pat in _FAST_PATH_PATTERNS:
-        if pat.search(content_lower):
-            return True
-
-    return False
 
 def _get_or_create_llm(llm_client: LLMClient | None = None) -> LLMClient:
     return llm_client or LLMClient()
@@ -93,6 +36,9 @@ def _build_tool_descriptions(all_tools: dict) -> str:
 
 
 def _route_intent(state: AgentState) -> str:
+    pending = state.get("pending_plan", [])
+    if pending:
+        return "execute_tool"
     return state.get("current_intent", "simple_q")
 
 
@@ -118,25 +64,16 @@ def _route_after_tool(state: AgentState) -> str:
     step_idx: int = state.get("current_step_index", 0)
     planned: list[dict] = state.get("planned_steps", [])
 
-    # If retries exhausted but steps remain, advance past them
-    # (the _execute_planned_step handler already force-advances the
-    #  step index; if we still see remaining steps, go to generate)
     if has_error and retry >= max_retry:
         return "continue"
 
     if step_idx < len(planned):
         return "continue_plan"
 
+    if retry >= max_retry:
+        return "continue"
+
     return "continue"
-
-
-def _route_from_start(state: AgentState) -> str:
-    """Route the initial message: fast-path → generate, or normal flow."""
-    if _is_general_question(state):
-        return "fast_path"
-    if state.get("_context_loaded", False):
-        return "skip_load"
-    return "load"
 
 
 def build_super_graph(
@@ -164,16 +101,7 @@ def build_super_graph(
 
     builder.add_node("generate", create_generate_node(llm))
 
-    # START → fast_path = skip everything, go straight to generate
-    builder.add_conditional_edges(
-        START,
-        _route_from_start,
-        {
-            "fast_path": "generate",
-            "load": "load_full_context",
-            "skip_load": "classify_intent",
-        },
-    )
+    builder.add_edge(START, "load_full_context")
     builder.add_edge("load_full_context", "classify_intent")
 
     builder.add_conditional_edges(

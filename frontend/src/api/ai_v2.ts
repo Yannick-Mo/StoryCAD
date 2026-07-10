@@ -144,7 +144,7 @@ export function sendMessage(options: SendMessageOptions): AbortController {
       const decoder = new TextDecoder()
       let buffer = ''
       let currentEvent = ''
-      let currentData = ''
+      let currentData: string | null = null
       let lastData = Date.now()
 
       const heartbeat = setInterval(() => {
@@ -167,22 +167,22 @@ export function sendMessage(options: SendMessageOptions): AbortController {
 
           for (const line of lines) {
             if (line === '') {
-              if (currentEvent && currentData) {
+              if (currentEvent && currentData !== null) {
                 const handler = eventHandlers[currentEvent]
                 if (handler) handler(currentData)
               }
               currentEvent = ''
-              currentData = ''
+              currentData = null
             } else if (line.startsWith('event: ')) {
               currentEvent = line.slice(7).trim()
             } else if (line.startsWith('data: ')) {
               const dataLine = line.slice(6)
-              currentData = currentData ? currentData + '\n' + dataLine : dataLine.trim()
+              currentData = currentData !== null ? currentData + '\n' + dataLine : dataLine
             }
           }
         }
 
-        if (currentEvent && currentData) {
+        if (currentEvent && currentData !== null) {
           const handler = eventHandlers[currentEvent]
           if (handler) handler(currentData)
         }

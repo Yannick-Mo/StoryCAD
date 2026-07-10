@@ -15,6 +15,10 @@ class VectorStore:
         project_id: uuid.UUID | None = None,
         limit: int = 5,
     ) -> list[dict]:
+        if not genre:
+            genre = None
+        if not project_id:
+            project_id = None
         sql = text("""
             SELECT id, content, source_type, genre, tags,
                    ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', :query)) as rank
@@ -54,6 +58,10 @@ class VectorStore:
         project_id: uuid.UUID | None = None,
         limit: int = 5,
     ) -> list[dict]:
+        if not genre:
+            genre = None
+        if not project_id:
+            project_id = None
         emb_str = str(query_embedding)
         sql = text("""
             SELECT id, content, source_type, genre, tags,

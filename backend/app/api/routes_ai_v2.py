@@ -20,6 +20,20 @@ router = APIRouter(prefix="/api/v2", tags=["AI v2"])
 SSE_PING_INTERVAL = 15
 
 
+def _format_sse(event: str, data: str) -> str:
+    """Format an SSE event, properly encoding newlines in data.
+
+    SSE requires multi-line data to be split across multiple 'data:' lines.
+    Single-line encoding breaks when data contains \\n characters.
+    """
+    lines = data.split('\n')
+    out = f"event: {event}\n"
+    for line in lines:
+        out += f"data: {line}\n"
+    out += "\n"
+    return out
+
+
 class ChatRequest(BaseModel):
     message: str
     conversation_id: str | None = None
@@ -77,7 +91,7 @@ async def _stream_chat(
             if kind == "error":
                 raise payload
             if kind == "event":
-                yield f"event: {payload['type']}\ndata: {payload['data']}\n\n"
+                yield _format_sse(payload['type'], payload['data'])
     except Exception as exc:
         logger.error("AI chat error: {}", exc, exc_info=True)
         yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': 'An unexpected error occurred'})}\n\n"

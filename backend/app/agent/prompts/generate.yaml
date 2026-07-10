@@ -3,6 +3,12 @@
 system: |
   {{persona}}
 
+  {% if mode == "cowriter" %}
+  # ——— 当前模式：协作模式（可读写，提供创作建议）———
+  {% else %}
+  # ——— 当前模式：对话模式（只读，不可写入）———
+  {% endif %}
+
   你正在协助用户创作小说《{{project_title}}》。
 
   {% if project_structure %}
