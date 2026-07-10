@@ -66,7 +66,6 @@ SKILL_ALIAS_MAP: dict[str, set[str]] = {
 def get_available_tools(
     all_tools: dict[str, BaseTool],
     active_skills: list[str],
-    intent: str = "simple_q",
     mode: str = "chat",
 ) -> dict[str, BaseTool]:
     skill_names = set()

@@ -36,6 +36,7 @@ export interface SendMessageOptions {
   onToolStart?: (data: string) => void
   onToolDone?: (data: string) => void
   onOption?: (options: any[]) => void
+  onPlan?: (plan: PlanPayload) => void
   onStep?: (step: string) => void
   onConvId?: (id: string) => void
   onProjectUpdated?: () => void
@@ -95,7 +96,8 @@ export function sendMessage(options: SendMessageOptions): AbortController {
         const parsed = JSON.parse(data)
         if (parsed.status === 'awaiting_confirmation' && parsed.steps?.length) {
           const steps = parsed.steps.map((s: any) => s.description || s.tool).join('\n')
-          options.onToken(`\n\n📋 **计划方案**\n${steps}\n\n**确认执行？** (回复 "确认" 或 "好的")\n`)
+          options.onToken(`\n\n📋 **计划方案**\n${steps}\n\n**确认执行？**\n`)
+          options.onPlan?.(parsed)
         }
       } catch { /* ignore */ }
     },

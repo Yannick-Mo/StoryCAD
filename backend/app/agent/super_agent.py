@@ -71,11 +71,9 @@ class SuperAgent:
             )
             log.info("created conversation | conv_id={}", conversation_id)
 
-        config = {"configurable": {"thread_id": conversation_id or str(uuid.uuid4())}}
+        config = {"configurable": {"thread_id": conversation_id}}
 
-        history: list[Message] = []
-        if self.conv_memory:
-            history = await self.conv_memory.get_history(conversation_id)
+        history = await self.conv_memory.get_history(conversation_id)
 
         if history:
             history = await self.history_manager.maybe_summarize(history)
@@ -92,6 +90,7 @@ class SuperAgent:
         initial_state: AgentState = {
             "project_id": project_id,
             "user_id": user_id,
+            "trace_id": request_id,
             "conversation_id": conversation_id,
             "project_context": project_context,
             "messages": messages,
@@ -111,13 +110,11 @@ class SuperAgent:
             "plan_confirmed": False,
             "retry_context": None,
             "_context_loaded": False,
-            "current_node": "",
         }
 
-        if self.conv_memory:
-            await self.conv_memory.save_message(
-                conversation_id, Message(role="user", content=message)
-            )
+        await self.conv_memory.save_message(
+            conversation_id, Message(role="user", content=message)
+        )
 
         yield {"type": "conv_id", "data": conversation_id}
 
@@ -212,7 +209,7 @@ class SuperAgent:
             _done_sent = True
         yield {"type": "done", "data": ""}
 
-        if assistant_content and self.conv_memory:
+        if assistant_content:
             await self.conv_memory.save_message(
                 conversation_id, Message(role="assistant", content=assistant_content)
             )

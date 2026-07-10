@@ -72,11 +72,10 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
 def get_filtered_tools(
     all_tools: dict[str, BaseTool],
     active_skills: list[str | dict[str, Any]] | None = None,
-    intent: str = "simple_q",
     mode: str = "chat",
 ) -> dict[str, BaseTool]:
     from app.agent.tool_filter import get_available_tools
-    return get_available_tools(all_tools, active_skills or [], intent, mode=mode)
+    return get_available_tools(all_tools, active_skills or [], mode=mode)
 
 
 def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:

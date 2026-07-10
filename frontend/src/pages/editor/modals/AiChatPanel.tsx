@@ -39,6 +39,11 @@ interface OptionItem {
   cons: string[]
 }
 
+interface PlanData {
+  steps: Array<{ tool: string; params: Record<string, unknown>; description: string }>
+  status: string
+}
+
 interface ToolResult {
   tool: string
   success: boolean
@@ -55,6 +60,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [mode, setMode] = useState<'chat' | 'cowriter'>('chat')
   const [currentOptions, setCurrentOptions] = useState<OptionItem[]>([])
+  const [pendingPlan, setPendingPlan] = useState<PlanData | null>(null)
   const [toolResults, setToolResults] = useState<ToolResult[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const loadingRef = useRef(false)
@@ -75,6 +81,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     setError(null)
     setStep(null)
     setCurrentOptions([])
+    setPendingPlan(null)
     setToolResults([])
 
     const userMsg: DisplayMessage = { id: generateId(), role: 'user', content: text }
@@ -120,6 +127,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         }
       },
       onOption: (options: any[]) => setCurrentOptions(options),
+      onPlan: (plan: PlanData) => setPendingPlan(plan),
       onConvId: (id: string) => {
         convIdRef.current = id
         setConversationId(id)
@@ -190,6 +198,7 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     conversations, setConversations,
     mode, setMode,
     currentOptions, setCurrentOptions,
+    pendingPlan, setPendingPlan,
     toolResults, setToolResults,
     send,
     abort,
@@ -343,12 +352,25 @@ export default function AiChatPanel({
 
   const handleOptionSelect = useCallback((option: OptionItem) => {
     setInput('')
+    const msg = `[option:${option.id}] ${option.label}`
     chat.setMessages(prev => [...prev, {
       id: generateId(),
       role: 'user',
-      content: `[Select option: ${option.label}]`,
+      content: msg,
     }])
-    chat.send(option.label, onProjectUpdated)
+    chat.send(msg, onProjectUpdated)
+  }, [chat, onProjectUpdated])
+
+  const handlePlanConfirm = useCallback(() => {
+    chat.setPendingPlan(null)
+    setInput('')
+    chat.send('确认', onProjectUpdated)
+  }, [chat, onProjectUpdated])
+
+  const handlePlanReject = useCallback(() => {
+    chat.setPendingPlan(null)
+    setInput('')
+    chat.send('拒绝', onProjectUpdated)
   }, [chat, onProjectUpdated])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -417,6 +439,24 @@ export default function AiChatPanel({
             {chat.currentOptions.map((opt, idx) => (
               <OptionCard key={opt.id} option={opt} idx={idx} onSelect={handleOptionSelect} />
             ))}
+          </div>
+        )}
+
+        {/* Plan confirm/reject buttons */}
+        {chat.pendingPlan && !chat.loading && (
+          <div className="flex gap-2 justify-center">
+            <button
+              onClick={handlePlanConfirm}
+              className="px-4 py-2 rounded-xl bg-amber-600 text-black text-xs font-medium hover:bg-amber-500 transition-colors"
+            >
+              ✅ 确认执行
+            </button>
+            <button
+              onClick={handlePlanReject}
+              className="px-4 py-2 rounded-xl bg-gray-700 text-gray-200 text-xs font-medium hover:bg-gray-600 transition-colors"
+            >
+              ❌ 拒绝
+            </button>
           </div>
         )}
 

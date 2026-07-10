@@ -270,7 +270,8 @@ def create_generate_node(llm_client: LLMClient):
             try:
                 # Phase 1 — first draft (non-streaming, collect full output)
                 draft_result = await llm_client.chat(
-                    messages=msgs_with_sys, temperature=0.7
+                    messages=msgs_with_sys, temperature=0.7,
+                    request_id=state.get("trace_id", ""),
                 )
                 draft = draft_result.content or ""
             except asyncio.CancelledError:
@@ -301,6 +302,7 @@ def create_generate_node(llm_client: LLMClient):
                         messages=eval_msgs,
                         temperature=0.1,
                         response_format="json_object",
+                        request_id=state.get("trace_id", ""),
                     )
                     evaluation = json.loads(eval_result.content or "{}")
                     if not isinstance(evaluation, dict):
@@ -338,6 +340,7 @@ def create_generate_node(llm_client: LLMClient):
                         improved_result = await llm_client.chat(
                             messages=improved_msgs,
                             temperature=0.7,
+                            request_id=state.get("trace_id", ""),
                         )
                         full_content = improved_result.content or draft
                     except asyncio.CancelledError:
@@ -366,7 +369,8 @@ def create_generate_node(llm_client: LLMClient):
             msgs_with_sys = [Message(role="system", content=sys_content)] + msgs
             try:
                 async for token in llm_client.chat_stream_tokens(
-                    messages=msgs_with_sys
+                    messages=msgs_with_sys,
+                    request_id=state.get("trace_id", ""),
                 ):
                     full_content += token
                     yield {"_stream_token": token}

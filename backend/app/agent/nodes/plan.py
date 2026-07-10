@@ -126,7 +126,7 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
         steps: list[dict] = list(state.get("intermediate_steps", []))
 
         active_skills = state.get("active_skills", [])
-        tools = get_filtered_tools(all_tools, active_skills, "complex")
+        tools = get_filtered_tools(all_tools, active_skills)
         write_tools = _get_write_tools(tools)
 
         last_msg = state["messages"][-1] if state["messages"] else None
@@ -162,6 +162,7 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
                 messages=msgs,
                 response_format="json_object",
                 temperature=0.2,
+                request_id=state.get("trace_id", ""),
             )
 
             parsed = json.loads(result.content or "{}")

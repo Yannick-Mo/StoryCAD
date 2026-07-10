@@ -9,6 +9,7 @@ IntentType = Literal["simple_q", "tool_call", "cowriter", "cowriter_choice", "co
 class AgentState(TypedDict):
     project_id: str | None
     user_id: str | None
+    trace_id: str
     conversation_id: str | None
     project_context: dict
     messages: list[Message]
@@ -28,4 +29,3 @@ class AgentState(TypedDict):
     plan_confirmed: bool
     retry_context: dict | None
     _context_loaded: bool
-    current_node: str

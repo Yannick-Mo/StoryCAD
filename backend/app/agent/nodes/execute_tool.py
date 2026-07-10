@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -276,11 +277,6 @@ async def _execute_planned_step(
     }
 
 
-def _is_write_tool(tool_name: str, tools: dict) -> bool:
-    inst = tools.get(tool_name)
-    return bool(inst and inst.is_write_operation)
-
-
 async def _execute_tool_call(
     state: AgentState, tools: dict, db: AsyncSession
 ) -> dict:
@@ -350,7 +346,7 @@ async def _execute_cowriter(
 
     # Filter tool descriptions by active skills
     active_skills = state.get("active_skills", [])
-    filtered_tools = get_filtered_tools(tools, active_skills, "cowriter")
+    filtered_tools = get_filtered_tools(tools, active_skills)
     filtered_desc = "\n".join(
         f"- {t.name}: {t.description}" for t in filtered_tools.values()
     )
@@ -368,7 +364,8 @@ async def _execute_cowriter(
             Message(role="user", content=user_content),
         ]
         result = await llm_client.chat(
-            messages=msgs, response_format="json_object"
+            messages=msgs, response_format="json_object",
+            request_id=state.get("trace_id", ""),
         )
         parsed = cw.parse_response(result.content or "{}")
         options = parsed.get("options", [])
@@ -420,11 +417,22 @@ async def _execute_cowriter_choice(
     options = state.get("current_options", [])
 
     selected = None
-    for opt in options:
-        opt_id = opt.get("id", "").lower()
-        if opt_id in user_content.lower():
-            selected = opt
-            break
+
+    # Try structured "[option:{id}]" format first (sent by frontend option click)
+    m = re.search(r'\[option:\s*(\w+)\]', user_content.lower())
+    if m:
+        target_id = m.group(1)
+        for opt in options:
+            if opt.get("id", "").lower() == target_id:
+                selected = opt
+                break
+
+    if not selected:
+        for opt in options:
+            opt_id = opt.get("id", "").lower()
+            if opt_id in user_content.lower():
+                selected = opt
+                break
     if not selected:
         for opt in options:
             opt_label = opt.get("label", "").lower()
@@ -535,11 +543,17 @@ def create_execute_tool_node(
         elif intent == "complex":
             return {
                 "errors": state.get("errors", [])
-                + [
-                    "Complex intent reached execute_tool without routing through plan node"
-                ],
+                + ["Complex intent reached execute_tool without routing through plan node"],
+                "current_intent": "simple_q",
+                "intermediate_steps": list(state.get("intermediate_steps", [])),
+                "tool_results": state.get("tool_results", []),
+                "current_step_index": state.get("current_step_index", 0),
+                "retry_count": state.get("retry_count", 0),
             }
         else:
-            return {}
+            return {
+                "current_intent": "simple_q",
+                "intermediate_steps": list(state.get("intermediate_steps", [])),
+            }
 
     return execute_tool_node

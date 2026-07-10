@@ -66,9 +66,7 @@ def _detect_plan_confirm(content: str) -> str | None:
         idx = lower.find(kw)
         while idx != -1:
             prefix = lower[max(0, idx - 8):idx].strip()
-            is_negated = bool(prefix)
-            if is_negated:
-                is_negated = any(pat.search(prefix) for pat in _NEGATION_PATTERNS)
+            is_negated = any(pat.search(prefix) for pat in _NEGATION_PATTERNS)
             if not is_negated:
                 logger.debug("Plan confirm detected via keyword '%s' in '%s'", kw, lower[:60])
                 return "plan_confirm"
@@ -84,7 +82,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
 
         current_mode = state.get("mode", "chat")
         active_skills = state.get("active_skills", [])
-        tools = get_filtered_tools(all_tools, active_skills, "tool_call", mode=current_mode)
+        tools = get_filtered_tools(all_tools, active_skills, mode=current_mode)
 
         last_msg = state["messages"][-1] if state["messages"] else None
         if not last_msg or last_msg.role not in ("user", "tool"):
@@ -165,6 +163,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 messages=msgs,
                 tools=None,
                 temperature=0.1,
+                request_id=state.get("trace_id", ""),
             )
             logger.debug("classify_intent LLM call took %.2fs", time.monotonic() - _t0)
 
