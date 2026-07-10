@@ -173,6 +173,7 @@ class SuperAgent:
             "pending_plan": [],
             "plan_confirmed": False,
             "retry_context": None,
+            "search_results": [],
             "_context_loaded": False,
         }
 

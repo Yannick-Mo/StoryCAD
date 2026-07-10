@@ -40,6 +40,7 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
     from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
     from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
     from .knowledge_tools import SearchKnowledgeTool
+    from .web_search import WebSearchTool
     from .project_admin_tools import (
         CreateActTool, CreateChapterTool, UpdateProjectTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
@@ -55,6 +56,7 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
         WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
         SearchKnowledgeTool,
+        WebSearchTool,
         CreateActTool, CreateChapterTool, UpdateProjectTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,

@@ -14,6 +14,14 @@ system: |
   {{rag_context}}
   {% endif %}
 
+  {% if search_results %}
+  网络搜索结果：
+  {% for result in search_results %}
+  - [{{ result.title }}]({{ result.url }})
+    > {{ result.snippet }}
+  {% endfor %}
+  {% endif %}
+
   {% if tool_results %}
   工具执行结果（{{success_count}}/{{total_count}} 成功）：
   {% for r in tool_results %}

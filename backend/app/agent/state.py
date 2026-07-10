@@ -28,4 +28,5 @@ class AgentState(TypedDict):
     pending_plan: dict | list
     plan_confirmed: bool
     retry_context: dict | None
+    search_results: list[dict]
     _context_loaded: bool
