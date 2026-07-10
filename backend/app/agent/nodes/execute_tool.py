@@ -452,6 +452,23 @@ async def _execute_cowriter_choice(
         action = selected["action"]
         tool_name = action.get("tool", "")
         params = action.get("params", {})
+
+        # Defer write operations to plan confirmation flow
+        tool_inst = tools.get(tool_name)
+        if tool_inst and tool_inst.is_write_operation:
+            step = {
+                "tool": tool_name,
+                "params": params,
+            }
+            return {
+                "pending_plan": {
+                    "steps": [step],
+                    "reasoning": selected.get("description", "协写操作"),
+                },
+                "current_intent": "plan_confirm",
+                "current_options": [],
+            }
+
         result, tool_errors = await _run_single_tool(
             tool_name, params, tools, db, user_id=state.get("user_id")
         )
