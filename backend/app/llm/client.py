@@ -146,7 +146,12 @@ class LLMClient:
         response_format: Literal["json_object"] | None = None,
         request_id: str = "",
     ) -> ChatResult:
-        models_to_try = _resolve_models(model or self.model)
+        resolved = _resolve_models(model or self.model)
+        if self.fallback_models:
+            primary = model or self.model
+            models_to_try = [primary] + [m for m in self.fallback_models if m != primary]
+        else:
+            models_to_try = resolved
         last_error: Exception | None = None
 
         logger.bind(request_id=request_id).info("LLM chat | model={} | stream={}", model or self.model, stream)

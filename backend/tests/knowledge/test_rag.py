@@ -11,7 +11,7 @@ class TestRetrieveChunks:
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[
+        engine.vector_store.search_fts = AsyncMock(return_value=[
             {"id": "c1", "content": "Test knowledge", "source_type": "writing_guide",
              "genre": "fantasy", "tags": ["plot"], "similarity": 0.92},
             {"id": "c2", "content": "More knowledge", "source_type": "reference",
@@ -25,14 +25,14 @@ class TestRetrieveChunks:
         assert len(chunks) == 2
         assert chunks[0]["content"] == "Test knowledge"
         assert chunks[1]["similarity"] == 0.85
-        engine.vector_store.search.assert_awaited_once()
+        engine.vector_store.search_fts.assert_awaited_once()
 
     @patch("app.knowledge.rag.embed_text")
     async def test_retrieve_chunks_empty(self, mock_embed_text):
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[])
+        engine.vector_store.search_fts = AsyncMock(return_value=[])
 
         chunks = await engine.retrieve_chunks(
             project_id=None, genre=None, query="unknown", limit=5
@@ -45,7 +45,7 @@ class TestRetrieveChunks:
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[
+        engine.vector_store.search_fts = AsyncMock(return_value=[
             {"id": "c1", "content": "General knowledge", "source_type": "guide",
              "genre": None, "tags": [], "similarity": 0.9},
         ])
@@ -55,21 +55,25 @@ class TestRetrieveChunks:
         )
 
         assert len(chunks) == 1
-        engine.vector_store.search.assert_awaited_once()
-        args, kwargs = engine.vector_store.search.call_args
+        engine.vector_store.search_fts.assert_awaited_once()
+        args, kwargs = engine.vector_store.search_fts.call_args
         assert kwargs["project_id"] is None
         assert kwargs["genre"] is None
 
     @patch("app.knowledge.rag.embed_text")
-    async def test_embedding_failure_raises(self, mock_embed_text):
+    @patch("app.knowledge.rag.settings.embedding_base_url", "https://embeddings.example.com")
+    async def test_embedding_failure_falls_back_to_fts(self, mock_embed_text):
         mock_embed_text.side_effect = RuntimeError("API down")
         db = AsyncMock()
         engine = RAGEngine(db)
+        engine.vector_store.search_fts = AsyncMock(return_value=[])
 
-        with pytest.raises(RuntimeError, match="API down"):
-            await engine.retrieve_chunks(
-                project_id=None, genre=None, query="fail", limit=5
-            )
+        chunks = await engine.retrieve_chunks(
+            project_id=None, genre=None, query="fail", limit=5
+        )
+
+        assert chunks == []
+        engine.vector_store.search_fts.assert_awaited_once()
 
 
 class TestRetrieveContext:
@@ -78,7 +82,7 @@ class TestRetrieveContext:
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[
+        engine.vector_store.search_fts = AsyncMock(return_value=[
             {"id": "c1", "content": "Try a three-act structure.",
              "source_type": "writing_guide", "genre": "fantasy",
              "tags": ["structure", "plot"], "similarity": 0.92},
@@ -100,7 +104,7 @@ class TestRetrieveContext:
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[])
+        engine.vector_store.search_fts = AsyncMock(return_value=[])
 
         context = await engine.retrieve_context(
             project_id=uuid.uuid4(), genre="fantasy", query="nonexistent"
@@ -113,7 +117,7 @@ class TestRetrieveContext:
         mock_embed_text.return_value = [0.1, 0.2, 0.3]
         db = AsyncMock()
         engine = RAGEngine(db)
-        engine.vector_store.search = AsyncMock(return_value=[
+        engine.vector_store.search_fts = AsyncMock(return_value=[
             {"id": "c1", "content": "First chunk", "source_type": "guide",
              "genre": "fantasy", "tags": [], "similarity": 0.9},
             {"id": "c2", "content": "Second chunk", "source_type": "reference",
