@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey
+from sqlalchemy import CheckConstraint, Column, String, Text, DateTime, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.project.models import Base as StoryBase
 
@@ -24,7 +24,7 @@ class Chapter(StoryBase):
     __tablename__ = "chapters"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=True)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=True, index=True)
     title = Column(String(200), nullable=False, default="新章")
     goal = Column(Text, default="")
     status = Column(String(20), default="draft")
@@ -39,7 +39,7 @@ class Scene(StoryBase):
     __tablename__ = "scenes"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False)
+    chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(200), nullable=False, default="新场")
     sort_order = Column(Integer, nullable=False, default=0)
     pov_character = Column(String(100), default="")
@@ -63,8 +63,8 @@ class ChapterEdge(StoryBase):
     __tablename__ = "chapter_edges"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False)
-    target_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False)
+    source_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
     edge_type = Column(String(20), nullable=False, default="timeline")
     label = Column(String(100), default="")
     source_handle = Column(String(20), default="")
@@ -95,14 +95,14 @@ class CharacterRelation(StoryBase):
     __tablename__ = "character_relations"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    character_id = Column(UUID(as_uuid=True), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False)
-    target_id = Column(UUID(as_uuid=True), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False)
+    character_id = Column(UUID(as_uuid=True), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_id = Column(UUID(as_uuid=True), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True)
     rel_type = Column(String(30), default="关联")
     label = Column(String(100), default="")
     description = Column(Text, default="")
-    trust = Column(Integer, default=50)
-    threat = Column(Integer, default=50)
-    attraction = Column(Integer, default=50)
+    trust = Column(Integer, CheckConstraint('trust >= 0 AND trust <= 100'), default=50)
+    threat = Column(Integer, CheckConstraint('threat >= 0 AND threat <= 100'), default=50)
+    attraction = Column(Integer, CheckConstraint('attraction >= 0 AND attraction <= 100'), default=50)
     created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
 
 

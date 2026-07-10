@@ -41,7 +41,7 @@ async def get_project(project_id: uuid.UUID, current_user: dict = Depends(get_cu
     return result
 
 
-ALLOWED_PROJECT_FIELDS = {"title", "description", "status", "target_word_count", "template_type", "target_audience"}
+ALLOWED_PROJECT_FIELDS = {"title", "description", "status"}
 
 @router.patch("/{project_id}")
 async def update_project(project_id: uuid.UUID, payload: dict, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

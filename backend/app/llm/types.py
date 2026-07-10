@@ -1,4 +1,6 @@
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Any, Literal
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -8,9 +10,28 @@ Role = Literal["system", "user", "assistant", "tool"]
 class Message:
     role: Role
     content: str | None = None
-    tool_calls: list["ToolCall"] | None = None
+    tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"Message(role={self.role!r}, content={self.content!r}, "
+            f"tool_calls={self.tool_calls!r}, tool_call_id={self.tool_call_id!r}, "
+            f"name={self.name!r})"
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"role": self.role}
+        if self.content is not None:
+            d["content"] = self.content
+        if self.tool_calls:
+            d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name:
+            d["name"] = self.name
+        return d
 
 
 @dataclass
@@ -18,6 +39,9 @@ class ToolCall:
     id: str
     type: Literal["function"] = "function"
     function: dict | None = None
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "type": self.type, "function": self.function}
 
 
 @dataclass

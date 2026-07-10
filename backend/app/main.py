@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
+from app.llm import configure_from_settings
 
 def _validate_config():
     if not settings.jwt_secret_key:
@@ -14,8 +15,11 @@ _validate_config()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_from_settings(settings)
     await init_db()
     yield
+    from app.llm.client import close_shared_client
+    await close_shared_client()
 
 
 app = FastAPI(title="StoryCAD", version="0.2.0", lifespan=lifespan)

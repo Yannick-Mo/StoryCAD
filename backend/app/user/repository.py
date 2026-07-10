@@ -1,14 +1,9 @@
 import uuid
 from typing import Optional
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.user.models import User
-from app.project.models import Project, ProjectVersion, ProjectConfig
-from app.storycad.models import (
-    Act, Chapter, Scene, SceneContent, ChapterEdge,
-    Character, CharacterRelation,
-    Theme, ThemeChapter,
-)
+from app.project.models import Project, ProjectConfig, ProjectVersion
 
 
 class UserRepository:
@@ -44,31 +39,21 @@ class UserRepository:
         return True
 
     async def delete(self, user_id: uuid.UUID) -> bool:
-        user = await self.get_by_id(user_id)
+        user = await self.db.get(User, user_id)
         if not user:
             return False
-
-        result = await self.db.execute(select(Project.id).where(Project.owner_id == user_id))
-        project_ids = [row[0] for row in result.all()]
-
-        for pid in project_ids:
-            await self.db.execute(delete(SceneContent).where(SceneContent.project_id == pid))
-            await self.db.execute(delete(Scene).where(Scene.project_id == pid))
-            await self.db.execute(delete(ChapterEdge).where(ChapterEdge.project_id == pid))
-            await self.db.execute(delete(ThemeChapter).where(ThemeChapter.project_id == pid))
-            await self.db.execute(delete(Chapter).where(Chapter.project_id == pid))
-            await self.db.execute(delete(CharacterRelation).where(CharacterRelation.project_id == pid))
-            await self.db.execute(delete(Character).where(Character.project_id == pid))
-            await self.db.execute(delete(Theme).where(Theme.project_id == pid))
-            await self.db.execute(delete(Act).where(Act.project_id == pid))
-            await self.db.execute(delete(ProjectVersion).where(ProjectVersion.project_id == pid))
-            await self.db.execute(delete(ProjectConfig).where(ProjectConfig.project_id == pid))
-
-        await self.db.commit()
-
-        for pid in project_ids:
-            await self.db.execute(delete(Project).where(Project.id == pid))
-
+        result = await self.db.execute(
+            select(Project).where(Project.owner_id == user_id)
+        )
+        projects = result.scalars().all()
+        for project in projects:
+            await self.db.execute(
+                ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project.id)
+            )
+            await self.db.execute(
+                ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project.id)
+            )
+            await self.db.delete(project)
         await self.db.delete(user)
         await self.db.commit()
         return True

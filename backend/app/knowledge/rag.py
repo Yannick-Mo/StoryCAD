@@ -1,7 +1,11 @@
+import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.config import settings
 from app.knowledge.embeddings import embed_text
 from app.knowledge.vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 class RAGEngine:
@@ -37,9 +41,21 @@ class RAGEngine:
         query: str,
         limit: int = 5,
     ) -> list[dict]:
-        query_embedding = await embed_text(query)
-        return await self.vector_store.search(
-            query_embedding=query_embedding,
+        if settings.embedding_base_url:
+            try:
+                query_embedding = await embed_text(query)
+                return await self.vector_store.search(
+                    query_embedding=query_embedding,
+                    genre=genre,
+                    project_id=project_id,
+                    limit=limit,
+                )
+            except Exception:
+                logger.warning("Embedding search failed, falling back to full-text search")
+        else:
+            logger.info("Embedding not configured, using PostgreSQL full-text search")
+        return await self.vector_store.search_fts(
+            query=query,
             genre=genre,
             project_id=project_id,
             limit=limit,

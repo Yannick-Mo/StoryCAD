@@ -1,16 +1,16 @@
+import asyncio
 import time
-import threading
 from collections import defaultdict
 
 
 class InMemoryRateLimiter:
     def __init__(self):
         self._attempts = defaultdict(list)
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
 
-    def check(self, key: str, max_attempts: int = 5, window: int = 60) -> bool:
+    async def check(self, key: str, max_attempts: int = 5, window: int = 60) -> bool:
         now = time.time()
-        with self._lock:
+        async with self._lock:
             self._attempts[key] = [t for t in self._attempts[key] if now - t < window]
             if len(self._attempts[key]) >= max_attempts:
                 return False

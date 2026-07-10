@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Boolean, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
@@ -11,7 +12,7 @@ class KnowledgeChunk(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     content = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)
+    embedding = Column(Vector(1536), nullable=True)
     source_type = Column(String(50), nullable=False)
     genre = Column(String(100), nullable=True)
     tags = Column(ARRAY(String), default=[])

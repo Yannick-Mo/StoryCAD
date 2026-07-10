@@ -8,11 +8,20 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = 24
 
     # LLM configuration
-    deepseek_api_key: str = ""      # deprecated, use llm_api_key
     llm_api_key: str = ""
     llm_base_url: str = "https://api.deepseek.com/v1"
-    llm_model: str = "deepseek-chat"
+    llm_model: str = "deepseek-v4-flash"
     llm_models: str = ""
+    llm_fallback_models: str = ""
+    llm_proxy: str = ""
+    llm_max_sys_chars: int = 12000
+    llm_max_rag_chars: int = 1500
+
+    # Embedding configuration
+    embedding_base_url: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_api_key: str = ""
+    embedding_proxy: str = ""
 
     class Config:
         env_file = ".env"

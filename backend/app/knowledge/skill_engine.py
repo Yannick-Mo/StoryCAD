@@ -1,27 +1,41 @@
+import asyncio
+import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+import aiofiles
 import yaml
 
 
 _SKILLS_DIR = Path(__file__).parent / "skills"
+_SKILL_CACHE_TTL = 300
+_SKILL_CACHE_MAX = 50
 
 
 class SkillEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._skills_cache: dict[str, dict] = {}
+        self._skills_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
-    def _load_yaml(self, name: str) -> dict | None:
+    async def _load_yaml(self, name: str) -> dict | None:
+        now = time.monotonic()
         if name in self._skills_cache:
-            return self._skills_cache[name]
+            ts, data = self._skills_cache[name]
+            if now - ts < _SKILL_CACHE_TTL:
+                self._skills_cache.move_to_end(name)
+                return data
         path = _SKILLS_DIR / f"{name}.yaml"
         if not path.exists():
             return None
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        self._skills_cache[name] = data
+        async with aiofiles.open(path, 'r', encoding='utf-8') as f:
+            content = await f.read()
+        data = await asyncio.to_thread(yaml.safe_load, content)
+        self._skills_cache[name] = (now, data)
+        self._skills_cache.move_to_end(name)
+        while len(self._skills_cache) > _SKILL_CACHE_MAX:
+            self._skills_cache.popitem(last=False)
         return data
 
     async def get_active_skills(self, project_id: uuid.UUID) -> list[dict]:
@@ -48,7 +62,7 @@ class SkillEngine:
         return skills
 
     async def get_skill(self, skill_name: str) -> dict | None:
-        return self._load_yaml(skill_name)
+        return await self._load_yaml(skill_name)
 
     async def get_merged_prompts(
         self, project_id: uuid.UUID
@@ -56,7 +70,7 @@ class SkillEngine:
         active = await self.get_active_skills(project_id)
         merged: dict[str, str] = {}
         for skill in active:
-            yaml_data = self._load_yaml(skill["name"])
+            yaml_data = await self._load_yaml(skill["name"])
             if yaml_data is None:
                 continue
             overrides = yaml_data.get("prompt_overrides", {}) or {}
@@ -70,7 +84,7 @@ class SkillEngine:
         active = await self.get_active_skills(project_id)
         tags: set[str] = set()
         for skill in active:
-            yaml_data = self._load_yaml(skill["name"])
+            yaml_data = await self._load_yaml(skill["name"])
             if yaml_data is None:
                 continue
             skill_tags = yaml_data.get("rag_tags", []) or []
@@ -81,7 +95,7 @@ class SkillEngine:
         active = await self.get_active_skills(project_id)
         tools: set[str] = set()
         for skill in active:
-            yaml_data = self._load_yaml(skill["name"])
+            yaml_data = await self._load_yaml(skill["name"])
             if yaml_data is None:
                 continue
             skill_tools = yaml_data.get("tools_enabled", []) or []

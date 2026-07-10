@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import jwt, JWTError
+import jwt
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
@@ -30,9 +30,9 @@ class UserService:
     @staticmethod
     def _decode_token(token: str) -> uuid.UUID:
         try:
-            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
+            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"], options={"verify_exp": True})
             return uuid.UUID(payload["sub"])
-        except (JWTError, KeyError, ValueError):
+        except (jwt.PyJWTError, KeyError, ValueError):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     async def register(self, username: str, email: str, password: str) -> dict:

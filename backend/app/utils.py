@@ -4,19 +4,23 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+def _serialize_value(val: Any) -> Any:
+    if isinstance(val, uuid.UUID):
+        return str(val)
+    if isinstance(val, datetime):
+        return val.isoformat()
+    return val
+
+
 def row_to_dict(obj: Any) -> dict:
     if obj is None:
-        return {}
-    d = {}
-    for col in obj.__table__.columns:
-        val = getattr(obj, col.name)
-        if isinstance(val, uuid.UUID):
-            d[col.name] = str(val)
-        elif isinstance(val, datetime):
-            d[col.name] = val.isoformat()
-        else:
-            d[col.name] = val
-    return d
+        return None
+    try:
+        if hasattr(obj, '__table__'):
+            return {c.name: _serialize_value(getattr(obj, c.name)) for c in obj.__table__.columns}
+        return dict(obj)
+    except Exception:
+        return dict(obj)
 
 
 class PageParams(BaseModel):

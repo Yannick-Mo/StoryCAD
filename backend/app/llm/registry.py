@@ -1,11 +1,13 @@
-import json
 from .types import ModelDef
 
 _registry: dict[str, ModelDef] = {}
+_order: list[str] = []
 
 
 def register(name: str, model: ModelDef) -> None:
-    _registry[name] = model
+    if name not in _registry:
+        _registry[name] = model
+        _order.append(name)
 
 
 def get(name: str) -> ModelDef:
@@ -14,8 +16,14 @@ def get(name: str) -> ModelDef:
     return _registry[name]
 
 
+def get_ordered() -> list[str]:
+    return list(_order)
+
+
 def get_default() -> ModelDef:
-    return get("deepseek-chat")
+    for name in _order:
+        return _registry[name]
+    raise KeyError("No models registered")
 
 
 def list_models() -> dict[str, ModelDef]:
@@ -25,30 +33,27 @@ def list_models() -> dict[str, ModelDef]:
 def configure_from_settings(settings) -> None:
     api_key = settings.llm_api_key
     base_url = settings.llm_base_url.rstrip("/")
-    model_name = settings.llm_model
+    raw = settings.llm_models
 
-    register(
-        "deepseek-chat",
-        ModelDef(
-            api_key=api_key,
-            base_url=base_url,
-        ),
-    )
+    if raw:
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = [p.strip() for p in entry.split("|")]
+            name = parts[0]
+            key = parts[1] if len(parts) > 1 else api_key
+            url = parts[2] if len(parts) > 2 else base_url
+            register(name, ModelDef(api_key=key, base_url=url.rstrip("/")))
+        return
 
-    extra = getattr(settings, "llm_models", None)
-    if extra:
-        if isinstance(extra, str):
-            extra = json.loads(extra)
-        for name, cfg in extra.items():
-            register(
-                name,
-                ModelDef(
-                    api_key=cfg.get("api_key", api_key),
-                    base_url=cfg.get("base_url", base_url),
-                    supports_streaming=cfg.get("supports_streaming", True),
-                    supports_fc=cfg.get("supports_fc", True),
-                    max_tokens=cfg.get("max_tokens", 8192),
-                    cost_per_1k_input=cfg.get("cost_per_1k_input", 0.0001),
-                    cost_per_1k_output=cfg.get("cost_per_1k_output", 0.0002),
-                ),
-            )
+    name = settings.llm_model
+    register(name, ModelDef(api_key=api_key, base_url=base_url))
+    register("deepseek-chat", ModelDef(api_key=api_key, base_url=base_url))
+
+    fallback_raw = settings.llm_fallback_models
+    if fallback_raw:
+        for name in fallback_raw.split(","):
+            name = name.strip()
+            if name:
+                register(name, ModelDef(api_key=api_key, base_url=base_url))

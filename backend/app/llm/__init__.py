@@ -1,4 +1,4 @@
-from .client import LLMClient, get_tracker
+from .client import LLMClient, LLMError, LLMRetryExhaustedError, LLMNonRetryableError, get_tracker, get_shared_client, close_shared_client
 from .types import ChatResult, Message, ModelDef, ToolCall, ToolDef
 from .tracker import TokenTracker
 from .registry import (
@@ -12,6 +12,9 @@ from .registry import (
 
 __all__ = [
     "LLMClient",
+    "LLMError",
+    "LLMRetryExhaustedError",
+    "LLMNonRetryableError",
     "ChatResult",
     "Message",
     "ToolCall",
@@ -19,6 +22,8 @@ __all__ = [
     "ModelDef",
     "TokenTracker",
     "get_tracker",
+    "get_shared_client",
+    "close_shared_client",
     "model_registry",
     "register",
     "get",

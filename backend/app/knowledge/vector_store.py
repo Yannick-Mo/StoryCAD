@@ -8,6 +8,45 @@ class VectorStore:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def search_fts(
+        self,
+        query: str,
+        genre: str | None = None,
+        project_id: uuid.UUID | None = None,
+        limit: int = 5,
+    ) -> list[dict]:
+        sql = text("""
+            SELECT id, content, source_type, genre, tags,
+                   ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', :query)) as rank
+            FROM knowledge_chunks
+            WHERE to_tsvector('simple', content) @@ plainto_tsquery('simple', :query)
+            AND (:genre IS NULL OR genre = :genre)
+            AND (:project_id IS NULL OR project_id = :project_id OR project_id IS NULL)
+            ORDER BY rank DESC
+            LIMIT :limit
+        """)
+        result = await self.db.execute(
+            sql,
+            {
+                "query": query,
+                "genre": genre,
+                "project_id": project_id,
+                "limit": limit,
+            },
+        )
+        rows = result.fetchall()
+        return [
+            {
+                "id": str(r[0]),
+                "content": r[1],
+                "source_type": r[2],
+                "genre": r[3],
+                "tags": r[4],
+                "similarity": float(r[5]) if r[5] is not None else 0.0,
+            }
+            for r in rows
+        ]
+
     async def search(
         self,
         query_embedding: list[float],

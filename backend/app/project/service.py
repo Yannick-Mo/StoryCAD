@@ -26,26 +26,36 @@ class ProjectService:
     async def list_projects(self, owner_id: uuid.UUID, page: int = 1, size: int = 20, search: str = "", status: str = "") -> dict:
         projects = await self.repo.list_projects(owner_id, page, size, search, status)
 
+        if not projects:
+            return {"items": [], "total": 0, "page": page, "size": size}
+
+        project_ids = [p.id for p in projects]
+
+        ch_stmt = select(Chapter.project_id, func.count().label("ch_count")).where(
+            Chapter.project_id.in_(project_ids)
+        ).group_by(Chapter.project_id)
+        ch_rows = (await self.repo.db.execute(ch_stmt)).all()
+        ch_map = {row.project_id: row.ch_count for row in ch_rows}
+
+        sc_stmt = select(Scene.project_id, func.count().label("sc_count"), func.coalesce(func.sum(Scene.word_count), 0).label("word_total")).where(
+            Scene.project_id.in_(project_ids)
+        ).group_by(Scene.project_id)
+        sc_rows = (await self.repo.db.execute(sc_stmt)).all()
+        sc_map = {row.project_id: {"count": row.sc_count, "words": row.word_total} for row in sc_rows}
+
+        cfg_stmt = select(ProjectConfig).where(ProjectConfig.project_id.in_(project_ids))
+        cfg_rows = (await self.repo.db.execute(cfg_stmt)).scalars().all()
+        cfg_map = {c.project_id: c for c in cfg_rows}
+
         items = []
         for p in projects:
-            ch_count = (await self.repo.db.execute(
-                select(func.count()).select_from(Chapter).where(Chapter.project_id == p.id)
-            )).scalar() or 0
-            sc_count = (await self.repo.db.execute(
-                select(func.count()).select_from(Scene).where(Scene.project_id == p.id)
-            )).scalar() or 0
-            words = (await self.repo.db.execute(
-                select(func.coalesce(func.sum(Scene.word_count), 0)).where(Scene.project_id == p.id)
-            )).scalar() or 0
-            config = (await self.repo.db.execute(
-                select(ProjectConfig).where(ProjectConfig.project_id == p.id)
-            )).scalar_one_or_none()
-
             item = row_to_dict(p)
+            sc_data = sc_map.get(p.id, {"count": 0, "words": 0})
+            item["total_chapters"] = int(ch_map.get(p.id, 0))
+            item["total_scenes"] = int(sc_data["count"])
+            item["total_words"] = int(sc_data["words"])
+            config = cfg_map.get(p.id)
             item["template_type"] = config.template_type if config else ""
-            item["total_words"] = int(words)
-            item["total_chapters"] = int(ch_count)
-            item["total_scenes"] = int(sc_count)
             items.append(item)
 
         total = (await self.repo.db.execute(
