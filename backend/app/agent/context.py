@@ -115,8 +115,8 @@ class ContextBuilder:
                 if raw is not None:
                     data = raw.decode() if isinstance(raw, bytes) else raw
                     return json.loads(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Redis cache get failed for key=%s: %s", key, exc)
             return _CONTEXT_CACHE.get(key)
         return _CONTEXT_CACHE.get(key)
 
@@ -125,8 +125,8 @@ class ContextBuilder:
             try:
                 raw = json.dumps(data, ensure_ascii=False, cls=_UUIDEncoder)
                 await self._redis.setex(key, _CONTEXT_CACHE_TTL, raw)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Redis cache set failed for key=%s: %s", key, exc)
             _CONTEXT_CACHE.set(key, data)
         else:
             _CONTEXT_CACHE.set(key, data)

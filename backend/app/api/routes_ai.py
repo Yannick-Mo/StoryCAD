@@ -42,13 +42,11 @@ router = APIRouter(prefix="/api/projects/{project_id}", tags=["ai"])
 
 @router.post("/ai/generate")
 async def ai_generate(
-    request: Request,
     project_id: uuid.UUID,
     payload: AiGenerateRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    client_ip = request.client.host if request.client else "unknown"
     if not await rate_limiter.check(f"ai_generate:{current_user['id']}", max_attempts=10, window=60):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     svc = ProjectService(db)

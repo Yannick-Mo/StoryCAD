@@ -152,8 +152,7 @@ class SuperAgent:
                                 _done_sent = True
         except asyncio.TimeoutError:
             log.warning("timeout | conv_id={}", conversation_id)
-            if self.conv_memory:
-                await self.conv_memory.delete_last_message(conversation_id)
+            await self.conv_memory.delete_last_message(conversation_id)
             yield {"type": "error", "data": json.dumps({"message": "Request timed out. Please try again."})}
             return
         except Exception as exc:
@@ -203,7 +202,8 @@ class SuperAgent:
                         ),
                     }
         except Exception as exc:
-            log.error("final_state_error | error={}", exc)
+            log.error("final_state_error | error={}", exc, exc_info=True)
+            yield {"type": "error", "data": json.dumps({"message": "Failed to process final state"})}
 
         if not _done_sent:
             _done_sent = True

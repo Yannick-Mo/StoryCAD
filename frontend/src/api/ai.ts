@@ -1,6 +1,8 @@
 // frontend/src/api/ai.ts
 import { apiPost, getToken } from './auth'
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? ''
+
 export interface AiGenerateRequest {
   chapter_id: string
   mode: 'goal' | 'outline'
@@ -63,7 +65,7 @@ export function createFromMaterial(
 ): () => void {
   const token = getToken()
   if (!token) { onError('请先登录'); return () => {} }
-  const url = `/api/projects/create-from-material`
+  const url = `${API_BASE}/api/projects/create-from-material`
   const controller = new AbortController()
 
   fetch(url, {

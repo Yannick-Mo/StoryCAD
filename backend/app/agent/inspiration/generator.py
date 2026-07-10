@@ -1,6 +1,9 @@
 import json
+import logging
 from app.llm.client import LLMClient
 from app.llm.types import Message
+
+logger = logging.getLogger(__name__)
 
 
 STARTER_SYSTEM_PROMPT = """你是一个创意故事生成器。根据用户指定的类型和风格，生成一个新颖的故事情节起点。
@@ -136,6 +139,7 @@ class InspirationGenerator:
                     results.extend(data["results"])
                 elif isinstance(data, list):
                     results.extend(data)
-            except (json.JSONDecodeError, KeyError, Exception):
+            except (json.JSONDecodeError, KeyError, Exception) as exc:
+                logger.warning("batch_generate skipped genre=%s: %s", genre, exc)
                 continue
         return results

@@ -67,6 +67,15 @@ class ConversationMemory:
                 self._store[conv_id] = []
         return conv_id
 
+    async def get_or_create_conversation(self, project_id: str, user_id: str, conversation_id: str | None = None, title: str = "") -> tuple[str, bool]:
+        """Return (conversation_id, is_new). Atomic check-and-create."""
+        if conversation_id:
+            existing = await self.get_conversation(project_id, user_id, conversation_id)
+            if existing:
+                return conversation_id, False
+        cid = await self.create_conversation(project_id, user_id, title)
+        return cid, True
+
     async def get_history(self, conversation_id: str) -> list[Message]:
         if self._redis:
             raw = await self._redis.lrange(
@@ -131,11 +140,32 @@ class ConversationMemory:
                     decoded[k_str] = v_str
                 if decoded.get("project_id") != project_id or decoded.get("user_id") != user_id:
                     return None
+                # Include messages for frontend ConversationDetail contract
+                messages = await self.get_history(conversation_id)
+                decoded["messages"] = [
+                    {
+                        "id": f"{conversation_id}-{i}",
+                        "role": m.role,
+                        "content": m.content or "",
+                        "created_at": decoded.get("created_at", ""),
+                    }
+                    for i, m in enumerate(messages)
+                ]
                 return decoded
             return None
         async with self._lock:
             meta = self._meta.get(conversation_id)
         if meta and meta.get("project_id") == project_id and meta.get("user_id") == user_id:
+            messages = await self.get_history(conversation_id)
+            meta["messages"] = [
+                {
+                    "id": f"{conversation_id}-{i}",
+                    "role": m.role,
+                    "content": m.content or "",
+                    "created_at": meta.get("created_at", ""),
+                }
+                for i, m in enumerate(messages)
+            ]
             return meta
         return None
 

@@ -117,7 +117,6 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
         scheduleUpdate()
       },
       onStep: (step: string) => setStep(step),
-      onToolStart: (data: string) => setStep(`执行: ${data}`),
       onToolDone: (data: string) => {
         try {
           const parsed = JSON.parse(data)
