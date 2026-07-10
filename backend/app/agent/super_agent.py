@@ -122,6 +122,10 @@ class SuperAgent:
         _done_sent = False
         _last_token_time = time.monotonic()
 
+        # Phase 1: Buffer tokens during graph execution
+        token_buffer: list[str] = []
+        final_values: dict | None = None
+
         try:
             async with asyncio.timeout(_CHAT_STREAM_TIMEOUT):
                 async for event in self.app.astream_events(
@@ -145,11 +149,14 @@ class SuperAgent:
                         if isinstance(chunk, dict):
                             token = chunk.get("_stream_token")
                             if token:
-                                assistant_content += token
-                                yield {"type": "token", "data": token}
+                                token_buffer.append(token)
                                 continue
                             if chunk.get("_stream_done"):
                                 _done_sent = True
+                    elif event["event"] == "on_chain_end":
+                        output = event["data"].get("output")
+                        if isinstance(output, dict) and "project_context" in output:
+                            final_values = output
         except asyncio.TimeoutError:
             log.warning("timeout | conv_id={}", conversation_id)
             await self.conv_memory.delete_last_message(conversation_id)
@@ -159,51 +166,65 @@ class SuperAgent:
             log.error("graph_execution_error | error_type={} | error={}", type(exc).__name__, exc, exc_info=True)
             raise
 
-        try:
-            final_state = await self.app.aget_state(config)
-            if final_state and final_state.values:
-                values = final_state.values
+        # Phase 2: Get final state if not captured from stream
+        if final_values is None:
+            try:
+                state = await self.app.aget_state(config)
+                if state and state.values:
+                    final_values = state.values
+            except Exception as exc:
+                log.error("final_state_error | error={}", exc, exc_info=True)
 
-                tool_results = values.get("tool_results", [])
-                # Only show real tool executions — skip internal metadata results
-                visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
-                for tr in visible_results:
-                    yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
+        # Phase 3: Emit tool results before response
+        if final_values:
+            tool_results = final_values.get("tool_results", [])
+            visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
+            for tr in visible_results:
+                yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
 
-                options = values.get("current_options", [])
-                if options:
-                    yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
+            options = final_values.get("current_options", [])
+            if options:
+                yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
 
-                pending_plan = values.get("pending_plan", [])
-                plan_confirmed = values.get("plan_confirmed", False)
-                if pending_plan and not plan_confirmed:
-                    yield {
-                        "type": "plan",
-                        "data": json.dumps(
-                            {
-                                "steps": pending_plan,
-                                "status": "awaiting_confirmation",
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
+            pending_plan = final_values.get("pending_plan", [])
+            plan_confirmed = final_values.get("plan_confirmed", False)
+            if pending_plan and not plan_confirmed:
+                yield {
+                    "type": "plan",
+                    "data": json.dumps(
+                        {
+                            "steps": pending_plan,
+                            "status": "awaiting_confirmation",
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
 
-                # Only emit project_updated when actual write tools ran, not for analysis-only passes
-                write_tools_executed = [tr.get("tool") for tr in visible_results if tr.get("success")]
-                if write_tools_executed:
-                    yield {
-                        "type": "project_updated",
-                        "data": json.dumps(
-                            {
-                                "tools_executed": write_tools_executed,
-                                "all_success": all(tr.get("success", True) for tr in visible_results),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    }
-        except Exception as exc:
-            log.error("final_state_error | error={}", exc, exc_info=True)
-            yield {"type": "error", "data": json.dumps({"message": "Failed to process final state"})}
+            write_tools_executed = [tr.get("tool") for tr in visible_results if tr.get("success")]
+            if write_tools_executed:
+                yield {
+                    "type": "project_updated",
+                    "data": json.dumps(
+                        {
+                            "tools_executed": write_tools_executed,
+                            "all_success": all(tr.get("success", True) for tr in visible_results),
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+
+        # Phase 4: Flush buffered response tokens
+        if token_buffer:
+            assistant_content = "".join(token_buffer)
+            for token in token_buffer:
+                yield {"type": "token", "data": token}
+        elif final_values:
+            messages = final_values.get("messages", [])
+            if messages:
+                content = messages[-1].get("content", "")
+                if content:
+                    assistant_content = content
+                    yield {"type": "token", "data": content}
 
         if not _done_sent:
             _done_sent = True
