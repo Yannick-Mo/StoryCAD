@@ -129,13 +129,10 @@ class DeleteSceneTool(BaseTool):
             if scene.project_id != project_id:
                 return ToolResult(success=False, error="Scene does not belong to this project")
 
-            await db.delete(scene)
-            await db.execute(
-                select(SceneContent).where(SceneContent.scene_id == scene_id)
-            )
             await db.execute(
                 SceneContent.__table__.delete().where(SceneContent.scene_id == scene_id)
             )
+            await db.delete(scene)
             await db.flush()
             await _recalc_chapter_counts(db, project_id)
             await db.commit()
@@ -274,10 +271,13 @@ class UpdateProjectTool(BaseTool):
                     select(ProjectConfig).where(ProjectConfig.project_id == project_id)
                 )
                 config_obj = config.scalar_one_or_none()
-                if config_obj:
-                    for field in config_fields:
-                        if field in kwargs:
-                            setattr(config_obj, field, kwargs[field])
+                if not config_obj:
+                    config_obj = ProjectConfig(project_id=project_id)
+                    db.add(config_obj)
+                    await db.flush()
+                for field in config_fields:
+                    if field in kwargs:
+                        setattr(config_obj, field, kwargs[field])
 
             await db.commit()
             return ToolResult(success=True, data={
@@ -325,7 +325,7 @@ class CreateProjectFromMaterialTool(BaseTool):
             config = {"configurable": {"thread_id": thread_id}}
             initial_state: MaterialState = {
                 "material": material,
-                "project_title": kwargs.get("project_title", "未命名项目").strip() or "未命名项目",
+                "project_title": (kwargs.get("project_title") or "未命名项目").strip(),
                 "genre": "", "tone": "", "characters_raw": [],
                 "plot_summary": "", "world_elements": "",
                 "acts": [], "estimated_words": 0, "scenes": [],
@@ -512,7 +512,7 @@ async def _write_new_project(
     project_title = state.get("project_title", "未命名项目")
     project = Project(
         title=project_title[:255],
-        description=state.get("genre", "") or "",
+        description=state.get("description", state.get("plot_summary", "")),
         owner_id=owner_id,
     )
     db.add(project)
@@ -552,12 +552,17 @@ async def _write_new_project(
         state.get("scenes", []),
         key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0)),
     ):
-        cid = chap_id_map.get((sc["act_idx"], sc["chapter_idx"]))
+        cid = chap_id_map.get((sc.get("act_idx", 0), sc.get("chapter_idx", 0)))
         if not cid:
             continue
-        key = (sc["act_idx"], sc["chapter_idx"])
+        key = (sc.get("act_idx", 0), sc.get("chapter_idx", 0))
         per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
         if per_chapter_count[key] > 5:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Skipping scene '%s' — chapter %s already has 5 scenes (cap reached)",
+                sc.get("title", "untitled"), key
+            )
             continue
         scene_sort_total += 1
         await repo.create_entity(Scene, {

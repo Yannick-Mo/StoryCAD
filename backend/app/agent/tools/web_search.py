@@ -16,6 +16,11 @@ from app.agent.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
+
+class WebSearchError(Exception):
+    pass
+
+
 _SERPAPI_KEY: str | None = None
 _CACHE: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
 _CACHE_MAX = 32
@@ -109,9 +114,6 @@ def _cache_set(key: str, data: list[dict]):
 async def _search_serpapi(query: str, max_results: int = 5) -> list[dict]:
     """Search via SerpAPI."""
     key = _get_serpapi_key()
-    if not key:
-        raise WebSearchError("SERPAPI_API_KEY not configured")
-
     cache_key = f"serpapi:{query}:{max_results}"
     cached = _cache_get(cache_key)
     if cached is not None:

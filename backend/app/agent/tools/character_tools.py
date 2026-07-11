@@ -141,9 +141,9 @@ class UpdateRelationTool(BaseTool):
             "rel_type": {"type": "string", "description": "关系类型"},
             "label": {"type": "string", "description": "关系标签"},
             "description": {"type": "string", "description": "关系描述"},
-            "trust": {"type": "integer", "description": "信任度（0-100）"},
-            "threat": {"type": "integer", "description": "威胁度（0-100）"},
-            "attraction": {"type": "integer", "description": "吸引力（0-100）"},
+            "trust": {"type": "integer", "description": "信任度（0-100）", "minimum": 0, "maximum": 100},
+            "threat": {"type": "integer", "description": "威胁度（0-100）", "minimum": 0, "maximum": 100},
+            "attraction": {"type": "integer", "description": "吸引力（0-100）", "minimum": 0, "maximum": 100},
         },
         "required": ["project_id"],
     }
@@ -155,6 +155,11 @@ class UpdateRelationTool(BaseTool):
             repo = StoryCADRepository(db)
             relation_id = kwargs.get("relation_id")
             if relation_id:
+                rel = await db.get(CharacterRelation, uuid.UUID(relation_id))
+                if not rel:
+                    return ToolResult(success=False, error="Relation not found")
+                if rel.project_id != pid:
+                    return ToolResult(success=False, error="Relation does not belong to this project")
                 data = {"id": str(relation_id)}
                 for field in ("rel_type", "label", "description", "trust", "threat", "attraction"):
                     if field in kwargs:
@@ -170,10 +175,18 @@ class UpdateRelationTool(BaseTool):
                         success=False,
                         error="character_id and target_id are required when creating a new relation (no relation_id provided)",
                     )
+                char_id = uuid.UUID(kwargs["character_id"])
+                tgt_id = uuid.UUID(kwargs["target_id"])
+                char = await db.get(Character, char_id)
+                if not char or char.project_id != pid:
+                    return ToolResult(success=False, error=f"Character {char_id} not found in project")
+                tgt = await db.get(Character, tgt_id)
+                if not tgt or tgt.project_id != pid:
+                    return ToolResult(success=False, error=f"Target character {tgt_id} not found in project")
                 data = {
                     "project_id": str(pid),
-                    "character_id": str(uuid.UUID(kwargs["character_id"])),
-                    "target_id": str(uuid.UUID(kwargs["target_id"])),
+                    "character_id": str(char_id),
+                    "target_id": str(tgt_id),
                     "rel_type": kwargs.get("rel_type", "关联"),
                     "label": kwargs.get("label", ""),
                     "description": kwargs.get("description", ""),

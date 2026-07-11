@@ -71,7 +71,7 @@ class ContinueSceneTool(BaseTool):
             sc = result.scalar_one_or_none()
             existing = sc.content if sc else ""
             new_content = existing + ("\n\n" if existing else "") + additional
-            writer = WriteSceneContentTool()
+            writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             return ToolResult(success=False, error=str(e))
@@ -100,7 +100,7 @@ class RewriteSceneTool(BaseTool):
             if not scene_obj:
                 return ToolResult(success=False, error="Scene not found")
             await verify_project_owner(db, scene_obj.project_id, kwargs.get("user_id"))
-            writer = WriteSceneContentTool()
+            writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=content)
         except Exception as e:
             return ToolResult(success=False, error=str(e))
@@ -139,8 +139,14 @@ class ExpandSelectionTool(BaseTool):
                     success=False,
                     error="AI output did not match the selected text in the scene. The original text could not be found in the current content.",
                 )
-            new_content = sc.content.replace(original, expanded, 1)
-            writer = WriteSceneContentTool()
+            pos = sc.content.find(original)
+            if pos == -1:
+                return ToolResult(
+                    success=False,
+                    error="AI output did not match the selected text in the scene. The original text could not be found in the current content.",
+                )
+            new_content = sc.content[:pos] + expanded + sc.content[pos + len(original):]
+            writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             return ToolResult(success=False, error=str(e))
@@ -179,8 +185,14 @@ class CompressSelectionTool(BaseTool):
                     success=False,
                     error="AI output did not match the selected text in the scene. The original text could not be found in the current content.",
                 )
-            new_content = sc.content.replace(original, compressed, 1)
-            writer = WriteSceneContentTool()
+            pos = sc.content.find(original)
+            if pos == -1:
+                return ToolResult(
+                    success=False,
+                    error="AI output did not match the selected text in the scene. The original text could not be found in the current content.",
+                )
+            new_content = sc.content[:pos] + compressed + sc.content[pos + len(original):]
+            writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             return ToolResult(success=False, error=str(e))

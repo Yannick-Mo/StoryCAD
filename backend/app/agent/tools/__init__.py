@@ -64,6 +64,8 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:
+        if cls.name in registry:
+            raise ValueError(f"Duplicate tool name: {cls.name}")
         inst = _safe_instantiate(cls, llm_client)
         if inst is not None:
             registry[cls.name] = inst

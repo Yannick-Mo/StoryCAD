@@ -3,18 +3,19 @@ from __future__ import annotations
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
 from app.agent.orchestrator import AgentOrchestrator
 
 
 class _CallAgentBase(BaseTool):
     """Base class for agent-calling tools. Subclasses differ only in name/description/mode."""
     mode: str = ""
-    _llm_client: LLMClient | None = None
+    is_write_operation = True
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            orch = AgentOrchestrator(db, llm_client=self._llm_client)
+            await verify_project_owner(db, uuid.UUID(kwargs["project_id"]), kwargs.get("user_id"))
+            orch = AgentOrchestrator(db, llm_client=self.llm_client)
             result = await orch.generate(
                 project_id=uuid.UUID(kwargs["project_id"]),
                 chapter_id=uuid.UUID(kwargs["chapter_id"]),
