@@ -19,6 +19,8 @@ class VectorStore:
             genre = None
         if not project_id:
             project_id = None
+        query = query[:500]
+        limit = min(limit, 100)
         sql = text("""
             SELECT id, content, source_type, genre, tags,
                    ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', :query)) as rank
@@ -62,10 +64,10 @@ class VectorStore:
             genre = None
         if not project_id:
             project_id = None
-        emb_str = str(query_embedding)
+        limit = min(limit, 100)
         sql = text("""
             SELECT id, content, source_type, genre, tags,
-                   1 - (embedding <=> :query_emb) as similarity
+                    1 - (embedding <=> :query_emb) as similarity
             FROM knowledge_chunks
             WHERE embedding IS NOT NULL
             AND (:genre IS NULL OR genre = :genre)
@@ -76,8 +78,8 @@ class VectorStore:
         result = await self.db.execute(
             sql,
             {
-                "query_emb": emb_str,
-                "query_emb2": emb_str,
+                "query_emb": query_embedding,
+                "query_emb2": query_embedding,
                 "genre": genre,
                 "project_id": project_id,
                 "limit": limit,
@@ -96,14 +98,18 @@ class VectorStore:
             for r in rows
         ]
 
-    async def add_chunk(self, chunk_data: dict) -> KnowledgeChunk:
+    async def add_chunk(self, chunk_data: dict, user_id: str | None = None) -> KnowledgeChunk:
+        project_id = chunk_data.get("project_id")
+        if project_id and user_id:
+            from app.agent.tools.base import verify_project_owner
+            await verify_project_owner(self.db, project_id, user_id)
         chunk = KnowledgeChunk(
             content=chunk_data["content"],
-            embedding=str(chunk_data.get("embedding")) if chunk_data.get("embedding") else None,
+            embedding=chunk_data.get("embedding"),
             source_type=chunk_data["source_type"],
             genre=chunk_data.get("genre"),
             tags=chunk_data.get("tags", []),
-            project_id=chunk_data.get("project_id"),
+            project_id=project_id,
             user_id=chunk_data.get("user_id"),
         )
         self.db.add(chunk)
@@ -111,17 +117,25 @@ class VectorStore:
         await self.db.refresh(chunk)
         return chunk
 
-    async def delete_chunk(self, chunk_id: uuid.UUID) -> bool:
+    async def delete_chunk(self, chunk_id: uuid.UUID, user_id: str | None = None) -> bool:
         stmt = select(KnowledgeChunk).where(KnowledgeChunk.id == chunk_id)
         result = await self.db.execute(stmt)
         chunk = result.scalar_one_or_none()
         if not chunk:
             return False
+        if chunk.project_id and user_id:
+            from app.agent.tools.base import verify_project_owner
+            await verify_project_owner(self.db, chunk.project_id, user_id)
         await self.db.delete(chunk)
         await self.db.commit()
         return True
 
-    async def get_chunks_by_project(self, project_id: uuid.UUID) -> list[KnowledgeChunk]:
+    async def get_chunks_by_project(self, project_id: uuid.UUID | None = None, user_id: str | None = None) -> list[KnowledgeChunk]:
+        if project_id and user_id:
+            from app.agent.tools.base import verify_project_owner
+            await verify_project_owner(self.db, project_id, user_id)
+        if project_id is None:
+            return []
         stmt = select(KnowledgeChunk).where(
             (KnowledgeChunk.project_id == project_id) | (KnowledgeChunk.project_id.is_(None))
         )

@@ -19,9 +19,9 @@ RETRYABLE_STATUSES = {429, 500, 502, 503}
 MAX_RETRIES = 3
 
 
-def _sanitize_error(e: Exception) -> str:
-    msg = str(e)
+def _sanitize_error(msg: str) -> str:
     msg = re.sub(r'Bearer\s+\S+', 'Bearer [REDACTED]', msg)
+    msg = re.sub(r'(?i)(authorization|api[_-]?key)\s*[:=]\s*\S+', r'\1: [REDACTED]', msg)
     return msg
 
 
@@ -104,7 +104,7 @@ class LLMClient:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             proxy=proxy_url if proxy_url else None,
-            trust_env=proxy_url is not None,
+            trust_env=False,
         )
 
     @staticmethod
@@ -266,13 +266,13 @@ class LLMClient:
             except httpx.HTTPStatusError as e:
                 if e.response.status_code not in RETRYABLE_STATUSES:
                     raise LLMNonRetryableError(
-                        f"LLM API error {e.response.status_code}: {e.response.text}"
+                        f"LLM API error {e.response.status_code}: {_sanitize_error(e.response.text)}"
                     ) from e
                 last_error = e
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
             except Exception as e:
-                raise LLMError(f"Unexpected LLM error: {_sanitize_error(e)}") from e
+                raise LLMError(f"Unexpected LLM error: {_sanitize_error(str(e))}") from e
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(2**attempt)
         raise LLMRetryExhaustedError(
@@ -313,13 +313,13 @@ class LLMClient:
             except httpx.HTTPStatusError as e:
                 if e.response.status_code not in RETRYABLE_STATUSES:
                     raise LLMNonRetryableError(
-                        f"LLM API error {e.response.status_code}: {e.response.text}"
+                        f"LLM API error {e.response.status_code}: {_sanitize_error(e.response.text)}"
                     ) from e
                 last_error = e
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
             except Exception as e:
-                raise LLMError(f"Unexpected LLM error: {_sanitize_error(e)}") from e
+                raise LLMError(f"Unexpected LLM error: {_sanitize_error(str(e))}") from e
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(2**attempt)
         raise LLMRetryExhaustedError(
@@ -371,7 +371,7 @@ class LLMClient:
                     if delta.get("content"):
                         yield delta["content"]
                 return
-            except (LLMNonRetryableError, LLMRetryExhaustedError) as e:
+            except (LLMNonRetryableError, LLMRetryExhaustedError, LLMError) as e:
                 last_error = e
                 if current_model != models_to_try[-1]:
                     logger.warning("Model '{}' failed, trying next: {}", current_model, e)
