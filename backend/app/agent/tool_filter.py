@@ -10,6 +10,7 @@ SKILL_TO_TOOLS: dict[str, set[str]] = {
     },
     "plot_outline": {
         "read_project", "read_chapter", "read_full_project",
+        "update_project",
         "update_chapter", "update_act", "update_scene",
         "create_scene", "set_chapter_goal",
         "create_act", "create_chapter",
@@ -36,13 +37,28 @@ READ_ONLY_TOOLS: set[str] = {
     "search_knowledge",
     "analyze_chapter", "analyze_character_arc", "project_health",
     "check_consistency", "analyze_rhythm", "suggest_next",
+    "list_characters", "web_search",
 }
 
 # Tools available in any mode
 GENERAL_TOOLS: set[str] = {
     "read_project", "read_chapter", "read_scene", "read_full_project",
     "search_knowledge",
+    "web_search",
+}
+
+# Write tools available in cowriter mode without requiring any skill.
+# These cover the most fundamental project CRUD operations so that
+# users can write content even on empty projects with no skills assigned.
+COWRITER_BASE_TOOLS: set[str] = {
     "update_project",
+    "create_act",
+    "create_chapter",
+    "create_scene",
+    "create_character",
+    "update_scene",
+    "update_character",
+    "write_scene_content",
 }
 
 # Maps actual skill display names (from skill YAML name field)
@@ -53,6 +69,14 @@ SKILL_ALIAS_MAP: dict[str, set[str]] = {
     "悬疑推理":      {"character_dev", "analysis", "plot_outline"},
     "现实主义":      {"character_dev", "writing_assist"},
     "网络爽文":     {"writing_assist", "plot_outline", "analysis"},
+    "科幻":         {"plot_outline", "writing_gen", "analysis"},
+    "奇幻":         {"plot_outline", "writing_gen"},
+    "历史":         {"character_dev", "writing_assist", "plot_outline"},
+    "恐怖":         {"character_dev", "plot_outline"},
+    "武侠":         {"character_dev", "writing_assist", "plot_outline"},
+    "仙侠":         {"character_dev", "writing_assist", "plot_outline"},
+    "都市":         {"character_dev", "writing_assist"},
+    "游戏":         {"plot_outline", "writing_gen", "character_dev"},
     # Self-mappings for backward compat when internal names are passed directly
     "character_dev":  {"character_dev"},
     "plot_outline":   {"plot_outline"},
@@ -88,6 +112,7 @@ def get_available_tools(
                     allowed.update(t for t in tools if t in READ_ONLY_TOOLS)
     else:
         allowed.update(GENERAL_TOOLS)
+        allowed.update(COWRITER_BASE_TOOLS)
         for sname in skill_names:
             categories = SKILL_ALIAS_MAP.get(sname, {sname})
             for cat in categories:

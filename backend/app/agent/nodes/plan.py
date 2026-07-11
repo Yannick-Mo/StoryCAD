@@ -76,7 +76,7 @@ def _build_entity_context(project_ctx: dict) -> str:
             truncated.append(part)
         entity_text = "\n".join(truncated)
 
-    return entity_text
+    return entity_text, project_entity_ids
 
 
 def _validate_step_params(step: dict, tool_inst: BaseTool) -> list[str]:
@@ -121,8 +121,7 @@ def _validate_step_params(step: dict, tool_inst: BaseTool) -> list[str]:
     return errors
 
 
-def _validate_step(step: dict, tools: dict[str, BaseTool]) -> list[str]:
-    """Validate a single plan step. Returns a list of error messages (empty = valid)."""
+def _validate_step(step: dict, tools: dict[str, BaseTool], entity_ids: set[str] | None = None) -> list[str]:
     step_errors: list[str] = []
     tool_name = step.get("tool", "")
     params = step.get("params", {})
@@ -155,11 +154,12 @@ def _validate_step(step: dict, tools: dict[str, BaseTool]) -> list[str]:
     for param_name, param_value in params.items():
         if isinstance(param_value, str) and param_name.endswith("_id"):
             try:
-                uuid.UUID(param_value)
+                parsed = uuid.UUID(param_value)
+                if entity_ids and str(parsed) not in entity_ids:
+                    step_errors.append(f"Step '{tool_name}': param '{param_name}' value '{param_value}' is not a valid project entity ID")
             except (ValueError, AttributeError):
                 step_errors.append(f"Step '{tool_name}': param '{param_name}' is not a valid UUID")
 
-    # Schema-based parameter validation
     schema_errors = _validate_step_params(step, inst)
     step_errors.extend(schema_errors)
 
@@ -172,14 +172,14 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
         steps: list[dict] = list(state.get("intermediate_steps", []))
 
         active_skills = state.get("active_skills", [])
-        tools = get_filtered_tools(all_tools, active_skills)
+        tools = get_filtered_tools(all_tools, active_skills, mode=state.get("mode", "chat"))
         write_tools = _get_write_tools(tools)
 
         last_msg = state["messages"][-1] if state["messages"] else None
         user_content = last_msg.content if last_msg else ""
 
         project_ctx = state.get("project_context", {})
-        entity_context = _build_entity_context(project_ctx)
+        entity_context, entity_ids = _build_entity_context(project_ctx)
         tool_descriptions = get_tool_descriptions(tools)
 
         retry_ctx = state.get("retry_context")
@@ -221,12 +221,14 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
                 "current_step_index": 0,
                 "current_intent": "simple_q",
                 "errors": errors,
+                "retry_count": 0,
+                "current_options": [],
             }
 
         validated: list[dict] = []
         all_validation_errors: list[str] = []
         for s in steps_list[:MAX_PLAN_STEPS]:
-            step_errors = _validate_step(s, tools)
+            step_errors = _validate_step(s, tools, entity_ids=entity_ids)
             if step_errors:
                 for err in step_errors:
                     errors.append(err)
@@ -241,6 +243,8 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
                 "current_step_index": 0,
                 "current_intent": "simple_q",
                 "errors": errors + ["Plan produced no valid steps"],
+                "retry_count": 0,
+                "current_options": [],
             }
 
         has_write = any(s.get("tool") in write_tools for s in validated)
@@ -253,9 +257,11 @@ def create_plan_node(all_tools: dict, llm_client: LLMClient):
                 "steps": validated,
                 "reasoning": "",
                 "validation_errors": all_validation_errors,
-            } if has_write else [],
+            } if has_write else {},
             "plan_confirmed": not has_write,
             "retry_context": None,
+            "retry_count": 0,
+            "current_options": [],
             "intermediate_steps": steps + [
                 {"action": "plan", "steps_count": len(validated), "has_write": has_write}
             ],
