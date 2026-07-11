@@ -5,6 +5,8 @@ import json
 import logging
 import re
 
+from app.agent.knowledge import APP_GUIDE
+
 logger = logging.getLogger(__name__)
 
 _COWRITER_SYSTEM_PROMPT = """你是小说的合著者，而不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
@@ -53,6 +55,8 @@ class CoWriterMode:
 
         parts = [
             _COWRITER_SYSTEM_PROMPT,
+            "",
+            APP_GUIDE,
             "",
             "## 项目概况",
             f"书名：《{title}》 | 类型：{genre}",
