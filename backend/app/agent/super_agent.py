@@ -277,6 +277,23 @@ class SuperAgent:
         # Phase 3: Emit tool results before response
         async for evt in self._emit_tool_events(final_values):
             yield evt
+
+        # ── State cleanup: prevent stale options/plans from persisting ──
+        # When a plan was confirmed and executed (or rejected), clear the
+        # options and pending_plan so the next message starts with a clean
+        # slate.  Without this the old options and "confirm / reject" buttons
+        # keep showing on every subsequent message.
+        plan_was_confirmed = final_values.get("plan_confirmed", False)
+        pending_is_empty = not final_values.get("pending_plan", {})
+        if plan_was_confirmed and pending_is_empty:
+            # Plan was executed successfully — clear options for next turn
+            final_values["current_options"] = []
+            final_values["plan_confirmed"] = False
+            log.debug("Cleared options/plan_confirmed after successful plan execution")
+        elif not pending_is_empty and not plan_was_confirmed:
+            # New pending plan was generated — options stay visible
+            pass
+
         await self.conv_memory.save_agent_state(
             conversation_id,
             final_values.get("pending_plan", {}),
