@@ -791,6 +791,13 @@ def create_execute_tool_node(
             }
 
         if pending_plan and plan_confirmed:
+            # Sync steps from pending_plan into planned_steps so
+            # _execute_planned_step can find them.  The cowriter-choice
+            # flow sets pending_plan but never runs the plan node, which
+            # is where planned_steps normally gets populated.
+            planned_steps = state.get("planned_steps", [])
+            if not planned_steps and pending_plan.get("steps"):
+                state["planned_steps"] = pending_plan["steps"]
             return await _execute_planned_step(state, tools, db)
 
         step_idx = state.get("current_step_index", 0)

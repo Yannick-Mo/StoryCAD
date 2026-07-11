@@ -108,11 +108,13 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             if plan_decision == "plan_confirm":
                 return {
                     "current_intent": "plan_confirm",
+                    "plan_confirmed": True,
                     "intermediate_steps": steps + [{"action": "plan_confirm"}],
                 }
             elif plan_decision == "plan_reject":
                 return {
                     "current_intent": "simple_q",
+                    "plan_confirmed": False,
                     "pending_plan": {},
                     "planned_steps": [],
                     "current_step_index": 0,
