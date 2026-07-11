@@ -448,7 +448,12 @@ export default function AiChatPanel({
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-amber-100">{contextLabel}</h3>
           <button
-            onClick={() => chat.setMode(chat.mode === 'chat' ? 'cowriter' : 'chat')}
+            onClick={() => {
+              const newMode = chat.mode === 'chat' ? 'cowriter' : 'chat'
+              chat.setMode(newMode)
+              chat.setCurrentOptions([])
+              chat.setPendingPlan(null)
+            }}
             className={`text-[10px] px-2 py-0.5 rounded transition-colors flex items-center gap-1 ${
               chat.mode === 'cowriter'
                 ? 'bg-amber-700 text-amber-100 hover:bg-amber-600'
