@@ -17,7 +17,7 @@ class _UUIDEncoder(json.JSONEncoder):
         return super().default(o)
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge.rag import RAGEngine
@@ -79,7 +79,10 @@ def _is_meaningful_query(query_hint: str) -> bool:
     short_patterns = {"嗯", "是", "好", "ok", "yes", "no", "y", "n", "哦", "嗯嗯", "好的", "是的"}
     if stripped in short_patterns:
         return False
-    return True
+    meaningful_keywords = {"故事", "小说", "情节", "角色", "人物", "剧情", "大纲", "章节", "场景", "写作", "设定", "世界观", "主题", "对话", "描述", "开头", "结尾", "转折", "高潮", "plot", "character", "story", "writing", "outline", "chapter", "scene", "theme", "protagonist", "antagonist", "motivation", "conflict", "pacing", "dialogue", "narrative", "setting", "worldbuild", "genre", "tone", "mood"}
+    if any(kw in stripped for kw in meaningful_keywords):
+        return True
+    return len(query_hint) >= 15
 
 
 class ContextBuilder:
@@ -115,6 +118,8 @@ class ContextBuilder:
                 if raw is not None:
                     data = raw.decode() if isinstance(raw, bytes) else raw
                     return json.loads(data)
+            except json.JSONDecodeError:
+                logger.warning("Redis cache data corrupted for key=%s, falling back to in-memory cache", key)
             except Exception as exc:
                 logger.warning("Redis cache get failed for key=%s: %s", key, exc)
             return _CONTEXT_CACHE.get(key)
@@ -151,8 +156,11 @@ class ContextBuilder:
         config = await self._get_config(project_id)
         ctx["total_words"] = config.total_words if config else 100000
 
-        act = await self._get_act(target_chapter.act_id)
-        ctx["act_name"] = act.name if act else "未命名幕"
+        if target_chapter.act_id is None:
+            ctx["act_name"] = "未命名幕"
+        else:
+            act = await self._get_act(target_chapter.act_id)
+            ctx["act_name"] = act.name if act else "未命名幕"
 
         ctx["characters_summary"] = await self._characters_text(project_id)
 
@@ -163,7 +171,11 @@ class ContextBuilder:
             ctx["adjacent_chapters"] = await self._adjacent_chapters_text(
                 project_id, target_chapter.sort_order, target_chapter.act_id
             )
-            ctx["position_desc"] = self._position_desc(target_chapter.sort_order)
+            chapter_count_result = await self.db.execute(
+                select(func.count(Chapter.id)).where(Chapter.project_id == project_id)
+            )
+            total_chapters = chapter_count_result.scalar() or 0
+            ctx["position_desc"] = self._position_desc(target_chapter.sort_order, total_chapters)
 
         if mode in ("outline", "writing"):
             ctx["relations_summary"] = await self._relations_text(project_id)
@@ -186,6 +198,8 @@ class ContextBuilder:
             select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order)
         )
         all_chapters = chapters_result.scalars().all()
+        if len(all_chapters) > 200:
+            logger.warning("Project %s has %d chapters, loading all at once may cause performance issues", project_id, len(all_chapters))
         chapters_by_act: dict[uuid.UUID, list] = {}
         for ch in all_chapters:
             chapters_by_act.setdefault(ch.act_id, []).append(ch)
@@ -195,6 +209,8 @@ class ContextBuilder:
             select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order)
         )
         all_scenes = scenes_result.scalars().all()
+        if len(all_scenes) > 1000:
+            logger.warning("Project %s has %d scenes, loading all at once may cause performance issues", project_id, len(all_scenes))
         scenes_by_chapter: dict[uuid.UUID, list] = {}
         for sc in all_scenes:
             scenes_by_chapter.setdefault(sc.chapter_id, []).append(sc)
@@ -406,7 +422,7 @@ class ContextBuilder:
                 "id": str(proj.id),
                 "title": proj.title,
                 "genre": proj.genre or "",
-                "logline": getattr(proj, "logline", "") or "",
+                "logline": proj.logline or "",
                 "status": proj.status or "",
             },
             "acts": acts_data,
@@ -547,6 +563,6 @@ class ContextBuilder:
                 genre=genre or None,
                 query=rag_query,
             )
-        except Exception:
-            logger.warning("RAG context retrieval failed, proceeding without it")
+        except Exception as e:
+            logger.warning("RAG context retrieval failed: %s", e, exc_info=True)
             return ""

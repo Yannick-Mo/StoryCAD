@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 # Negative patterns: words/phrases that should NOT be followed by a confirmation keyword
 _NEGATION_PATTERNS = [
-    re.compile(r"\b不\s*"),
-    re.compile(r"\b别\s*"),
-    re.compile(r"\b没\s*"),
+    re.compile(r"不\s*"),
+    re.compile(r"别\s*"),
+    re.compile(r"没\s*"),
     re.compile(r"\bdon't\s+"),
     re.compile(r"\bdo not\s+"),
     re.compile(r"\bwon't\s+"),
@@ -34,10 +34,17 @@ _REJECT_KEYWORDS = [
     "reject", "deny",
     "不想执行", "不要执行",
     "不需要", "不采纳",
+    "不对", "不是", "不行", "不可以", "stop", "cancel", "别",
 ]
 
 _REJECT_PATTERNS = [
     re.compile(r"\bno\b"),
+    re.compile(r"\bnope\b"),
+    re.compile(r"\bnah\b"),
+    re.compile(r"\bnever\b"),
+    re.compile(r"\bno\s+way\b"),
+    re.compile(r"\bstop\b"),
+    re.compile(r"\bcancel\b"),
 ]
 
 _CONFIRM_KEYWORDS = [
@@ -106,7 +113,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             elif plan_decision == "plan_reject":
                 return {
                     "current_intent": "simple_q",
-                    "pending_plan": [],
+                    "pending_plan": {},
                     "planned_steps": [],
                     "current_step_index": 0,
                     "intermediate_steps": steps + [{"action": "plan_reject"}],
@@ -145,8 +152,8 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             direct_write_kw = ["帮我写", "帮我创作", "帮我生成", "直接写一段",
                                "write a", "write for me", "write me"]
             if any(kw in content for kw in direct_write_kw):
-                logger.debug("Direct write detected in cowriter mode, routing to simple_q")
-                return {"current_intent": "simple_q"}
+                logger.debug("Direct write detected in cowriter mode, routing to cowriter")
+                return {"current_intent": "cowriter"}
 
         # --- LLM classification (no tool definitions passed) ---
         tool_descriptions = get_tool_descriptions(tools)
@@ -182,8 +189,9 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                     '{"intent": "simple_q|tool_call|cowriter|complex", "reason": "..."}'
                 )
 
+            tools_section = f"\n\nAvailable tools:\n{tool_descriptions}" if tool_descriptions else ""
             msgs = [
-                Message(role="system", content=system_text + f"\n\nAvailable tools:\n{tool_descriptions}"),
+                Message(role="system", content=system_text + tools_section),
                 Message(role="user", content=content),
             ]
 
@@ -216,9 +224,9 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 logger.debug("Classification result: intent=%s reason=%s", intent, reason)
             except (json.JSONDecodeError, TypeError, AttributeError):
                 raw = (result.content or "").strip().lower()
-                if "complex" in raw:
+                if re.search(r"\bcomplex\b", raw):
                     intent = "complex"
-                elif "cowriter" in raw:
+                elif re.search(r"\bcowriter\b", raw):
                     intent = "cowriter"
                 else:
                     intent = "simple_q"

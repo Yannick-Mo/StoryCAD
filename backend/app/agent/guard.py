@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+import threading
 import time
 import uuid
 import unicodedata
@@ -291,6 +292,7 @@ class RateLimiter:
         self._redis = redis_client
         self._memory_store: dict[str, list[float]] = defaultdict(list)
         self._memory_lock = asyncio.Lock()
+        self._memory_sync_lock = threading.Lock()
 
     def check(self, key: str) -> tuple[bool, int]:
         """Synchronous check (in-memory only; logs warning if Redis is configured)."""
@@ -317,14 +319,14 @@ class RateLimiter:
             return True, len(queue) + 1
 
     def _check_memory_sync(self, key: str, now: float) -> tuple[bool, int]:
-        """Sync fallback for the deprecated `check()` sync method."""
-        queue = self._memory_store[key]
-        while queue and queue[0] < now - self.window:
-            queue.pop(0)
-        if len(queue) >= self.max_requests:
-            return False, len(queue)
-        queue.append(now)
-        return True, len(queue) + 1
+        with self._memory_sync_lock:
+            queue = self._memory_store[key]
+            while queue and queue[0] < now - self.window:
+                queue.pop(0)
+            if len(queue) >= self.max_requests:
+                return False, len(queue)
+            queue.append(now)
+            return True, len(queue) + 1
 
     async def _check_redis(self, key: str, now: float) -> tuple[bool, int]:
         min_score = now - self.window

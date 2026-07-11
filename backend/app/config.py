@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     llm_max_sys_chars: int = 12000
     llm_max_rag_chars: int = 1500
 
+    # CORS configuration
+    cors_origins: list[str] = ["http://localhost:5173"]
+
     # Embedding configuration
     embedding_base_url: str = ""
     embedding_model: str = "text-embedding-3-small"

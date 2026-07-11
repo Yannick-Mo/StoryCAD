@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import ContextBuilder
@@ -24,6 +26,7 @@ INTENT_TO_NODE: dict[str, str] = {
     "cowriter_choice": "execute_tool",
     "complex": "plan",
     "plan_confirm": "execute_tool",
+    "plan_reject": "generate",
     "execute_tool": "execute_tool",
 }
 
@@ -36,7 +39,7 @@ def _build_tool_descriptions(all_tools: dict) -> str:
 
 
 def _route_intent(state: AgentState) -> str:
-    pending = state.get("pending_plan", [])
+    pending: dict = state.get("pending_plan", {})
     if pending:
         return "execute_tool"
     return state.get("current_intent", "simple_q")
@@ -44,7 +47,7 @@ def _route_intent(state: AgentState) -> str:
 
 def _route_after_plan(state: AgentState) -> str:
     plan_confirmed: bool = state.get("plan_confirmed", False)
-    pending: list = state.get("pending_plan", [])
+    pending: dict = state.get("pending_plan", {})
     if plan_confirmed:
         return "execute_tool"
     if not pending:
@@ -57,22 +60,29 @@ def _route_after_tool(state: AgentState) -> str:
     max_retry: int = state.get("max_retries", 3)
     results: list[dict] = state.get("tool_results", [])
     has_error: bool = any(not r.get("success", True) for r in results)
-
-    if has_error and retry < max_retry:
-        return "retry"
-
     step_idx: int = state.get("current_step_index", 0)
     planned: list[dict] = state.get("planned_steps", [])
+    intent: str = state.get("current_intent", "")
 
+    logger.warning("_route_after_tool retry={} has_error={} step_idx={} planned={} intent={} recent_results={}",
+                   retry, has_error, step_idx, len(planned), intent,
+                   [(r.get("tool"), r.get("success")) for r in results[-3:]])
+
+    if has_error and retry < max_retry:
+        # Check if the error is due to mode restriction (blocked write in chat mode)
+        for r in results:
+            if not r.get("success", True):
+                error = r.get("error", "")
+                if "对话模式禁止写入操作" in error or "blocked in chat mode" in error:
+                    logger.warning("write_blocked -> continue (skip retry)")
+                    return "continue"
+        return "retry"
     if has_error and retry >= max_retry:
         return "continue"
-
     if step_idx < len(planned):
         return "continue_plan"
-
     if retry >= max_retry:
         return "continue"
-
     return "continue"
 
 
