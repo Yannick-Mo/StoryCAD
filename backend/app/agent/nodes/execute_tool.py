@@ -275,9 +275,18 @@ async def _execute_planned_step(
 
 
 async def _execute_tool_call(
-    state: AgentState, tools: dict, db: AsyncSession
+    state: AgentState, tools: dict, db: AsyncSession, tool_descriptions: str = "",
+    llm_client: LLMClient | None = None,
 ) -> dict:
+    """Execute tool calls from the LLM. If tool_calls is empty (the common case
+    because classify_intent passes tools=None to the LLM to prevent tool-calling
+    during classification), re-invoke the LLM with tools enabled to generate
+    actual tool calls — otherwise we'd reach here with intent=tool_call but
+    nothing to execute, falling through to generate which only *describes* what
+    it would do without actually doing it.
+    """
     from app.agent.tool_filter import READ_ONLY_TOOLS
+    from app.agent.prompts import render_prompt
 
     mode = state.get("mode", "chat")
     tool_calls = state.get("tool_calls", [])
@@ -286,6 +295,100 @@ async def _execute_tool_call(
     errors: list[str] = list(state.get("errors", []))
     has_error = False
     was_write_blocked = False
+
+    # ── If we have no tool_calls, re-generate them with tools enabled ──
+    if not tool_calls and llm_client:
+        user_msgs = [m for m in state.get("messages", []) if m.role == "user"]
+        if not user_msgs:
+            return {
+                "tool_results": state.get("tool_results", []),
+                "errors": errors + ["No user message to generate tool calls from"],
+                "current_intent": "simple_q",
+            }
+
+        last_user = user_msgs[-1]
+
+        # Build a focused tool-execution system prompt
+        proj = state.get("project_context", {}).get("project", {})
+        pid = state.get("project_id", "")
+        project_info = ""
+        if proj:
+            title = proj.get("title", "未命名")
+            genre = proj.get("genre", "")
+            project_info = f"当前项目: {title}"
+            if genre:
+                project_info += f"({genre})"
+            if pid:
+                project_info += f" [project_id: {pid}]"
+
+        system = render_prompt("tool_execution", **{
+            "project_info": project_info,
+            "project_id": pid,
+            "mode": mode,
+            "tool_descriptions": tool_descriptions,
+            "last_errors": "; ".join(errors[-3:]) if errors else "none",
+        })
+        if not system:
+            system = (
+                "你是工具执行助手。根据用户请求，调用合适的工具。\n"
+                f"项目 ID 是 {pid}。\n\n"
+                "可用工具:\n"
+                f"{tool_descriptions}\n\n"
+                "如果用户要求执行写操作且当前模式允许，请直接调用对应工具。"
+                "如果当前模式不允许写入，回复说明而不是调用工具。"
+            )
+
+        try:
+            # Convert tool dicts to ToolDef for LLM
+            tool_defs = [t.to_openai_tool() for t in tools.values()]
+            tool_def_objects = [
+                type("ToolDef", (), {"type": d["type"], "function": d["function"]})()
+                for d in tool_defs
+            ]
+
+            result = await llm_client.chat(
+                messages=[
+                    Message(role="system", content=system),
+                    Message(role="user", content=last_user.content or ""),
+                ],
+                tools=tool_def_objects,
+                temperature=0.2,
+                request_id=state.get("trace_id", ""),
+            )
+
+            if result.tool_calls:
+                # Convert LLM tool_calls to state tool_calls format
+                from app.llm.types import ToolCall as TCT
+                converted: list = []
+                for tc in result.tool_calls:
+                    if isinstance(tc, TCT):
+                        converted.append(tc)
+                    elif isinstance(tc, dict):
+                        converted.append(TCT(
+                            id=tc.get("id", ""),
+                            function=tc.get("function", {}),
+                        ))
+                tool_calls = converted
+                logger.info(
+                    "_execute_tool_call: LLM regenerated %d tool calls: %s",
+                    len(tool_calls),
+                    [(tc.function.get("name", "") if tc.function else "?") for tc in tool_calls],
+                )
+            else:
+                # LLM chose not to call any tools — fall through to generate
+                logger.info("_execute_tool_call: LLM generated no tool calls even with tools enabled")
+                return {
+                    "tool_results": state.get("tool_results", []),
+                    "errors": errors,
+                    "current_intent": "simple_q",
+                }
+        except Exception as e:
+            logger.error("_execute_tool_call: LLM tool call generation failed: %s", e)
+            return {
+                "tool_results": state.get("tool_results", []),
+                "errors": errors + [f"工具调用生成失败: {e}"],
+                "current_intent": "simple_q",
+            }
 
     for tc in tool_calls:
         fn_name = ""
@@ -697,7 +800,7 @@ def create_execute_tool_node(
         intent = state.get("current_intent", "")
 
         if intent == "tool_call":
-            return await _execute_tool_call(state, tools, db)
+            return await _execute_tool_call(state, tools, db, tool_descriptions, llm_client)
         elif intent == "cowriter":
             return await _execute_cowriter(
                 state, tools, llm_client, tool_descriptions
