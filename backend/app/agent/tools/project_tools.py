@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, Scene, SceneContent
 from app.storycad.repository import StoryCADRepository
@@ -12,6 +12,12 @@ from app.utils import row_to_dict
 
 
 class ReadProjectTool(BaseTool):
+    meta = ToolMeta(
+        name="read_project",
+        description="加载完整项目上下文，包括标题、体裁、描述和配置",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="read project context config",
+    )
     name = "read_project"
     description = "加载完整项目上下文，包括标题、体裁、描述和配置"
     parameters = {
@@ -40,6 +46,12 @@ class ReadProjectTool(BaseTool):
 
 
 class ReadChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="read_chapter",
+        description="获取章节及其场景列表",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="read chapter scenes list",
+    )
     name = "read_chapter"
     description = "获取章节及其场景列表"
     parameters = {
@@ -70,6 +82,12 @@ class ReadChapterTool(BaseTool):
 
 
 class ReadSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="read_scene",
+        description="获取场景内容，包括 SceneContent",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="read scene content detail",
+    )
     name = "read_scene"
     description = "获取场景内容，包括 SceneContent"
     parameters = {
@@ -98,6 +116,12 @@ class ReadSceneTool(BaseTool):
 
 
 class CreateSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="create_scene",
+        description="在指定章节中创建新场景",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="create scene new",
+    )
     name = "create_scene"
     description = "在指定章节中创建新场景"
     is_write_operation = True
@@ -151,6 +175,12 @@ class CreateSceneTool(BaseTool):
 
 
 class UpdateSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="update_scene",
+        description="更新场景内容、标题、POV、地点、时间、梗概等",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update scene modify edit",
+    )
     name = "update_scene"
     description = "更新场景内容、标题、POV、地点、时间、梗概等"
     is_write_operation = True
@@ -202,6 +232,12 @@ class UpdateSceneTool(BaseTool):
 
 
 class ReadFullProjectTool(BaseTool):
+    meta = ToolMeta(
+        name="read_full_project",
+        description="加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="read full project complete context",
+    )
     name = "read_full_project"
     description = "加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题"
     parameters = {
@@ -225,6 +261,12 @@ class ReadFullProjectTool(BaseTool):
 
 
 class SetChapterGoalTool(BaseTool):
+    meta = ToolMeta(
+        name="set_chapter_goal",
+        description="设置章节的写作目标",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="set chapter goal objective",
+    )
     name = "set_chapter_goal"
     description = "设置章节的写作目标"
     is_write_operation = True
@@ -256,6 +298,12 @@ class SetChapterGoalTool(BaseTool):
 
 
 class UpdateChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="update_chapter",
+        description="更新章节信息（标题、状态、目标）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update chapter modify edit",
+    )
     name = "update_chapter"
     description = "更新章节信息（标题、状态、目标）"
     is_write_operation = True
@@ -298,6 +346,12 @@ class UpdateChapterTool(BaseTool):
 
 
 class UpdateActTool(BaseTool):
+    meta = ToolMeta(
+        name="update_act",
+        description="更新幕信息（名称、颜色）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update act modify edit",
+    )
     name = "update_act"
     description = "更新幕信息（名称、颜色）"
     is_write_operation = True

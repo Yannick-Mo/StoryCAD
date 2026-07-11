@@ -3,12 +3,18 @@ from __future__ import annotations
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Scene, SceneContent
 from app.agent.utils import count_words
 
 
 class WriteSceneContentTool(BaseTool):
+    meta = ToolMeta(
+        name="write_scene_content",
+        description="写入场景正文内容，更新场景字数",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="write scene content body",
+    )
     name = "write_scene_content"
     description = "写入场景正文内容，更新场景字数"
     is_write_operation = True
@@ -46,6 +52,12 @@ class WriteSceneContentTool(BaseTool):
 
 
 class ContinueSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="continue_scene",
+        description="基于前文风格分析，续写场景内容（追加到已有内容后）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="continue scene append write",
+    )
     name = "continue_scene"
     description = "基于前文风格分析，续写场景内容（追加到已有内容后）"
     is_write_operation = True
@@ -78,6 +90,12 @@ class ContinueSceneTool(BaseTool):
 
 
 class RewriteSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="rewrite_scene",
+        description="以指定风格或要求重写场景内容",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="rewrite scene style content",
+    )
     name = "rewrite_scene"
     description = "以指定风格或要求重写场景内容"
     is_write_operation = True
@@ -107,6 +125,12 @@ class RewriteSceneTool(BaseTool):
 
 
 class ExpandSelectionTool(BaseTool):
+    meta = ToolMeta(
+        name="expand_selection",
+        description="扩写指定段落，保持风格一致",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="expand selection paragraph enlarge",
+    )
     name = "expand_selection"
     description = "扩写指定段落，保持风格一致"
     is_write_operation = True
@@ -153,6 +177,12 @@ class ExpandSelectionTool(BaseTool):
 
 
 class CompressSelectionTool(BaseTool):
+    meta = ToolMeta(
+        name="compress_selection",
+        description="压缩指定段落，保持关键信息",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="compress selection paragraph shorten",
+    )
     name = "compress_selection"
     description = "压缩指定段落，保持关键信息"
     is_write_operation = True

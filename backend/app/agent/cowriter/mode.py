@@ -5,6 +5,7 @@ import logging
 import re
 
 from app.agent.knowledge import APP_GUIDE
+from app.agent.prompts.builder import get_prompt_builder
 
 logger = logging.getLogger(__name__)
 
@@ -118,31 +119,70 @@ class CoWriterMode:
         scene_count = sum(sum(len(ch.get("scenes", [])) for ch in a.get("chapters", [])) for a in acts)
         char_count = len(chars)
 
+        # ── Use the modular prompt builder for static + dynamic sections ──
+        builder = get_prompt_builder()
+
+        # Build the base from cached static sections
+        base = builder.build(["identity", "output_style"])
+
+        # Render project context dynamically
+        project_section = builder.render_dynamic_section("project_context",
+            title=title,
+            genre=genre,
+            description=description,
+            act_count=act_count,
+            chapter_count=chapter_count,
+            scene_count=scene_count,
+            char_count=char_count,
+            project_id=project_id or proj.get("id", "unknown"),
+        )
+
         # Build strict tool params detail section
         tool_params_detail = self._build_tool_params_detail()
 
-        # Inject project_id into the system prompt header
+        # Inject project_id into the cowriter-specific system prompt header
         pid = project_id or proj.get("id", "unknown")
         system_header = _COWRITER_SYSTEM_PROMPT.format(
             tool_params_detail=tool_params_detail,
             project_id=pid,
         )
 
-        parts = [
-            system_header,
-            "",
-            APP_GUIDE,
-            "",
-            "## 项目概况",
-            f"书名：《{title}》 | 类型：{genre}",
-            f"结构：{act_count}幕 / {chapter_count}章 / {scene_count}场景 / {char_count}角色",
-        ]
-        if description:
-            parts.append(f"简介：{description}")
+        # Render session context dynamically via builder (or fall back to
+        # the legacy _build_session_context for detailed decision history)
+        sess = session or {}
+        session_section = ""
+        if sess.get("is_active"):
+            # Use builder for the structured part
+            decisions = sess.get("decisions", [])
+            recent_decisions = []
+            for d in decisions[-3:]:
+                recent_decisions.append({
+                    "round": d.get("round", "?"),
+                    "label": d.get("label", "?"),
+                    "action": d.get("action", ""),
+                    "result": d.get("result", ""),
+                })
 
-        session_ctx = _build_session_context(session or {})
-        if session_ctx:
-            parts.append(f"\n{session_ctx}")
+            session_section = builder.render_dynamic_section("session_state",
+                phase=sess.get("phase", "explore"),
+                goal=sess.get("goal", ""),
+                current_focus=sess.get("current_focus", ""),
+                decision_count=len(decisions),
+                recent_decisions=recent_decisions,
+            )
+
+        # Assemble all parts: base identity/style + header-specific + project + session + app guide + tools + data
+        parts = [
+            base,
+            system_header,
+            project_section,
+        ]
+
+        if session_section:
+            parts.append(session_section)
+
+        parts.append("")
+        parts.append(APP_GUIDE)
 
         skills = project_context.get("active_skills", [])
         if skills:

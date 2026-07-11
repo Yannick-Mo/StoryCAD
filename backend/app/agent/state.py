@@ -31,6 +31,9 @@ class AgentState(TypedDict):
     search_results: list[dict]
     cowriter_session: dict  # Persistent session: {phase, goal, decisions, current_focus, ...}
     _context_loaded: bool
+    _turn_count: int
+    recovery_state: dict  # Layered error recovery: {recovery_history, last_action, ...}
+    _model_override: str  # Set by RecoveryExecutor when switching to fallback model
 
 
 def has_pending_plan(pending_plan: dict) -> bool:

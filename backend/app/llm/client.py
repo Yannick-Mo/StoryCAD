@@ -11,7 +11,7 @@ import httpx
 from loguru import logger
 
 from app.config import settings
-from .types import ChatResult, Message, ToolCall, ToolDef, Usage
+from .types import ChatResult, Message, StreamChunk, ToolCall, ToolDef, Usage
 from .registry import get as _get_model, get_ordered as _get_ordered
 from .tracker import TokenTracker
 
@@ -370,6 +370,134 @@ class LLMClient:
                     delta = chunk.get("delta", {})
                     if delta.get("content"):
                         yield delta["content"]
+                return
+            except (LLMNonRetryableError, LLMRetryExhaustedError, LLMError) as e:
+                last_error = e
+                if current_model != models_to_try[-1]:
+                    logger.warning("Model '{}' failed, trying next: {}", current_model, e)
+                continue
+
+        raise LLMError("All models failed") from last_error
+
+    async def chat_stream_with_tools(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        tools: list[ToolDef] | None = None,
+        tool_choice: str = "auto",
+        request_id: str = "",
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Stream tokens AND tool calls from the LLM.
+
+        Yields :class:`StreamChunk` objects as they arrive from the API:
+        - content chunks (text tokens)
+        - tool_call chunks (function name and arguments streaming in)
+        - final chunk with finish_reason and usage
+
+        This enables executing tools during streaming rather than after.
+        """
+        models_to_try = _resolve_models(model or self.model)
+        last_error: Exception | None = None
+
+        logger.bind(request_id=request_id).info(
+            "LLM stream+tool | model=%s tools=%d",
+            model or self.model, len(tools) if tools else 0,
+        )
+
+        for current_model in models_to_try:
+            try:
+                model_def = _get_model(current_model)
+            except KeyError as e:
+                logger.warning("Model '{}' not registered, skipping", current_model)
+                last_error = e
+                continue
+
+            body = self._build_body(
+                messages, current_model, temperature, max_tokens,
+                stream=True, tools=tools, tool_choice=tool_choice,
+                response_format=None,
+            )
+            headers = {
+                "Authorization": f"Bearer {model_def.api_key}",
+                "Content-Type": "application/json",
+            }
+            url = f"{model_def.base_url}/chat/completions"
+
+            # Accumulators for streaming tool calls
+            tool_call_builders: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
+
+            try:
+                async for chunk in self._stream_chat(url, headers, body):
+                    if chunk.get("usage"):
+                        ud = chunk["usage"]
+                        _tracker.track(
+                            model=current_model,
+                            prompt_tokens=ud.get("prompt_tokens", 0),
+                            completion_tokens=ud.get("completion_tokens", 0),
+                        )
+
+                    delta = chunk.get("delta", {})
+                    finish_reason = chunk.get("finish_reason")
+
+                    # Handle tool call deltas
+                    if delta.get("tool_calls"):
+                        for tc_chunk in delta["tool_calls"]:
+                            idx = tc_chunk.get("index", 0)
+                            if idx not in tool_call_builders:
+                                tool_call_builders[idx] = {
+                                    "id": "",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            builder = tool_call_builders[idx]
+                            if tc_chunk.get("id"):
+                                builder["id"] += tc_chunk["id"]
+                            if tc_chunk.get("function"):
+                                fn = tc_chunk["function"]
+                                if fn.get("name"):
+                                    builder["function"]["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    builder["function"]["arguments"] += fn["arguments"]
+
+                        # If this delta contains a complete tool call (has all parts),
+                        # emit it now. We check for non-empty name AND arguments OR finish_reason.
+                        # This handles models that stream tool calls incrementally.
+                        # We emit each tool call as it completes based on finish_reason.
+                        pass
+
+                    # When finish_reason signals the end of a tool call stream,
+                    # emit all completed tool call chunks
+                    if finish_reason:
+                        # Emit any accumulated tool calls now
+                        for idx in sorted(tool_call_builders.keys()):
+                            builder = tool_call_builders[idx]
+                            if builder["function"]["name"]:
+                                yield StreamChunk(
+                                    tool_call=ToolCall(
+                                        id=builder["id"],
+                                        function=builder["function"],
+                                    ),
+                                )
+                        tool_call_builders.clear()
+
+                        usage = None
+                        if chunk.get("usage"):
+                            ud = chunk["usage"]
+                            usage = Usage(
+                                prompt_tokens=ud.get("prompt_tokens", 0),
+                                completion_tokens=ud.get("completion_tokens", 0),
+                                total_tokens=ud.get("total_tokens", 0),
+                            )
+                        yield StreamChunk(
+                            finish_reason=finish_reason,
+                            usage=usage,
+                        )
+
+                    # Yield content chunks immediately
+                    if delta.get("content"):
+                        yield StreamChunk(content=delta["content"])
+
                 return
             except (LLMNonRetryableError, LLMRetryExhaustedError, LLMError) as e:
                 last_error = e

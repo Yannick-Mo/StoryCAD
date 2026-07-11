@@ -79,6 +79,9 @@ class PromptLoader:
     def _preload_all(self) -> None:
         for yaml_file in _PROMPT_DIR.glob("*.yaml"):
             name = yaml_file.stem
+            # Skip non-template YAML files (e.g. system.yaml used by builder.py)
+            if name == "system":
+                continue
             try:
                 with open(yaml_file, encoding="utf-8") as f:
                     data = yaml.safe_load(f)

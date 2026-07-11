@@ -80,6 +80,12 @@ def _route_after_tool(state: AgentState) -> str:
             logger.info("cowriter_choice failed -> routing back to cowriter for regeneration")
             return "regenerate"
 
+    # ── Layered error recovery (opt-in via llm_recovery_enabled) ──
+    if has_error and _is_recovery_enabled():
+        recovery_route = _maybe_recovery_route(state, has_error)
+        if recovery_route:
+            return recovery_route
+
     if has_error and retry < max_retry:
         # Check if the error is due to mode restriction (blocked write in chat mode)
         for r in results:
@@ -96,6 +102,66 @@ def _route_after_tool(state: AgentState) -> str:
     if retry >= max_retry:
         return "continue"
     return "continue"
+
+
+def _is_recovery_enabled() -> bool:
+    from app.config import settings
+    return getattr(settings, "llm_recovery_enabled", False)
+
+
+def _maybe_recovery_route(state: AgentState, has_error: bool) -> str | None:
+    """When layered recovery is enabled, classify the error and decide whether
+    to use recovery instead of simple retry.
+
+    Returns a route string ("recovery" or "recovery_give_up") if recovery
+    should handle this, or None to fall through to the legacy retry logic.
+    """
+    if not has_error:
+        return None
+
+    from app.agent.recovery import ErrorClassifier, RecoveryAction, get_fallback_models
+
+    errors: list[str] = state.get("errors", [])
+    error_text = "; ".join(errors[-3:]) if errors else "unknown error"
+    attempt = state.get("retry_count", 0)
+
+    # Incorporate error from tool_results if errors list is sparse
+    if not error_text or error_text == "unknown error":
+        results = state.get("tool_results", [])
+        result_errors = [
+            r.get("error", "") for r in results
+            if not r.get("success", True) and r.get("error")
+        ]
+        if result_errors:
+            error_text = "; ".join(result_errors[-3:])
+
+    recovery_history = state.get("recovery_state", {}).get("recovery_history", [])
+
+    decision = ErrorClassifier.classify(
+        error_text, attempt,
+        max_retries=state.get("max_retries", 3),
+        recovery_history=recovery_history,
+    )
+
+    logger.info(
+        "Recovery decision: action=%s message=%s attempt=%d",
+        decision.action.value, decision.message, attempt,
+    )
+
+    if decision.action == RecoveryAction.GIVE_UP:
+        return "recovery_give_up"
+
+    # Store the decision so execute_tool can apply it on the next pass
+    recovery_state = dict(state.get("recovery_state", {}))
+    recovery_state["pending_decision"] = {
+        "action": decision.action.value,
+        "message": decision.message,
+        "delay_seconds": decision.delay_seconds,
+        "context": decision.context,
+    }
+    state["recovery_state"] = recovery_state
+
+    return "recovery"
 
 
 def build_super_graph(
@@ -146,6 +212,8 @@ def build_super_graph(
             "retry": "execute_tool",
             "continue_plan": "execute_tool",
             "regenerate": "execute_tool",
+            "recovery": "execute_tool",
+            "recovery_give_up": "generate",
         },
     )
 

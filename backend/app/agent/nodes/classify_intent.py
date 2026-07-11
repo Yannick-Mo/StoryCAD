@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from app.agent.prompts import render_prompt
+from app.agent.prompts.builder import get_prompt_builder
 from app.agent.state import AgentState
 from app.agent.tools import get_tool_descriptions, get_filtered_tools
 from app.llm.client import LLMClient
@@ -115,7 +116,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 return {
                     "current_intent": "simple_q",
                     "plan_confirmed": False,
-                    "pending_plan": {},
+                    "pending_plan": [],
                     "planned_steps": [],
                     "current_step_index": 0,
                     "intermediate_steps": steps + [{"action": "plan_reject"}],
@@ -221,10 +222,14 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 "cowriter_session": session_info,
             })
             if not system_text:
-                system_text = (
-                    "You are an intent classifier. Respond with JSON: "
-                    '{"intent": "simple_q|tool_call|cowriter|complex", "reason": "..."}'
-                )
+                # Fallback: use minimal identity from the builder
+                builder = get_prompt_builder()
+                system_text = builder.build(["identity"])
+                if not system_text:
+                    system_text = (
+                        "You are an intent classifier. Respond with JSON: "
+                        '{"intent": "simple_q|tool_call|cowriter|complex", "reason": "..."}'
+                    )
 
             tools_section = f"\n\nAvailable tools:\n{tool_descriptions}" if tool_descriptions else ""
             msgs = [

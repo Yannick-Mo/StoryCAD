@@ -7,13 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterRelation, Scene, SceneContent
 from app.storycad.repository import StoryCADRepository
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
 from app.agent.utils import count_words
 from app.utils import row_to_dict
 
 
 class CreateActTool(BaseTool):
+    meta = ToolMeta(
+        name="create_act",
+        description="在项目中创建新幕（Act），必须指定项目ID",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="create act new",
+    )
     name = "create_act"
     description = "在项目中创建新幕（Act），必须指定项目ID"
     is_write_operation = True
@@ -54,6 +60,12 @@ class CreateActTool(BaseTool):
 
 
 class CreateChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="create_chapter",
+        description="在指定幕（Act）中创建新章节（Chapter），必须指定项目ID和幕ID",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="create chapter new",
+    )
     name = "create_chapter"
     description = "在指定幕（Act）中创建新章节（Chapter），必须指定项目ID和幕ID"
     is_write_operation = True
@@ -105,6 +117,13 @@ class CreateChapterTool(BaseTool):
 
 
 class DeleteSceneTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_scene",
+        description="删除指定场景（Scene），同时删除场景正文内容",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        search_hint="delete scene remove destroy",
+    )
     name = "delete_scene"
     description = "删除指定场景（Scene），同时删除场景正文内容"
     is_write_operation = True
@@ -143,6 +162,13 @@ class DeleteSceneTool(BaseTool):
 
 
 class DeleteChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_chapter",
+        description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文（数据库级联删除）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        search_hint="delete chapter remove cascade",
+    )
     name = "delete_chapter"
     description = "删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文（数据库级联删除）"
     is_write_operation = True
@@ -186,6 +212,13 @@ class DeleteChapterTool(BaseTool):
 
 
 class DeleteActTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_act",
+        description="删除指定幕（Act），同时删除该幕下的所有章节和场景（数据库级联删除）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        search_hint="delete act remove cascade",
+    )
     name = "delete_act"
     description = "删除指定幕（Act），同时删除该幕下的所有章节和场景（数据库级联删除）"
     is_write_operation = True
@@ -234,6 +267,12 @@ class DeleteActTool(BaseTool):
 
 
 class UpdateProjectTool(BaseTool):
+    meta = ToolMeta(
+        name="update_project",
+        description="更新项目全局设定，包括标题、描述、体裁、全局世界观设定、目标字数等。只传入需要修改的字段即可",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update project settings config",
+    )
     name = "update_project"
     description = "更新项目全局设定，包括标题、描述、体裁、全局世界观设定、目标字数等。只传入需要修改的字段即可"
     is_write_operation = True
@@ -293,6 +332,14 @@ class UpdateProjectTool(BaseTool):
 
 
 class CreateProjectFromMaterialTool(BaseTool):
+    meta = ToolMeta(
+        name="create_project_from_material",
+        description="根据用户提供的创作素材，自动生成完整项目（包括幕、章、场景、角色、关系、世界观设定）。"
+                    "返回新创建的项目ID。素材至少10个字",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        timeout=120,
+        search_hint="create project from material generate",
+    )
     name = "create_project_from_material"
     description = "根据用户提供的创作素材，自动生成完整项目（包括幕、章、场景、角色、关系、世界观设定）。"\
                   "返回新创建的项目ID。素材至少10个字"
@@ -351,6 +398,12 @@ class CreateProjectFromMaterialTool(BaseTool):
 
 
 class CreateEdgeTool(BaseTool):
+    meta = ToolMeta(
+        name="create_edge",
+        description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="create edge connection link",
+    )
     name = "create_edge"
     description = "在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系"
     is_write_operation = True
@@ -411,6 +464,12 @@ class CreateEdgeTool(BaseTool):
 
 
 class UpdateEdgeTool(BaseTool):
+    meta = ToolMeta(
+        name="update_edge",
+        description="更新章节连线的类型、标签或手柄位置",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update edge modify connection",
+    )
     name = "update_edge"
     description = "更新章节连线的类型、标签或手柄位置"
     is_write_operation = True
@@ -452,6 +511,13 @@ class UpdateEdgeTool(BaseTool):
 
 
 class DeleteEdgeTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_edge",
+        description="删除指定章节连线",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        search_hint="delete edge remove connection",
+    )
     name = "delete_edge"
     description = "删除指定章节连线"
     is_write_operation = True

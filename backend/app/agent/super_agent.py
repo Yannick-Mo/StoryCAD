@@ -11,8 +11,10 @@ from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.attachments import AttachmentInjector
 from app.agent.graph import build_super_graph
 from app.agent.guard import InputGuard, RateLimiter
+from app.config import settings
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.history_manager import HistoryManager
 from app.agent.state import AgentState
@@ -38,6 +40,7 @@ class SuperAgent:
         self.conv_memory = ConversationMemory(redis_client)
         self._history_manager: HistoryManager | None = None
         self.input_guard = InputGuard(rate_limiter=RateLimiter())
+        self.attachment_injector = AttachmentInjector(redis_client)
 
     @property
     def history_manager(self) -> HistoryManager:
@@ -54,10 +57,21 @@ class SuperAgent:
                 changes[key] = str(value)[:200]
         return changes
 
-    async def _emit_tool_events(self, final_values: dict):
+    async def _emit_tool_events(self, final_values: dict, skip_keys: set[str] | None = None):
+        """Emit tool_done, option, plan, and project_updated events.
+
+        Args:
+            final_values: The final graph state dictionary.
+            skip_keys: Set of ``"tool_name|success_bool"`` keys for tool results
+                       that were already emitted during streaming execution.
+        """
         tool_results = final_values.get("tool_results", [])
         visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
         for tr in visible_results:
+            if skip_keys:
+                key = f"{tr.get('tool', '')}|{tr.get('success')}"
+                if key in skip_keys:
+                    continue
             yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
 
         options = final_values.get("current_options", [])
@@ -191,6 +205,9 @@ class SuperAgent:
             "search_results": [],
             "cowriter_session": saved_session,
             "_context_loaded": False,
+            "_turn_count": 1,
+            "recovery_state": {},
+            "_model_override": "",
         }
 
         await self.conv_memory.save_message(
@@ -198,6 +215,38 @@ class SuperAgent:
         )
 
         yield {"type": "conv_id", "data": conversation_id}
+
+        # ── Attachment Injection ──
+        # Inject per-turn context from the previous graph execution so
+        # the LLM sees tool summaries, session progress, errors, and
+        # pending plans without re-loading the full project context.
+        # Only effective on turns > 1 (turn 1 gets full context from
+        # load_full_context).
+        prev_tool_results = saved_pending_plan.get("_prev_tool_results", []) if isinstance(saved_pending_plan, dict) else []
+        prev_errors: list[str] = []
+        if isinstance(saved_pending_plan, dict):
+            prev_errors = saved_pending_plan.get("_prev_errors", []) or []
+
+        attachment_state_for_injector = {
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "cowriter_session": saved_session or {},
+            "errors": prev_errors,
+            "active_skills": [],
+            "pending_plan": saved_pending_plan,
+            "plan_confirmed": saved_plan_confirmed,
+            "_context_loaded": True,  # load_full_context runs turn 1; assume loaded
+            "mode": mode,
+        }
+        turn = len([m for m in history if m.role == "user"]) + 1
+        attachments = await self.attachment_injector.collect(
+            attachment_state_for_injector, prev_tool_results, turn,
+        )
+        if attachments:
+            messages = list(initial_state["messages"])
+            messages.extend(attachments)
+            initial_state["messages"] = messages  # type: ignore[index]
+            log.debug("injected %d attachment messages | turn=%d", len(attachments), turn)
 
         assistant_content = ""
         _done_sent = False
@@ -207,58 +256,116 @@ class SuperAgent:
         token_buffer: list[str] = []
         final_values: dict | None = None
         cached_options: list = []  # persisted across node boundaries
+        _streaming_tool_results: set[str] = set()  # track tool_done events yielded during streaming
 
-        try:
-            async with asyncio.timeout(_CHAT_STREAM_TIMEOUT):
-                async for event in self.app.astream_events(
-                    initial_state, config, version="v2"
+        if getattr(settings, "agent_use_loop", False):
+            # ── Optimized: agent_loop (LangGraph-free) ─────────────────
+            from app.agent.loop import agent_loop
+            from app.agent.tools import get_tool_registry, get_tool_descriptions
+
+            all_tools = get_tool_registry(db, llm_client=self._llm_client)
+            td = get_tool_descriptions(all_tools)
+
+            try:
+                async for event in agent_loop(
+                    initial_state, all_tools, self._llm_client, self.db, td,
                 ):
-                    _last_token_time = time.monotonic()
-                    if event["event"] == "on_chain_start":
-                        node = event.get("metadata", {}).get("langgraph_node", "")
-                        if node:
-                            log.debug("node_start | node={}", node)
-                            label = {
-                                "load_full_context": "读取项目数据...",
-                                "classify_intent": "理解你的意图...",
-                                "execute_tool": "执行分析...",
-                                "generate": "生成回复...",
-                                "plan": "制定计划...",
-                            }.get(node, f"正在{node}...")
-                            yield {"type": "step", "data": label}
-                    elif event["event"] == "on_chain_stream":
-                        chunk = event["data"]["chunk"]
-                        if isinstance(chunk, dict):
-                            token = chunk.get("_stream_token")
-                            if token:
-                                token_buffer.append(token)
-                                continue
-                            opts = chunk.get("current_options")
-                            if opts is not None:
-                                cached_options = opts
-                                if final_values is None:
-                                    final_values = {}
-                                final_values["current_options"] = opts
-                                continue
-                            if chunk.get("_stream_done"):
-                                _done_sent = True
-                    elif event["event"] == "on_chain_end":
-                        output = event["data"].get("output")
-                        if isinstance(output, dict):
-                            if output.get("current_options"):
-                                cached_options = output["current_options"]
-                            if "project_context" in output or "messages" in output:
-                                final_values = dict(output)
-                                if "current_options" not in output and cached_options:
-                                    final_values["current_options"] = cached_options
-        except asyncio.TimeoutError:
-            log.warning("timeout | conv_id={}", conversation_id)
-            await self.conv_memory.delete_last_message(conversation_id)
-            yield {"type": "error", "data": json.dumps({"message": "Request timed out. Please try again."})}
-            return
-        except Exception as exc:
-            log.error("graph_execution_error | error_type={} | error={}", type(exc).__name__, exc, exc_info=True)
-            raise
+                    if isinstance(event, dict):
+                        if event.get("_loop_done"):
+                            final_values = event["final_state"]
+                            break
+                        elif "_step" in event:
+                            yield {"type": "step", "data": event["_step"]}
+                        elif "_stream_token" in event:
+                            token_buffer.append(event["_stream_token"])
+                        elif "_tool_done" in event:
+                            yield {
+                                "type": "tool_done",
+                                "data": json.dumps(event["_tool_done"], ensure_ascii=False),
+                            }
+                            key = f"{event['_tool_done'].get('tool', '')}|{event['_tool_done'].get('success')}"
+                            _streaming_tool_results.add(key)
+                        elif "current_options" in event:
+                            cached_options = event["current_options"]
+                            if final_values is None:
+                                final_values = {}
+                            final_values["current_options"] = event["current_options"]
+                        elif "pending_plan" in event:
+                            if final_values is None:
+                                final_values = {}
+                            final_values["pending_plan"] = event["pending_plan"]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error(
+                    "agent_loop_error | error_type=%s | error=%s",
+                    type(exc).__name__, exc, exc_info=True,
+                )
+                raise
+
+        else:
+            # ── Existing: LangGraph path ───────────────────────────────
+            try:
+                async with asyncio.timeout(_CHAT_STREAM_TIMEOUT):
+                    async for event in self.app.astream_events(
+                        initial_state, config, version="v2"
+                    ):
+                        _last_token_time = time.monotonic()
+                        if event["event"] == "on_chain_start":
+                            node = event.get("metadata", {}).get("langgraph_node", "")
+                            if node:
+                                log.debug("node_start | node={}", node)
+                                label = {
+                                    "load_full_context": "读取项目数据...",
+                                    "classify_intent": "理解你的意图...",
+                                    "execute_tool": "执行分析...",
+                                    "generate": "生成回复...",
+                                    "plan": "制定计划...",
+                                }.get(node, f"正在{node}...")
+                                yield {"type": "step", "data": label}
+                        elif event["event"] == "on_chain_stream":
+                            chunk = event["data"]["chunk"]
+                            if isinstance(chunk, dict):
+                                token = chunk.get("_stream_token")
+                                if token:
+                                    token_buffer.append(token)
+                                    continue
+                                # ── Streaming tool events from streaming executor ──
+                                td = chunk.get("_tool_done")
+                                if td is not None:
+                                    yield {
+                                        "type": "tool_done",
+                                        "data": json.dumps(td, ensure_ascii=False),
+                                    }
+                                    key = f"{td.get('tool', '')}|{td.get('success')}"
+                                    _streaming_tool_results.add(key)
+                                    continue
+                                opts = chunk.get("current_options")
+                                if opts is not None:
+                                    cached_options = opts
+                                    if final_values is None:
+                                        final_values = {}
+                                    final_values["current_options"] = opts
+                                    continue
+                                if chunk.get("_stream_done"):
+                                    _done_sent = True
+                        elif event["event"] == "on_chain_end":
+                            output = event["data"].get("output")
+                            if isinstance(output, dict):
+                                if output.get("current_options"):
+                                    cached_options = output["current_options"]
+                                if "project_context" in output or "messages" in output:
+                                    final_values = dict(output)
+                                    if "current_options" not in output and cached_options:
+                                        final_values["current_options"] = cached_options
+            except asyncio.TimeoutError:
+                log.warning("timeout | conv_id={}", conversation_id)
+                await self.conv_memory.delete_last_message(conversation_id)
+                yield {"type": "error", "data": json.dumps({"message": "Request timed out. Please try again."})}
+                return
+            except Exception as exc:
+                log.error("graph_execution_error | error_type={} | error={}", type(exc).__name__, exc, exc_info=True)
+                raise
 
         # Phase 2: Get final state if not captured from stream
         if final_values is None:
@@ -275,7 +382,7 @@ class SuperAgent:
             return
 
         # Phase 3: Emit tool results before response
-        async for evt in self._emit_tool_events(final_values):
+        async for evt in self._emit_tool_events(final_values, skip_keys=_streaming_tool_results):
             yield evt
 
         # ── State cleanup: prevent stale options/plans from persisting ──

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.agent.state import AgentState
 from app.agent.tools import get_filtered_tools
 from app.agent.tools.base import BaseTool, ToolResult
 from app.llm.client import LLMClient
-from app.llm.types import Message
+from app.llm.types import Message, StreamChunk, ToolCall as TCT
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +287,7 @@ async def _execute_tool_call(
     """
     from app.agent.tool_filter import READ_ONLY_TOOLS
     from app.agent.prompts import render_prompt
+    from app.agent.prompts.builder import get_prompt_builder
 
     mode = state.get("mode", "chat")
     tool_calls = state.get("tool_calls", [])
@@ -328,6 +329,18 @@ async def _execute_tool_call(
             "tool_descriptions": tool_descriptions,
             "last_errors": "; ".join(errors[-3:]) if errors else "none",
         })
+        if not system:
+            # Fallback: use the modular builder's tool_execution_context + identity
+            builder = get_prompt_builder()
+            base = builder.build(["identity"])
+            exec_ctx = builder.render_dynamic_section("tool_execution_context",
+                project_id=pid,
+                project_info=project_info,
+                tool_descriptions=tool_descriptions,
+                last_errors="; ".join(errors[-3:]) if errors else "none",
+                mode=mode,
+            )
+            system = f"{base}\n\n{exec_ctx}"
         if not system:
             system = (
                 "你是工具执行助手。根据用户请求，调用合适的工具。\n"
@@ -430,6 +443,211 @@ async def _execute_tool_call(
         "retry_context": None if not has_error else (
             {
                 "failed_step": fn_name if has_error else None,
+                "error": errors[-1] if errors else None,
+            }
+        ),
+    }
+
+
+async def _execute_tool_call_streaming(
+    state: AgentState,
+    tools: dict[str, BaseTool],
+    tool_descriptions: str,
+    llm_client: LLMClient,
+    db: AsyncSession,
+) -> AsyncGenerator[dict, None]:
+    """Streaming version -- execute tools as they arrive from the LLM.
+
+    Unlike :func:`_execute_tool_call` which calls the LLM synchronously and
+    then executes tools, this function:
+      1. Streams the LLM response with tools enabled.
+      2. As each complete tool_use block arrives, hands it to
+         :class:`StreamingToolExecutor` for immediate execution.
+      3. Yields ``_stream_token`` dicts for text content (like generate does).
+      4. Yields ``_tool_done`` dicts as read-only (SAFE) tools complete.
+      5. After the stream ends, waits for remaining SAFE tools and runs
+         queued write tools serially, yielding their results.
+
+    This is the optimized path used when the LLM client supports
+    ``chat_stream_with_tools``.  It avoids the round-trip delay of waiting
+    for the full LLM response before starting tool execution.
+    """
+    from app.agent.tool_filter import READ_ONLY_TOOLS
+    from app.agent.prompts import render_prompt
+    from app.agent.prompts.builder import get_prompt_builder
+    from app.agent.tools.streaming_executor import StreamingToolExecutor
+
+    mode = state.get("mode", "chat")
+    errors: list[str] = list(state.get("errors", []))
+    results_accum: list[dict] = []
+    steps: list[dict] = list(state.get("intermediate_steps", []))
+    has_error = False
+    was_write_blocked = False
+
+    # -- Build the system prompt (same as _execute_tool_call) --
+    proj = state.get("project_context", {}).get("project", {})
+    pid = state.get("project_id", "")
+    project_info = ""
+    if proj:
+        title = proj.get("title", "未命名")
+        genre = proj.get("genre", "")
+        project_info = f"当前项目: {title}"
+        if genre:
+            project_info += f"({genre})"
+        if pid:
+            project_info += f" [project_id: {pid}]"
+
+    system = render_prompt("tool_execution", **{
+        "project_info": project_info,
+        "project_id": pid,
+        "mode": mode,
+        "tool_descriptions": tool_descriptions,
+        "last_errors": "; ".join(errors[-3:]) if errors else "none",
+    })
+    if not system:
+        builder = get_prompt_builder()
+        base = builder.build(["identity"])
+        exec_ctx = builder.render_dynamic_section("tool_execution_context",
+            project_id=pid,
+            project_info=project_info,
+            tool_descriptions=tool_descriptions,
+            last_errors="; ".join(errors[-3:]) if errors else "none",
+            mode=mode,
+        )
+        system = f"{base}\n\n{exec_ctx}"
+    if not system:
+        system = (
+            "你是工具执行助手。根据用户请求，调用合适的工具。\n"
+            f"项目 ID 是 {pid}。\n\n"
+            "可用工具:\n"
+            f"{tool_descriptions}\n\n"
+            "如果用户要求执行写操作且当前模式允许，请直接调用对应工具。"
+            "如果当前模式不允许写入，回复说明而不是调用工具。"
+        )
+
+    user_msgs = [m for m in state.get("messages", []) if m.role == "user"]
+    if not user_msgs:
+        yield {"_stream_done": True, "tool_results": state.get("tool_results", []),
+               "errors": errors + ["No user message to generate tool calls from"],
+               "current_intent": "simple_q"}
+        return
+
+    last_user = user_msgs[-1]
+
+    # -- Build tool definitions --
+    tool_defs = [t.to_openai_tool() for t in tools.values()]
+    tool_def_objects = [
+        type("ToolDef", (), {"type": d["type"], "function": d["function"]})()
+        for d in tool_defs
+    ]
+
+    # -- Set up the streaming executor --
+    executor = StreamingToolExecutor(tools, db=db)
+    content_parts: list[str] = []
+    tool_calls_received = False
+
+    try:
+        async for chunk in llm_client.chat_stream_with_tools(
+            messages=[
+                Message(role="system", content=system),
+                Message(role="user", content=last_user.content or ""),
+            ],
+            tools=tool_def_objects,
+            temperature=0.2,
+            request_id=state.get("trace_id", ""),
+        ):
+            # -- Content: yield as stream tokens --
+            if chunk.content:
+                content_parts.append(chunk.content)
+                yield {"_stream_token": chunk.content}
+
+            # -- Tool call: hand to executor immediately --
+            if chunk.tool_call:
+                tool_calls_received = True
+                fn = chunk.tool_call.function or {}
+                fn_name = fn.get("name", "").strip()
+                args_raw = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+
+                logger.debug("streaming tool: %s args=%s", fn_name,
+                             json.dumps(args, ensure_ascii=False)[:120])
+
+                executor.add_tool(
+                    chunk.tool_call,
+                    tool_use_id=chunk.tool_call.id,
+                    mode=mode,
+                    read_only_tool_names=READ_ONLY_TOOLS,
+                )
+
+            # -- Check for completed SAFE tools, yield tool_done events --
+            for result in executor.get_completed_results():
+                results_accum.append(result)
+                steps.append({
+                    "action": result.get("tool", ""),
+                    "args": result.get("params", {}),
+                    "result": result,
+                })
+                if not result.get("success", True):
+                    has_error = True
+                yield {"_tool_done": result}
+
+            # -- Finish reason: stream ended --
+            if chunk.finish_reason:
+                logger.debug("streaming_llm finish_reason=%s", chunk.finish_reason)
+
+    except Exception as exc:
+        logger.exception("Streaming tool call generation failed")
+        executor.discard()
+        yield {"_stream_done": True, "tool_results": state.get("tool_results", []),
+               "errors": errors + [f"工具调用生成失败: {exc}"],
+               "current_intent": "simple_q"}
+        return
+
+    # -- Wait for remaining SAFE + execute queued EXCLUSIVE/BARRIER tools --
+    remaining = await executor.get_remaining_results()
+    for result in remaining:
+        # Avoid double-counting results already yielded via get_completed_results
+        already = any(
+            r.get("tool") == result.get("tool") and r.get("success") is result.get("success")
+            for r in results_accum
+        )
+        if not already:
+            results_accum.append(result)
+            steps.append({
+                "action": result.get("tool", ""),
+                "args": result.get("params", {}),
+                "result": result,
+            })
+            if not result.get("success", True):
+                has_error = True
+            yield {"_tool_done": result}
+
+    # Check for blocked writes
+    for r in results_accum:
+        if not r.get("success") and "对话模式禁止写入操作" in (r.get("error") or ""):
+            was_write_blocked = True
+            break
+
+    if not tool_calls_received and not results_accum:
+        # LLM chose not to call any tools
+        yield {"_stream_done": True, "tool_results": state.get("tool_results", []),
+               "errors": errors, "current_intent": "simple_q"}
+        return
+
+    # -- Yield final state update --
+    yield {
+        "_stream_done": True,
+        "tool_results": state.get("tool_results", []) + results_accum,
+        "intermediate_steps": steps,
+        "retry_count": 0 if not has_error else (state.get("retry_count", 0) + 1),
+        "errors": errors,
+        "current_intent": "simple_q" if was_write_blocked else state.get("current_intent", "tool_call"),
+        "retry_context": None if not has_error else (
+            {
+                "failed_step": results_accum[-1].get("tool", "") if has_error and results_accum else None,
                 "error": errors[-1] if errors else None,
             }
         ),
@@ -760,17 +978,137 @@ def _is_chat_write_attempt(state: AgentState) -> tuple[bool, str]:
     return False, ""
 
 
+async def _apply_recovery_decision(
+    pending_decision: dict,
+    state: AgentState,
+) -> dict | None:
+    """Apply the recovery transformation stored in pending_decision.
+
+    Called when the graph routes back to execute_tool via the 'recovery'
+    edge.  Applies the delay, state mutation, etc. that the RecoveryExecutor
+    decided on.  Returns a dict of state updates to merge.
+    """
+    from app.agent.recovery import RecoveryAction, RecoveryExecutor, get_fallback_models
+
+    action_str = pending_decision.get("action", "")
+    try:
+        action = RecoveryAction(action_str)
+    except ValueError:
+        logger.warning("Unknown recovery action: %s", action_str)
+        return None
+
+    delay = pending_decision.get("delay_seconds", 0)
+    message = pending_decision.get("message", "")
+    context = pending_decision.get("context", {})
+
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    updates: dict = {}
+    recovery_state = dict(state.get("recovery_state", {}))
+    history: list[str] = list(recovery_state.get("recovery_history", []))
+    history.append(action.value)
+    recovery_state["recovery_history"] = history
+    recovery_state["last_action"] = action.value
+    recovery_state["last_message"] = message
+
+    if action == RecoveryAction.RETRY:
+        logger.info("Recovery retry after %ss: %s", delay, message)
+
+    elif action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:
+        # Inject the error into state so the LLM can self-correct
+        errors: list[str] = list(state.get("errors", []))
+        original = context.get("original_error", "")
+        errors.append(
+            f"[SELF-CORRECTION] Previous attempt failed: {original}"
+        )
+        updates["errors"] = errors
+        updates["retry_context"] = {
+            "failed": True,
+            "error": original,
+            "correction_attempt": context.get("retry_attempt", 1),
+        }
+        recovery_state["self_correction_applied"] = True
+
+    elif action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
+        executor = RecoveryExecutor()
+        compressed = executor._compress_messages(state.get("messages", []))
+        updates["messages"] = compressed
+        recovery_state["context_compressed"] = True
+
+    elif action == RecoveryAction.RETRY_ESCALATED_TOKENS:
+        recovery_state["escalated_tokens"] = True
+
+    elif action == RecoveryAction.SWITCH_MODEL:
+        fallbacks = get_fallback_models()
+        model_index = recovery_state.get("model_index", 0)
+        if model_index < len(fallbacks):
+            new_model = fallbacks[model_index]
+            recovery_state["model_index"] = model_index + 1
+            recovery_state["switched_model"] = new_model
+            updates["_model_override"] = new_model
+            logger.warning("Switching to fallback model: %s (index %d)", new_model, model_index)
+        else:
+            recovery_state["models_exhausted"] = True
+            updates["errors"] = list(state.get("errors", [])) + [
+                "All fallback models exhausted"
+            ]
+
+    elif action == RecoveryAction.GIVE_UP:
+        recovery_state["gave_up"] = True
+        recovery_state["gave_up_reason"] = message
+
+    updates["recovery_state"] = recovery_state
+    return updates
+
+
 def create_execute_tool_node(
     tools: dict,
     llm_client: LLMClient,
     db: AsyncSession,
     tool_descriptions: str,
 ):
-    async def execute_tool_node(state: AgentState) -> dict:
+    async def execute_tool_node(state: AgentState):
+        # Streaming flag: when True, the node yields _(stream_token|tool_done)
+        # events for consumption by super_agent's astream_events loop.
+        use_streaming = (
+            state.get("current_intent") == "tool_call"
+            and not state.get("planned_steps")
+            and state.get("mode", "chat") != "chat"
+        )
+
+        # ── Layered error recovery pre-processing ──
+        # When the router sets a pending_decision in recovery_state, apply
+        # the recovery transformation (delay, compress, switch model, etc.)
+        # before the normal intent dispatch runs.
+        recovery_state = state.get("recovery_state", {})
+        pending_decision = recovery_state.get("pending_decision")
+        if pending_decision:
+            recovery_updates = await _apply_recovery_decision(pending_decision, state)
+            if recovery_updates:
+                for k, v in recovery_updates.items():
+                    if k == "messages" and isinstance(v, list):
+                        # Replace messages entirely (for compression)
+                        state[k] = v
+                    elif k == "errors" and isinstance(v, list):
+                        state[k] = v
+                    elif k == "retry_context":
+                        state[k] = v
+                    elif k == "_model_override":
+                        state[k] = v
+                # Update recovery_state, clearing pending_decision
+                new_rs = recovery_updates.get("recovery_state", recovery_state)
+                new_rs.pop("pending_decision", None)
+                state["recovery_state"] = new_rs
+                logger.info(
+                    "recovery applied: action=%s",
+                    pending_decision.get("action", "unknown"),
+                )
+
         # Chat mode safety gate: only read-only tools may execute
         blocked, reason = _is_chat_write_attempt(state)
         if blocked:
-            return {
+            result = {
                 "errors": state.get("errors", []) + [reason],
                 "tool_results": [{
                     "tool": "_safety_gate",
@@ -780,15 +1118,18 @@ def create_execute_tool_node(
                 }],
                 "current_intent": "simple_q",
             }
+            yield result
+            return
 
         pending_plan = state.get("pending_plan", {})
         plan_confirmed = state.get("plan_confirmed", False)
 
         if pending_plan and not plan_confirmed:
-            return {
+            yield {
                 "current_intent": "simple_q",
                 "intermediate_steps": list(state.get("intermediate_steps", [])),
             }
+            return
 
         if pending_plan and plan_confirmed:
             # Sync steps from pending_plan into planned_steps so
@@ -798,24 +1139,42 @@ def create_execute_tool_node(
             planned_steps = state.get("planned_steps", [])
             if not planned_steps and pending_plan.get("steps"):
                 state["planned_steps"] = pending_plan["steps"]
-            return await _execute_planned_step(state, tools, db)
+            yield await _execute_planned_step(state, tools, db)
+            return
 
         step_idx = state.get("current_step_index", 0)
         if step_idx < len(state.get("planned_steps", [])):
-            return await _execute_planned_step(state, tools, db)
+            yield await _execute_planned_step(state, tools, db)
+            return
 
         intent = state.get("current_intent", "")
 
         if intent == "tool_call":
-            return await _execute_tool_call(state, tools, db, tool_descriptions, llm_client)
+            if use_streaming:
+                # ── Streaming path: execute tools as they arrive ──
+                final: dict | None = None
+                async for chunk in _execute_tool_call_streaming(
+                    state, tools, tool_descriptions, llm_client, db,
+                ):
+                    if chunk.get("_stream_done"):
+                        # Extract the final state update, discard the stream_done flag
+                        final = {k: v for k, v in chunk.items() if not k.startswith("_stream")}
+                    else:
+                        yield chunk
+                # Yield the final state dict (or fallback)
+                yield final or {
+                    "current_intent": "simple_q",
+                }
+            else:
+                yield await _execute_tool_call(state, tools, db, tool_descriptions, llm_client)
         elif intent == "cowriter":
-            return await _execute_cowriter(
+            yield await _execute_cowriter(
                 state, tools, llm_client, tool_descriptions
             )
         elif intent == "cowriter_choice":
-            return await _execute_cowriter_choice(state, tools, db)
+            yield await _execute_cowriter_choice(state, tools, db)
         elif intent == "complex":
-            return {
+            yield {
                 "errors": state.get("errors", [])
                 + ["Complex intent reached execute_tool without routing through plan node"],
                 "current_intent": "simple_q",
@@ -825,7 +1184,7 @@ def create_execute_tool_node(
                 "retry_count": state.get("retry_count", 0),
             }
         else:
-            return {
+            yield {
                 "current_intent": "simple_q",
                 "intermediate_steps": list(state.get("intermediate_steps", [])),
             }

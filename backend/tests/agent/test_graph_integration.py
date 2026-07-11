@@ -48,6 +48,7 @@ def _make_state(overrides: dict | None = None) -> AgentState:
     base: AgentState = {
         "project_id": "test-proj",
         "user_id": "test-user",
+        "trace_id": "test-trace",
         "conversation_id": "test-conv",
         "project_context": {},
         "messages": [],
@@ -63,9 +64,14 @@ def _make_state(overrides: dict | None = None) -> AgentState:
         "planned_steps": [],
         "current_step_index": 0,
         "errors": [],
-        "pending_plan": [],
+        "pending_plan": {},
         "plan_confirmed": False,
         "retry_context": None,
+        "recovery_state": {},
+        "_model_override": "",
+        "search_results": [],
+        "cowriter_session": {},
+        "_context_loaded": False,
     }
     if overrides:
         base.update(overrides)

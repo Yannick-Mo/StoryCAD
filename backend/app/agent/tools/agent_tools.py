@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.orchestrator import AgentOrchestrator
 
 
@@ -28,6 +28,12 @@ class _CallAgentBase(BaseTool):
 
 
 class GoalAgentTool(_CallAgentBase):
+    meta = ToolMeta(
+        name="call_goal_agent",
+        description="调用目标设定智能体，为当前章节设定写作目标",
+        timeout=120,
+        search_hint="goal agent chapter writing",
+    )
     name = "call_goal_agent"
     description = "调用目标设定智能体，为当前章节设定写作目标"
     mode = "goal"
@@ -43,6 +49,12 @@ class GoalAgentTool(_CallAgentBase):
 
 
 class OutlineAgentTool(_CallAgentBase):
+    meta = ToolMeta(
+        name="call_outline_agent",
+        description="调用大纲智能体，为当前章节生成写作大纲",
+        timeout=120,
+        search_hint="outline agent chapter generate",
+    )
     name = "call_outline_agent"
     description = "调用大纲智能体，为当前章节生成写作大纲"
     mode = "outline"

@@ -6,13 +6,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
 from app.llm.types import Message
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.context import ContextBuilder
 from app.storycad.models import Chapter, Scene, SceneContent, Character, CharacterRelation, Act
 from app.utils import row_to_dict
 
 
 class AnalyzeChapterTool(BaseTool):
+    meta = ToolMeta(
+        name="analyze_chapter",
+        description="分析指定章节的结构、节奏、角色、语言，返回四维评分和改进建议",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="analyze chapter structure pacing",
+    )
     name = "analyze_chapter"
     description = "分析指定章节的结构、节奏、角色、语言，返回四维评分和改进建议"
     parameters = {
@@ -103,6 +109,12 @@ class AnalyzeChapterTool(BaseTool):
 
 
 class AnalyzeCharacterArcTool(BaseTool):
+    meta = ToolMeta(
+        name="analyze_character_arc",
+        description="分析角色的弧线发展和一致性",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="analyze character arc development",
+    )
     name = "analyze_character_arc"
     description = "分析角色的弧线发展和一致性"
     parameters = {
@@ -194,6 +206,12 @@ def _safe_get(obj: Any, *keys: str, default: Any = None) -> Any:
 
 
 class SuggestNextTool(BaseTool):
+    meta = ToolMeta(
+        name="suggest_next",
+        description="基于当前项目进展，推荐下一步该写什么",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="suggest next step recommendation",
+    )
     name = "suggest_next"
     description = "基于当前项目进展，推荐下一步该写什么"
     parameters = {
@@ -271,6 +289,12 @@ class SuggestNextTool(BaseTool):
 
 
 class ProjectHealthTool(BaseTool):
+    meta = ToolMeta(
+        name="project_health",
+        description="全项目健康检查：未完场景、空章节、孤立角色、未回收伏笔",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="project health check status",
+    )
     name = "project_health"
     description = "全项目健康检查：未完场景、空章节、孤立角色、未回收伏笔"
     parameters = {

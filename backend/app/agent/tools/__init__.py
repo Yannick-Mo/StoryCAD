@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
-from .base import BaseTool, ToolResult
+from .base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, build_tool
 
 
 _WRITE_TOOL_NAMES: set[str] = {
@@ -83,6 +83,10 @@ def get_filtered_tools(
 
 
 def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
+    """Build a human-readable description string for a tool dict.
+
+    Includes concurrency mode when available on the tool's meta.
+    """
     lines = []
     for t_name, t_inst in sorted(tools.items()):
         d = t_inst.to_openai_tool()
@@ -90,17 +94,50 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
         params = fn.get("parameters", {})
         required = params.get("required", [])
         props = params.get("properties", {})
-        lines.append(f"- {t_name}: {fn.get('description', '')}")
+
+        concurrency_str = ""
+        if hasattr(t_inst, "meta") and t_inst.meta is not None:
+            concurrency_str = f" [并发:{t_inst.meta.concurrency.value}]"
+        destructive_str = ""
+        if hasattr(t_inst, "meta") and t_inst.meta is not None and t_inst.meta.is_destructive:
+            destructive_str = " [破坏性]"
+
+        lines.append(f"- {t_name}: {fn.get('description', '')}{concurrency_str}{destructive_str}")
         for p_name, p_schema in props.items():
             req = "(required)" if p_name in required else ""
             lines.append(f"    {p_name}: {p_schema.get('description', '')} {req}")
     return "\n".join(lines)
 
 
+def get_tool_concurrency_map(
+    tools: dict[str, BaseTool],
+) -> dict[str, ConcurrencyMode]:
+    """Return a mapping of tool name → ConcurrencyMode.
+
+    Fall back to EXCLUSIVE for tools without meta (backward compat).
+    """
+    result: dict[str, ConcurrencyMode] = {}
+    for name, tool in tools.items():
+        if hasattr(tool, "meta") and tool.meta is not None:
+            result[name] = tool.meta.concurrency
+        else:
+            # Legacy heuristic: EXCLUSIVE for write tools, SAFE for reads
+            result[name] = (
+                ConcurrencyMode.EXCLUSIVE
+                if getattr(tool, "is_write_operation", False)
+                else ConcurrencyMode.SAFE
+            )
+    return result
+
+
 __all__ = [
     "BaseTool",
     "ToolResult",
+    "ToolMeta",
+    "ConcurrencyMode",
+    "build_tool",
     "get_tool_registry",
     "get_filtered_tools",
     "get_tool_descriptions",
+    "get_tool_concurrency_map",
 ]

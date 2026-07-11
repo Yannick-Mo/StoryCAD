@@ -3,13 +3,19 @@ from __future__ import annotations
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.agent.tools.base import BaseTool, ToolResult, verify_project_owner
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.storycad.models import Character, CharacterRelation
 from app.storycad.repository import StoryCADRepository
 from app.utils import row_to_dict
 
 
 class ListCharactersTool(BaseTool):
+    meta = ToolMeta(
+        name="list_characters",
+        description="列出项目中所有角色及其详细信息",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="list characters all project",
+    )
     name = "list_characters"
     description = "列出项目中所有角色及其详细信息"
     parameters = {
@@ -35,6 +41,12 @@ class ListCharactersTool(BaseTool):
 
 
 class CreateCharacterTool(BaseTool):
+    meta = ToolMeta(
+        name="create_character",
+        description="创建新角色",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="create character new",
+    )
     name = "create_character"
     description = "创建新角色"
     is_write_operation = True
@@ -87,6 +99,12 @@ class CreateCharacterTool(BaseTool):
 
 
 class UpdateCharacterTool(BaseTool):
+    meta = ToolMeta(
+        name="update_character",
+        description="更新角色信息",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update character modify edit",
+    )
     name = "update_character"
     description = "更新角色信息"
     is_write_operation = True
@@ -128,6 +146,12 @@ class UpdateCharacterTool(BaseTool):
 
 
 class UpdateRelationTool(BaseTool):
+    meta = ToolMeta(
+        name="update_relation",
+        description="更新角色关系",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="update relation character relationship",
+    )
     name = "update_relation"
     description = "更新角色关系"
     is_write_operation = True

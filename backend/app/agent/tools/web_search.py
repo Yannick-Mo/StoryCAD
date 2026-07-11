@@ -12,7 +12,7 @@ from collections import OrderedDict
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.tools.base import BaseTool, ToolResult
+from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +260,12 @@ async def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
 
 
 class WebSearchTool(BaseTool):
+    meta = ToolMeta(
+        name="web_search",
+        description="搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。",
+        concurrency=ConcurrencyMode.SAFE,
+        search_hint="web search internet real-time",
+    )
     name = "web_search"
     description = "搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。"
     parameters = {

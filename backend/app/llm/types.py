@@ -70,6 +70,19 @@ class Usage:
 
 
 @dataclass
+class StreamChunk:
+    """A single chunk from a streaming LLM response with tool support.
+
+    At most one of *content* or *tool_call* is non-None per chunk.
+    *finish_reason* and *usage* signal the end of the stream.
+    """
+    content: str | None = None
+    tool_call: ToolCall | None = None
+    finish_reason: str | None = None
+    usage: Usage | None = None
+
+
+@dataclass
 class ChatResult:
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
