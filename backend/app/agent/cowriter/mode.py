@@ -55,7 +55,7 @@ _COWRITER_SYSTEM_PROMPT = """你是小说的合著者，而不是代笔人。你
   - description: 详细描述
   - pros: 优势列表
   - cons: 劣势列表
-  - action: 用户选择后执行的操作。格式：{tool: "工具名", params: {参数字典}}
+  - action: 用户选择后执行的操作。格式：{{tool: "工具名", params: {{参数字典}}}}
     可用工具及参数请参考当前项目可用的工具列表。
 - session_update: 会话状态更新（可选，不填则保持当前状态）：
   - phase: 下一阶段（explore/plan/execute/review/complete）
