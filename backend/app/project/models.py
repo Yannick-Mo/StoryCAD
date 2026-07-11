@@ -19,6 +19,7 @@ class Project(Base):
     genre = Column(String(100), default="")
     status = Column(String(20), default="init")
     workflow_stage = Column(String(30), default="init")
+    logline = Column(Text, default="")
     global_settings = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
