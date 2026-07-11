@@ -1,15 +1,26 @@
+import uuid
 from sqlalchemy import select
 from app.mcp.server import mcp
 from app.database import async_session
 from app.storycad.models import Character, CharacterRelation
 from app.storycad.repository import StoryCADRepository
 from app.utils import row_to_dict
+from app.mcp.auth import get_current_user_mcp, verify_project_ownership
+
+
+def _clamp_relation_value(value: int, name: str) -> int:
+    """Validate and clamp relation metric to 0-100 range."""
+    if not isinstance(value, int) or value < 0 or value > 100:
+        raise ValueError(f"{name} must be between 0 and 100, got {value}")
+    return value
 
 
 @mcp.tool()
-async def list_characters(project_id: str) -> dict:
+async def list_characters(token: str, project_id: str) -> dict:
     """列出项目中所有角色及其关系信息"""
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         repo = StoryCADRepository(db)
         characters = await repo.list_entities(Character, project_id)
         relations_result = await db.execute(
@@ -21,6 +32,7 @@ async def list_characters(project_id: str) -> dict:
 
 @mcp.tool()
 async def create_character(
+    token: str,
     project_id: str,
     name: str,
     role: str = "supporting",
@@ -31,6 +43,8 @@ async def create_character(
 ) -> dict:
     """创建新角色"""
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         repo = StoryCADRepository(db)
         data = {
             "project_id": project_id,
@@ -48,6 +62,7 @@ async def create_character(
 
 @mcp.tool()
 async def update_character(
+    token: str,
     character_id: str,
     name: str | None = None,
     role: str | None = None,
@@ -58,6 +73,12 @@ async def update_character(
 ) -> dict:
     """更新角色信息"""
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        result = await db.execute(select(Character).where(Character.id == uuid.UUID(character_id)))
+        character = result.scalar_one_or_none()
+        if not character:
+            raise ValueError(f"Character {character_id} not found")
+        await verify_project_ownership(str(character.project_id), user["id"], db)
         repo = StoryCADRepository(db)
         data = {"id": character_id}
         for field in ("name", "role", "personality", "appearance", "background", "motivation"):
@@ -65,14 +86,13 @@ async def update_character(
             if val is not None:
                 data[field] = val
         updated = await repo.update_entity(Character, data)
-        if not updated:
-            raise ValueError(f"Character {character_id} not found")
         await db.commit()
         return updated
 
 
 @mcp.tool()
 async def update_relation(
+    token: str,
     project_id: str,
     character_id: str,
     target_id: str,
@@ -85,7 +105,12 @@ async def update_relation(
     relation_id: str | None = None,
 ) -> dict:
     """创建或更新角色关系"""
+    _clamp_relation_value(trust, "trust")
+    _clamp_relation_value(threat, "threat")
+    _clamp_relation_value(attraction, "attraction")
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         repo = StoryCADRepository(db)
         if relation_id:
             data = {"id": relation_id}

@@ -5,12 +5,15 @@ from app.database import async_session
 from app.project.repository import ProjectRepository
 from app.storycad.models import Chapter
 from app.utils import row_to_dict
+from app.mcp.auth import get_current_user_mcp, verify_project_ownership
 
 
 @mcp.tool()
-async def read_project(project_id: str) -> dict:
+async def read_project(token: str, project_id: str) -> dict:
     """加载完整项目上下文，包括标题、体裁、描述和配置"""
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         repo = ProjectRepository(db)
         project = await repo.get(uuid.UUID(project_id))
         if not project:
@@ -24,6 +27,7 @@ async def read_project(project_id: str) -> dict:
 
 @mcp.tool()
 async def update_project(
+    token: str,
     project_id: str,
     title: str | None = None,
     description: str | None = None,
@@ -44,6 +48,8 @@ async def update_project(
     if global_settings is not None:
         kwargs["global_settings"] = global_settings
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         repo = ProjectRepository(db)
         ok = await repo.update(uuid.UUID(project_id), **kwargs)
         if not ok:
@@ -53,9 +59,11 @@ async def update_project(
 
 
 @mcp.tool()
-async def list_chapters(project_id: str) -> list[dict]:
+async def list_chapters(token: str, project_id: str) -> list[dict]:
     """列出项目中所有章节及其排序"""
     async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
         result = await db.execute(
             select(Chapter)
             .where(Chapter.project_id == uuid.UUID(project_id))
