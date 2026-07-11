@@ -22,16 +22,15 @@ _WRITE_TOOL_TIMEOUT = 60
 _ANALYSIS_TOOL_TIMEOUT = 120
 _DEFAULT_TOOL_TIMEOUT = 30
 
-# Maximum batch size for parallel read-only tool execution.
-# Prevents resource exhaustion from too many concurrent DB queries.
 _MAX_READ_BATCH_SIZE = 5
+
+_ANALYSIS_TOOL_NAMES = {"analyze_chapter", "project_health", "check_consistency", "analyze_rhythm", "suggest_next"}
 
 
 def _get_tool_timeout(tool: BaseTool) -> int:
     if tool.is_write_operation:
         return _WRITE_TOOL_TIMEOUT
-    name = tool.name.lower()
-    if any(kw in name for kw in ("analyze", "check", "health", "rhythm", "suggest")):
+    if tool.name in _ANALYSIS_TOOL_NAMES:
         return _ANALYSIS_TOOL_TIMEOUT
     return _READ_TOOL_TIMEOUT
 
@@ -125,10 +124,8 @@ async def _run_single_tool(
 
 
 def _is_read_only_tool(tool_name: str, tools: dict[str, BaseTool]) -> bool:
-    inst = tools.get(tool_name)
-    if not inst:
-        return False
-    return not inst.is_write_operation
+    from app.agent.tool_filter import READ_ONLY_TOOLS
+    return tool_name in READ_ONLY_TOOLS
 
 
 async def _run_tool_batch(
@@ -171,7 +168,7 @@ async def _execute_planned_step(
 
     if step_idx >= len(planned_steps):
         return {
-            "pending_plan": [],
+            "pending_plan": {},
             "plan_confirmed": False,
             "current_step_index": 0,
         }
@@ -231,9 +228,9 @@ async def _execute_planned_step(
             "tool_results": state.get("tool_results", []) + batch_results,
             "intermediate_steps": steps,
             "current_step_index": step_idx,
-            "retry_count": current_retry + (1 if has_error else 0),
+            "retry_count": 0 if not has_error else (current_retry + 1),
             "errors": errors,
-            "pending_plan": [] if is_last else state.get("pending_plan", []),
+            "pending_plan": {} if is_last else state.get("pending_plan", {}),
             "plan_confirmed": False if is_last else state.get("plan_confirmed", False),
         }
 
@@ -270,9 +267,9 @@ async def _execute_planned_step(
         "tool_results": state.get("tool_results", []) + [result],
         "intermediate_steps": steps,
         "current_step_index": next_idx,
-        "retry_count": current_retry + (1 if has_error else 0),
+        "retry_count": 0 if not has_error else (current_retry + 1),
         "errors": errors,
-        "pending_plan": [] if is_last else state.get("pending_plan", []),
+        "pending_plan": {} if is_last else state.get("pending_plan", {}),
         "plan_confirmed": False if is_last else state.get("plan_confirmed", False),
     }
 
@@ -288,6 +285,7 @@ async def _execute_tool_call(
     steps: list[dict] = list(state.get("intermediate_steps", []))
     errors: list[str] = list(state.get("errors", []))
     has_error = False
+    was_write_blocked = False
 
     for tc in tool_calls:
         fn_name = ""
@@ -299,7 +297,6 @@ async def _execute_tool_call(
             except (json.JSONDecodeError, TypeError):
                 args = {}
 
-        # Chat mode runtime safety: reject write operations
         if mode == "chat" and fn_name and fn_name not in READ_ONLY_TOOLS:
             result = {
                 "tool": fn_name,
@@ -311,6 +308,7 @@ async def _execute_tool_call(
             errors.append(f"Write tool '{fn_name}' blocked in chat mode")
             steps.append({"action": fn_name, "args": args, "result": result})
             has_error = True
+            was_write_blocked = True
             continue
 
         result, tool_errors = await _run_single_tool(fn_name, args, tools, db, user_id=state.get("user_id"))
@@ -323,14 +321,15 @@ async def _execute_tool_call(
     return {
         "tool_results": state.get("tool_results", []) + results,
         "intermediate_steps": steps,
-        "retry_count": state.get("retry_count", 0) + (1 if has_error else 0),
+        "retry_count": 0 if not has_error else (state.get("retry_count", 0) + 1),
         "errors": errors,
-        "retry_context": {
-            "failed_step": fn_name if has_error else None,
-            "error": tool_errors[-1] if has_error and tool_errors else None,
-        }
-        if has_error
-        else None,
+        "current_intent": "simple_q" if was_write_blocked else state.get("current_intent", "tool_call"),
+        "retry_context": None if not has_error else (
+            {
+                "failed_step": fn_name if has_error else None,
+                "error": errors[-1] if errors else None,
+            }
+        ),
     }
 
 
@@ -444,16 +443,16 @@ async def _execute_cowriter_choice(
     if not selected:
         for opt in options:
             opt_id = opt.get("id", "").lower()
-            if opt_id in user_content.lower():
+            if re.search(r'\b' + re.escape(opt_id) + r'\b', user_content.lower()):
                 selected = opt
                 break
     if not selected:
         for opt in options:
             opt_label = opt.get("label", "").lower()
             if opt_label and (
-                opt_label[:8] in user_content.lower()
+                re.search(r'\b' + re.escape(opt_label[:8]) + r'\b', user_content.lower())
                 or any(
-                    kw in user_content.lower()
+                    re.search(r'\b' + re.escape(kw) + r'\b', user_content.lower())
                     for kw in ["选a", "选b", "选1", "选2"]
                 )
             ):
@@ -467,14 +466,18 @@ async def _execute_cowriter_choice(
         tool_name = action.get("tool", "")
         params = action.get("params", {})
 
-        # Auto-confirm: user asked to write directly, skip plan confirmation
+        # Auto-confirm: user clicked option card or asked to write directly
+        from_option_card = bool(re.search(r'\[option:\s*\w+\]', user_content.lower()))
         _AUTO_CONFIRM_KW = [
             "直接写入", "直接写", "直接采用并", "立即执行",
             "按上述写入", "按你说的写入", "按建议写入",
             "就按上述", "就按你说的", "立刻写入",
             "write it", "just write", "write directly",
         ]
-        auto_confirm = any(kw in user_content.lower() for kw in _AUTO_CONFIRM_KW)
+        auto_confirm = from_option_card or any(
+            re.search(r'\b' + re.escape(kw) + r'\b', user_content.lower())
+            for kw in _AUTO_CONFIRM_KW
+        )
 
         tool_inst = tools.get(tool_name)
         if tool_inst and tool_inst.is_write_operation and not auto_confirm:
@@ -510,13 +513,18 @@ async def _execute_cowriter_choice(
             }
         )
 
+    current_intent = state.get("current_intent", "simple_q")
+    if not selected:
+        current_intent = "simple_q"
+
     return {
-        "tool_results": state.get("tool_results", []) + results,
+        "tool_results": results if not selected else state.get("tool_results", []) + results,
         "intermediate_steps": steps,
         "retry_count": state.get("retry_count", 0)
         + (1 if has_error else 0),
         "errors": errors,
         "current_options": [],
+        "current_intent": current_intent,
     }
 
 
@@ -554,17 +562,14 @@ def create_execute_tool_node(
                 "current_intent": "simple_q",
             }
 
-        pending_plan = state.get("pending_plan", [])
+        pending_plan = state.get("pending_plan", {})
         plan_confirmed = state.get("plan_confirmed", False)
 
-        # Auto-confirm pending plan from a previous round (persisted via conversation memory)
         if pending_plan and not plan_confirmed:
-            plan_confirmed = True
-            # Bridge: cowriter choices store steps inside pending_plan dict
-            if isinstance(pending_plan, dict):
-                cowriter_steps = pending_plan.get("steps", [])
-                if cowriter_steps and not state.get("planned_steps"):
-                    state["planned_steps"] = cowriter_steps
+            return {
+                "current_intent": "simple_q",
+                "intermediate_steps": list(state.get("intermediate_steps", [])),
+            }
 
         if pending_plan and plan_confirmed:
             return await _execute_planned_step(state, tools, db)
