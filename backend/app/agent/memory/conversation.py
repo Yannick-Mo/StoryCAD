@@ -197,9 +197,9 @@ class ConversationMemory:
             return meta
         return None
 
-    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat") -> None:
+    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat", cowriter_session: dict | None = None) -> None:
         try:
-            data = json.dumps({"pending_plan": pending_plan, "current_options": current_options, "plan_confirmed": plan_confirmed, "mode": mode}, ensure_ascii=False)
+            data = json.dumps({"pending_plan": pending_plan, "current_options": current_options, "plan_confirmed": plan_confirmed, "mode": mode, "cowriter_session": cowriter_session or {}}, ensure_ascii=False)
         except (TypeError, ValueError) as e:
             logger.error("Failed to serialize agent state: {}", e)
             return
@@ -221,10 +221,10 @@ class ConversationMemory:
         if raw:
             try:
                 state = json.loads(raw)
-                return state.get("pending_plan", {}), state.get("current_options", []), state.get("plan_confirmed", False), state.get("mode", "chat")
+                return state.get("pending_plan", {}), state.get("current_options", []), state.get("plan_confirmed", False), state.get("mode", "chat"), state.get("cowriter_session", {})
             except (json.JSONDecodeError, TypeError):
-                return {}, [], False, "chat"
-        return {}, [], False, "chat"
+                return {}, [], False, "chat", {}
+        return {}, [], False, "chat", {}
 
     async def delete_last_message(self, conversation_id: str) -> None:
         if self._redis:

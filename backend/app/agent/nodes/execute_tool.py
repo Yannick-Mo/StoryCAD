@@ -342,6 +342,7 @@ async def _execute_cowriter(
     errors: list[str] = list(state.get("errors", []))
     steps: list[dict] = list(state.get("intermediate_steps", []))
     project_ctx = state.get("project_context", {})
+    session: dict = state.get("cowriter_session", {})
 
     # Filter tool descriptions by active skills
     active_skills = state.get("active_skills", [])
@@ -351,24 +352,30 @@ async def _execute_cowriter(
     )
 
     cw = CoWriterMode(filtered_desc or tool_descriptions)
-    user_msg = state["messages"][-1] if state["messages"] else None
-    user_content = user_msg.content if user_msg else ""
 
     try:
         system_prompt = cw.build_system_prompt(
-            project_ctx, list(state["messages"])
+            project_ctx, list(state["messages"]), session=session,
+            project_id=state.get("project_id", ""),
         )
-        msgs = [
+
+        # Include recent conversation for context (up to 3 user-assistant pairs)
+        all_msgs = list(state["messages"])
+        recent = [m for m in all_msgs if m.role in ("user", "assistant")][-4:]
+
+        llm_msgs = [
             Message(role="system", content=system_prompt),
-            Message(role="user", content=user_content),
+            *recent,
         ]
+
         result = await llm_client.chat(
-            messages=msgs, response_format="json_object",
+            messages=llm_msgs, response_format="json_object",
             request_id=state.get("trace_id", ""),
         )
         parsed = cw.parse_response(result.content or "{}")
         options = parsed.get("options", [])
         analysis = parsed.get("analysis", "")
+        session_update = parsed.get("session_update", {})
 
         # Defensive: if analysis looks like raw JSON (parse_response fell back),
         # try to extract the actual text from it
@@ -384,8 +391,29 @@ async def _execute_cowriter(
             except (json.JSONDecodeError, ValueError):
                 pass
 
+        # Build/update session from LLM's session_update
+        if not session or not session.get("phase"):
+            session = {
+                "is_active": True,
+                "phase": "explore",
+                "goal": "",
+                "current_focus": "",
+                "decisions": [],
+            }
+
+        if session_update:
+            if "phase" in session_update:
+                session["phase"] = session_update["phase"]
+            if "goal" in session_update:
+                session["goal"] = session_update["goal"]
+            if "current_focus" in session_update:
+                session["current_focus"] = session_update["current_focus"]
+            if session_update.get("is_complete"):
+                pass  # Leave options & session as-is; LLM starts new task in next call
+
         return {
             "current_options": options,
+            "cowriter_session": session,
             "tool_results": [
                 {
                     "tool": "cowriter_analysis",
@@ -404,7 +432,8 @@ async def _execute_cowriter(
     except Exception as e:
         errors.append(f"Cowriter analysis failed: {e}")
         return {
-            "current_options": [],
+            "current_options": state.get("current_options", []),
+            "cowriter_session": state.get("cowriter_session", {}),
             "tool_results": [
                 {
                     "tool": "cowriter_analysis",
@@ -419,6 +448,15 @@ async def _execute_cowriter(
 async def _execute_cowriter_choice(
     state: AgentState, tools: dict, db: AsyncSession
 ) -> dict:
+    """Handle user selection of a cowriter option card.
+
+    BUG FIXES applied:
+    - Bug 2: Write operations ALWAYS go through plan confirmation (never auto-execute
+      from option cards). This ensures the user sees what tool+params will be used.
+    - Bug 3: On tool failure, route back to cowriter (not blind retry with same params).
+    - Bug 5: Auto-inject project_id from state when the tool requires it.
+    - Bug 6: Roll back session phase to 'explore' on failure so LLM knows to regenerate.
+    """
     errors: list[str] = list(state.get("errors", []))
     results: list[dict] = []
     steps: list[dict] = list(state.get("intermediate_steps", []))
@@ -428,6 +466,7 @@ async def _execute_cowriter_choice(
         state["messages"][-1].content if state["messages"] else ""
     )
     options = state.get("current_options", [])
+    session: dict = state.get("cowriter_session", {})
 
     selected = None
 
@@ -466,28 +505,66 @@ async def _execute_cowriter_choice(
         tool_name = action.get("tool", "")
         params = action.get("params", {})
 
-        # Auto-confirm: user clicked option card or asked to write directly
-        from_option_card = bool(re.search(r'\[option:\s*\w+\]', user_content.lower()))
-        _AUTO_CONFIRM_KW = [
-            "直接写入", "直接写", "直接采用并", "立即执行",
-            "按上述写入", "按你说的写入", "按建议写入",
-            "就按上述", "就按你说的", "立刻写入",
-            "write it", "just write", "write directly",
-        ]
-        auto_confirm = from_option_card or any(
-            re.search(r'\b' + re.escape(kw) + r'\b', user_content.lower())
-            for kw in _AUTO_CONFIRM_KW
-        )
+        # ── Bug 5: Auto-inject project_id if the tool requires it ──
+        tool_inst = tools.get(tool_name, {})
+        if tool_inst:
+            tool_schema = getattr(tool_inst, "parameters", {}) or {}
+            tool_required = tool_schema.get("required", [])
+            tool_props = tool_schema.get("properties", {})
+            if "project_id" in tool_props and not params.get("project_id"):
+                injected_pid = state.get("project_id", "")
+                if injected_pid:
+                    params["project_id"] = injected_pid
+                    logger.info(
+                        "cowriter_choice: auto-injected project_id=%s into %s",
+                        injected_pid, tool_name,
+                    )
 
-        tool_inst = tools.get(tool_name)
-        if tool_inst and tool_inst.is_write_operation and not auto_confirm:
-            step = {"tool": tool_name, "params": params}
-            return {
-                "pending_plan": {"steps": [step], "reasoning": selected.get("description", "协写操作")},
-                "current_intent": "plan_confirm",
-                "current_options": [],
-            }
+            # ── Bug 2: Write operations ALWAYS go through plan confirmation ──
+            # No auto-confirm from option cards. The user must review and approve.
+            if tool_inst.is_write_operation:
+                # But first, validate params before presenting the plan
+                validation_errors = _validate_params(tool_inst, params)
+                if validation_errors:
+                    # ── Bug 3 & 6: params are invalid → route back to cowriter ──
+                    err_msg = "; ".join(validation_errors)
+                    logger.warning(
+                        "cowriter_choice: invalid params from LLM option '%s': %s",
+                        selected.get("label", ""), err_msg,
+                    )
+                    # Record the failure in session and roll back phase
+                    round_num = len(session.get("decisions", [])) + 1
+                    session.setdefault("decisions", []).append({
+                        "round": round_num,
+                        "choice": selected.get("id", ""),
+                        "label": selected.get("label", ""),
+                        "action": f"{tool_name}(invalid)",
+                        "result": f"参数验证失败：{err_msg}",
+                        "user_feedback": "",
+                    })
+                    session["phase"] = "explore"  # Bug 6: rollback
+                    session["is_active"] = True
+                    return {
+                        "current_intent": "cowriter",  # Bug 3: re-route to cowriter
+                        "current_options": options,
+                        "cowriter_session": session,
+                        "errors": errors + [f"选项 '{selected.get('label','')}' 参数有误: {err_msg}"],
+                        "intermediate_steps": steps,
+                        "tool_results": state.get("tool_results", []),
+                    }
 
+                step = {"tool": tool_name, "params": params}
+                return {
+                    "pending_plan": {
+                        "steps": [step],
+                        "reasoning": selected.get("description", "协写操作"),
+                    },
+                    "current_intent": "plan_confirm",
+                    "current_options": options,
+                    "cowriter_session": session,
+                }
+
+        # ── Read-only tool: execute directly (no confirmation needed) ──
         result, tool_errors = await _run_single_tool(
             tool_name, params, tools, db, user_id=state.get("user_id")
         )
@@ -504,6 +581,45 @@ async def _execute_cowriter_choice(
         )
         if not result.get("success", True):
             has_error = True
+
+        # Record decision in session
+        round_num = len(session.get("decisions", [])) + 1
+        decision = {
+            "round": round_num,
+            "choice": selected.get("id", ""),
+            "label": selected.get("label", ""),
+            "action": f"{tool_name}({json.dumps(params, ensure_ascii=False)[:100]})",
+            "result": "成功" if result.get("success") else f"失败：{result.get('error', '')}",
+            "user_feedback": "",
+        }
+        session.setdefault("decisions", []).append(decision)
+        if result.get("success") and not session.get("phase") == "complete":
+            session["phase"] = "review"
+        elif not result.get("success"):
+            session["phase"] = "explore"  # Bug 6: rollback on failure
+        session["is_active"] = True
+
+        # ── Bug 3: on failure, route to cowriter for regeneration ──
+        if has_error:
+            return {
+                "tool_results": state.get("tool_results", []) + results,
+                "intermediate_steps": steps,
+                "retry_count": 0,  # reset retry — cowriter will regenerate
+                "errors": errors,
+                "current_options": options,  # keep options visible for context
+                "cowriter_session": session,
+                "current_intent": "cowriter",  # re-route to cowriter for fix
+            }
+
+        return {
+            "tool_results": state.get("tool_results", []) + results,
+            "intermediate_steps": steps,
+            "retry_count": 0,
+            "errors": errors,
+            "current_options": options,
+            "cowriter_session": session,
+            "current_intent": state.get("current_intent", "simple_q"),
+        }
     elif selected:
         results.append(
             {
@@ -520,10 +636,10 @@ async def _execute_cowriter_choice(
     return {
         "tool_results": results if not selected else state.get("tool_results", []) + results,
         "intermediate_steps": steps,
-        "retry_count": state.get("retry_count", 0)
-        + (1 if has_error else 0),
+        "retry_count": 0,
         "errors": errors,
-        "current_options": [],
+        "current_options": options,
+        "cowriter_session": session,
         "current_intent": current_intent,
     }
 

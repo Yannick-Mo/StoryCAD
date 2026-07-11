@@ -430,6 +430,23 @@ async def _build_system_prompt(state: AgentState) -> str:
         opt_lines.append("引导用户做出选择。")
         sections.append(_ContextSection(tier=1, label="current_options", text="\n".join(opt_lines)))
 
+    # Include cowriter session context for continuity
+    session = state.get("cowriter_session", {})
+    if session.get("is_active"):
+        phase = session.get("phase", "explore")
+        goal = session.get("goal", "")
+        decisions = session.get("decisions", [])
+        session_lines = [f"协作者当前阶段：{phase}"]
+        if goal:
+            session_lines.append(f"当前目标：{goal}")
+        if decisions:
+            session_lines.append(f"已完成 {len(decisions)} 轮决策")
+            for d in decisions[-3:]:
+                label = d.get("label", "?")
+                result = d.get("result", "")
+                session_lines.append(f"  - 选择了「{label}」→ {result[:100]}")
+        sections.append(_ContextSection(tier=1, label="cowriter_session", text="\n".join(session_lines)))
+
     if retry_count > 0:
         sections.append(_ContextSection(tier=1, label="retry_note", text="注意：上次工具执行出错，请调整后重试。"))
 

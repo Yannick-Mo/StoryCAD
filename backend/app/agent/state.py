@@ -29,6 +29,7 @@ class AgentState(TypedDict):
     plan_confirmed: bool
     retry_context: dict | None
     search_results: list[dict]
+    cowriter_session: dict  # Persistent session: {phase, goal, decisions, current_focus, ...}
     _context_loaded: bool
 
 

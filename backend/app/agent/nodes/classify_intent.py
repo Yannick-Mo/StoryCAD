@@ -128,7 +128,10 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 kw in content for kw in [
                     "选a", "选b", "选c", "选1", "选2", "选3",
                     "option a", "option b", "option c",
-                    "方案a", "方案b", "方案c", "我选",
+                    "方案a", "方案b", "方案c",
+                    "方案一", "方案二", "方案三",
+                    "方案1", "方案2", "方案3",
+                    "我选",
                 ]
             )
         )
@@ -137,6 +140,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             is_cowriter_choice = any(
                 kw in content for kw in [
                     "我选择", "选择方案", "选择第", "选择a", "选择b", "选择c",
+                    "方案一", "方案二", "方案三",
                 ]
             )
         # Natural language adoption (e.g. "直接采用", "就用这个")
@@ -146,6 +150,25 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
             is_cowriter_choice = any(kw in content for kw in adoption_kw)
         if is_cowriter_choice and cowriter_active:
             return {"current_intent": "cowriter_choice"}
+
+        # --- Session-aware continuation (soft override) ---
+        # Only route to cowriter without LLM if message clearly looks like
+        # refinement feedback on an active task. Otherwise let LLM decide.
+        session = state.get("cowriter_session", {})
+        if cowriter_active and session.get("is_active") and session.get("phase") in ("review", "execute"):
+            short = len(content.split()) <= 15 and len(content) <= 40
+            is_refinement = any(
+                kw in content for kw in [
+                    "再", "还", "更", "改", "修", "调", "细", "补充", "继续",
+                    "然后", "接着", "下一步", "再改", "再写", "换一个",
+                    "不够", "不好", "太", "重新",
+                    "more", "again", "继续", "further", "refine",
+                ]
+            )
+            adoption = any(kw in content for kw in ["好的", "可以", "行", "就这样", "不错", "挺好", "ok"])
+            if short and (is_refinement or adoption):
+                return {"current_intent": "cowriter"}
+            # Longer messages or ambiguous ones → let LLM decide with session context
 
         # --- Direct write: user says "帮我写" without prior options ---
         if cowriter_active and not current_options:
@@ -172,6 +195,17 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                         break
 
             current_options = state.get("current_options", [])
+            session = state.get("cowriter_session", {})
+            session_info = ""
+            if session.get("is_active"):
+                phase = session.get("phase", "explore")
+                goal = session.get("goal", "")
+                decisions = session.get("decisions", [])
+                session_info = f"当前协作阶段：{phase}"
+                if goal:
+                    session_info += f" | 目标：{goal}"
+                if decisions:
+                    session_info += f" | 已完成 {len(decisions)} 轮决策"
 
             system_text = render_prompt("classify_intent", **{
                 "has_pending_plan": has_pending_plan,
@@ -182,6 +216,7 @@ def create_classify_intent_node(all_tools: dict, llm_client: LLMClient):
                 "rag_context": rag_text[:1000],
                 "last_ai_response": last_ai_response,
                 "current_options": current_options,
+                "cowriter_session": session_info,
             })
             if not system_text:
                 system_text = (

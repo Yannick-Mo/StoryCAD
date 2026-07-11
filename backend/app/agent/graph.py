@@ -68,6 +68,18 @@ def _route_after_tool(state: AgentState) -> str:
                    retry, has_error, step_idx, len(planned), intent,
                    [(r.get("tool"), r.get("success")) for r in results[-3:]])
 
+    # Bug 4: Cowriter intent means we're regenerating options (e.g. after failed choice).
+    # Route back to execute_tool so _execute_cowriter() gets called, NOT generate.
+    if intent == "cowriter":
+        # Check if this is a recovery from a failed cowriter choice
+        failed_cowriter_choice = any(
+            r.get("tool") in ("cowriter_analysis", "cowriter_choice") or r.get("option")
+            for r in results[-2:]
+        )
+        if failed_cowriter_choice and has_error:
+            logger.info("cowriter_choice failed -> routing back to cowriter for regeneration")
+            return "regenerate"
+
     if has_error and retry < max_retry:
         # Check if the error is due to mode restriction (blocked write in chat mode)
         for r in results:
@@ -133,6 +145,7 @@ def build_super_graph(
             "continue": "generate",
             "retry": "execute_tool",
             "continue_plan": "execute_tool",
+            "regenerate": "execute_tool",
         },
     )
 

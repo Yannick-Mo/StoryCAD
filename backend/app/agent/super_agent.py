@@ -156,14 +156,15 @@ class SuperAgent:
         if context_id:
             project_context["current_view_id"] = context_id
 
-        saved_pending_plan, saved_options, saved_plan_confirmed, saved_mode = await self.conv_memory.load_agent_state(conversation_id)
+        saved_pending_plan, saved_options, saved_plan_confirmed, saved_mode, saved_session = await self.conv_memory.load_agent_state(conversation_id)
 
         # Mode switch: clear stale state from previous mode
         if saved_mode != mode and saved_mode != "chat":
             saved_pending_plan = {}
             saved_options = []
             saved_plan_confirmed = False
-            await self.conv_memory.save_agent_state(conversation_id, {}, [], False, mode)
+            saved_session = {}
+            await self.conv_memory.save_agent_state(conversation_id, {}, [], False, mode, cowriter_session={})
 
         initial_state: AgentState = {
             "project_id": project_id,
@@ -188,6 +189,7 @@ class SuperAgent:
             "plan_confirmed": saved_plan_confirmed,
             "retry_context": None,
             "search_results": [],
+            "cowriter_session": saved_session,
             "_context_loaded": False,
         }
 
@@ -281,6 +283,7 @@ class SuperAgent:
             final_values.get("current_options", []),
             final_values.get("plan_confirmed", False),
             mode=final_values.get("mode", mode),
+            cowriter_session=final_values.get("cowriter_session", {}),
         )
 
         # Phase 4: Flush buffered response tokens
