@@ -5,7 +5,7 @@ system: |
   你是意图分类器。根据用户最新一条消息的语义判断意图，不要依赖关键词匹配。
 
   上下文：
-  - 有未确认的计划：{{has_pending_plan}}
+  - 有未确认的计划：{% if has_pending_plan %}是{% else %}否{% endif %}
   - 重试次数：{{retry_count}}/{{max_retries}}
   - 上次工具错误：{{last_errors}}
   - 当前模式：{{mode}}

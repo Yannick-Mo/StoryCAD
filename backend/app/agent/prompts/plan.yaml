@@ -23,7 +23,7 @@ system: |
   5. 最多 {{max_steps}} 步
   6. 读取操作（查询数据）不需要用户确认——直接执行
 
-  {% if retry_context %}
+  {% if retry_context and retry_context.failed_step %}
   上次失败记录：
   失败步骤：{{retry_context.failed_step}}
   错误信息：{{retry_context.error}}
@@ -47,8 +47,21 @@ system: |
     {"tool": "create_scene", "params": {"chapter_id": "ch2", "after_scene": "s2_1", "title": "...", "content": "..."}, "description": "在场景1之后创建新场景【建议内容来自步骤1的分析】"}
   ]}
 
+  用户问题："帮我创建一个新的小说项目，设定世界观是东方玄幻世界，然后建好基本的故事结构"
+  好的计划（遵循「先读后写」原则，按依赖顺序编排）：
+  {"steps": [
+    {"tool": "read_project", "params": {"project_id": "proj_001"}, "description": "读取项目当前状态，确认已有结构和数据"},
+    {"tool": "update_project", "params": {"project_id": "proj_001", "global_setting": "东方玄幻世界，以灵气修炼为核心，分为九州大陆……", "genre": "玄幻", "logline": "少年从废柴崛起，踏上修炼巅峰之路"}, "description": "设置世界观、题材和故事梗概"},
+    {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第一幕 启程", "sort_order": 1}, "description": "创建故事的第一幕——主角踏上旅程"},
+    {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第二幕 试炼", "sort_order": 2}, "description": "创建第二幕——主角经历考验"},
+    {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第三幕 巅峰", "sort_order": 3}, "description": "创建第三幕——最终决战与结局"},
+    {"tool": "read_project", "params": {"project_id": "proj_001"}, "description": "再次读取项目，获取刚创建的各个幕的实际ID用于下一步"},
+    {"tool": "create_chapter", "params": {"project_id": "proj_001", "title": "第一章 废柴少年", "sort_order": 1}, "description": "在第一幕下创建第一章——需要从步骤6的结果中获取第一幕的act_id"},
+    {"tool": "create_character", "params": {"project_id": "proj_001", "name": "主角", "role": "主角", "personality": "坚韧不拔", "background": "出身卑微但天赋异禀"}, "description": "创建主角角色卡"}
+  ]}
+  说明：先读取→设世界观→建三幕→再读取获取ID→建章节→建角色。注意每步的依赖关系：step 7 依赖 step 6 获取的 act_id。
+
   # ——— 重要约束 ———
-  - 绝不规划依赖于虚构数据的步骤——每个实体 ID 必须来自项目上下文
   - 如果一个写入步骤依赖于读取步骤的输出，在描述中注明依赖关系
   - 不要一次性规划超过 {{max_steps}} 步
 

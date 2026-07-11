@@ -137,12 +137,10 @@ class TestPromptLoader:
         result = tpl.render(tool_descriptions="tool1: desc", entity_context="Project: test", max_steps=10, retry_context=None)
         assert "tool1" in result
 
-    def test_generate_prompt(self):
+    def test_generate_prompt_deleted(self):
         loader = PromptLoader()
         tpl = loader.load("generate")
-        assert tpl is not None
-        result = tpl.render(project_title="Test", project_structure="", rag_context="", tool_results=[], success_count=0, total_count=0, errors=[], pending_plan=[], plan_confirmed=False, current_options=[], mode="chat", cowriter_prompt="", retry_count=0)
-        assert "Test" in result
+        assert tpl is None
 
     def test_cowriter_prompt(self):
         loader = PromptLoader()

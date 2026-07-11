@@ -6,28 +6,38 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
+import yaml
 from loguru import logger
 
 _PROMPT_DIR = Path(__file__).parent
 
 
-class _PreservingUndefined(jinja2.Undefined):
-    """Jinja2 undefined that preserves the original {{placeholder}} syntax.
+class _ReportingUndefined(jinja2.Undefined):
+    """Jinja2 undefined that warns on stringification and errors on comparison.
 
-    Unlike DebugUndefined (which adds spaces), this renders undefined
-    variables as {{name}} (no spaces around the name), matching the
-    behavior of the previous custom template engine. This allows
-    downstream code to detect and warn about unresolved placeholders.
+    Unlike the previous _PreservingUndefined (which silently returned
+    ``{{variable_name}}`` on ``__str__`` and always-``False`` on ``__eq__``),
+    this class:
+    - Logs a warning when an undefined variable is coerced to string.
+    - Raises ``TypeError`` when compared (``==`` / ``!=``), catching bugs.
+    - Returns ``False`` on ``__bool__`` so ``{% if var %}`` skips cleanly.
     """
 
     def __str__(self) -> str:
+        logger.warning("Undefined template variable: {}", self._undefined_name)
         return "{{" + self._undefined_name + "}}"
 
     def __eq__(self, other: object) -> bool:
-        return False
+        raise TypeError(
+            f"Cannot compare undefined template variable "
+            f"'{self._undefined_name}' — this is a bug."
+        )
 
     def __ne__(self, other: object) -> bool:
-        return True
+        raise TypeError(
+            f"Cannot compare undefined template variable "
+            f"'{self._undefined_name}' — this is a bug."
+        )
 
     __bool__ = __nonzero__ = lambda self: False  # type: ignore[assignment]
 
@@ -37,7 +47,7 @@ class PromptTemplate:
 
     def __init__(self, template: str):
         env = jinja2.Environment(
-            undefined=_PreservingUndefined,
+            undefined=_ReportingUndefined,
             autoescape=False,
             keep_trailing_newline=True,
         )
@@ -60,24 +70,27 @@ class PromptTemplate:
 
 
 class PromptLoader:
+    """Loads and caches all prompt YAML files at construction time."""
+
     def __init__(self):
         self._cache: dict[str, PromptTemplate] = {}
+        self._preload_all()
+
+    def _preload_all(self) -> None:
+        for yaml_file in _PROMPT_DIR.glob("*.yaml"):
+            name = yaml_file.stem
+            try:
+                with open(yaml_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if data and "system" in data:
+                    self._cache[name] = PromptTemplate(data["system"])
+                else:
+                    logger.warning("Prompt file {} has no 'system' key", yaml_file)
+            except Exception:
+                logger.exception("Failed to pre-load prompt: {}", yaml_file)
 
     def load(self, name: str) -> PromptTemplate | None:
-        if name in self._cache:
-            return self._cache[name]
-        path = _PROMPT_DIR / f"{name}.yaml"
-        if not path.exists():
-            return None
-        import yaml
-
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if not data or "system" not in data:
-            return None
-        tpl = PromptTemplate(data["system"])
-        self._cache[name] = tpl
-        return tpl
+        return self._cache.get(name)
 
     def render(self, name: str, **kwargs: Any) -> str | None:
         tpl = self.load(name)

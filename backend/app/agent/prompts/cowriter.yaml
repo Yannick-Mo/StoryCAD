@@ -59,7 +59,7 @@ system: |
   {% if acts %}
   Chapter structure:
   {% for a in acts %}
-  [{{a.name}}] {% for ch in a.chapters|take(5) %}{{ch.sort_order}}. {{ch.title}}; {% endfor %}{% if a.chapters|length > 5 %}...and {{a.chapters|length - 5}} more chapters{% endif %}
+  [{{a.name}}] {% for ch in a.chapters|take(5) %}{{ch.get('sort_order', '')}}. {{ch.title}}; {% endfor %}{% if a.chapters|length > 5 %}...and {{a.chapters|length - 5}} more chapters{% endif %}
   {% endfor %}
   {% endif %}
 
