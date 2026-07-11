@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any
 
 from loguru import logger
 from redis.asyncio import Redis
 
-from app.llm.types import Message
+from app.llm.types import Message, ToolCall
 
 
 _CONV_PREFIX = "conv:"
@@ -16,6 +17,8 @@ _CONV_META_PREFIX = "conv_meta:"
 _CONV_MSGS_PREFIX = "conv_msgs:"
 _SET_PREFIX = "conv_set:"
 MAX_HISTORY_MESSAGES = 200
+_MAX_IN_MEMORY_CONVERSATIONS = 500
+_IN_MEMORY_TTL = 86400 * 7
 
 
 def _msg_to_dict(m: Message) -> dict[str, Any]:
@@ -38,6 +41,7 @@ def _dict_to_msg(d: dict) -> Message:
     return Message(
         role=d.get("role", "user"),
         content=d.get("content"),
+        tool_calls=[ToolCall(**tc) for tc in d.get("tool_calls", [])] if d.get("tool_calls") else None,
         tool_call_id=d.get("tool_call_id"),
         name=d.get("name"),
     )
@@ -49,10 +53,29 @@ class ConversationMemory:
         self._lock = asyncio.Lock()
         self._store: dict[str, list[dict]] = {}
         self._meta: dict[str, dict] = {}
+        self._store_access: dict[str, float] = {}
+
+    async def _evict_if_needed(self):
+        if len(self._store) <= _MAX_IN_MEMORY_CONVERSATIONS:
+            return
+        now = time.time()
+        cutoff = now - _IN_MEMORY_TTL
+        expired = [k for k, t in self._store_access.items() if t < cutoff]
+        if expired:
+            for k in expired:
+                self._store.pop(k, None)
+                self._meta.pop(k, None)
+                self._store_access.pop(k, None)
+        while len(self._store) > _MAX_IN_MEMORY_CONVERSATIONS:
+            oldest = min(self._store_access, key=self._store_access.get)
+            self._store.pop(oldest, None)
+            self._meta.pop(oldest, None)
+            self._store_access.pop(oldest, None)
 
     async def create_conversation(self, project_id: str, user_id: str, title: str = "") -> str:
         conv_id = str(uuid.uuid4())
-        meta = {"project_id": project_id, "user_id": user_id, "title": title}
+        now = time.time()
+        meta = {"project_id": project_id, "user_id": user_id, "title": title, "created_at": now}
         if self._redis:
             pipe = self._redis.pipeline()
             pipe.hset(
@@ -65,6 +88,7 @@ class ConversationMemory:
             async with self._lock:
                 self._meta[conv_id] = meta
                 self._store[conv_id] = []
+                self._store_access[conv_id] = now
         return conv_id
 
     async def get_or_create_conversation(self, project_id: str, user_id: str, conversation_id: str | None = None, title: str = "") -> tuple[str, bool]:
@@ -102,9 +126,13 @@ class ConversationMemory:
             async with self._lock:
                 if conversation_id not in self._store:
                     self._store[conversation_id] = []
+                if conversation_id not in self._meta:
+                    self._meta[conversation_id] = {"project_id": "", "user_id": "", "title": ""}
                 self._store[conversation_id].append(d)
+                self._store_access[conversation_id] = time.time()
                 if len(self._store[conversation_id]) > MAX_HISTORY_MESSAGES:
                     self._store[conversation_id] = self._store[conversation_id][-MAX_HISTORY_MESSAGES:]
+                await self._evict_if_needed()
 
     async def list_conversations(self, project_id: str, user_id: str) -> list[dict]:
         if self._redis:
@@ -169,8 +197,12 @@ class ConversationMemory:
             return meta
         return None
 
-    async def save_agent_state(self, conversation_id: str, pending_plan: dict | list, current_options: list[dict]) -> None:
-        data = json.dumps({"pending_plan": pending_plan, "current_options": current_options}, ensure_ascii=False)
+    async def save_agent_state(self, conversation_id: str, pending_plan: dict, current_options: list[dict], plan_confirmed: bool = False, mode: str = "chat") -> None:
+        try:
+            data = json.dumps({"pending_plan": pending_plan, "current_options": current_options, "plan_confirmed": plan_confirmed, "mode": mode}, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            logger.error("Failed to serialize agent state: {}", e)
+            return
         if self._redis:
             await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "agent_state", data)
         else:
@@ -189,10 +221,10 @@ class ConversationMemory:
         if raw:
             try:
                 state = json.loads(raw)
-                return state.get("pending_plan", []), state.get("current_options", [])
+                return state.get("pending_plan", {}), state.get("current_options", []), state.get("plan_confirmed", False), state.get("mode", "chat")
             except (json.JSONDecodeError, TypeError):
-                return [], []
-        return [], []
+                return {}, [], False, "chat"
+        return {}, [], False, "chat"
 
     async def delete_last_message(self, conversation_id: str) -> None:
         if self._redis:
@@ -217,9 +249,9 @@ class ConversationMemory:
             return True
         async with self._lock:
             meta = self._meta.get(conversation_id)
-        if meta and meta.get("project_id") == project_id and meta.get("user_id") == user_id:
-            async with self._lock:
+            if meta and meta.get("project_id") == project_id and meta.get("user_id") == user_id:
                 self._meta.pop(conversation_id, None)
                 self._store.pop(conversation_id, None)
-            return True
-        return False
+                self._store_access.pop(conversation_id, None)
+                return True
+            return False

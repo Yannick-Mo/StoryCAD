@@ -34,7 +34,6 @@ class SuperAgent:
         self.checkpointer = SizeBoundedCheckpointer(thread_ttl=3600)
         self.app = self.graph.compile(
             checkpointer=self.checkpointer,
-            recursion_limit=100,
         )
         self.conv_memory = ConversationMemory(redis_client)
         self._history_manager: HistoryManager | None = None
@@ -47,18 +46,15 @@ class SuperAgent:
         return self._history_manager
 
     @staticmethod
-    def _extract_changes(tool_call: dict) -> dict:
-        """Extract meaningful change details from a tool call's parameters.
-        Filters out internal routing keys and empty values."""
+    def _extract_changes(params: dict) -> dict:
         skip_keys = {"project_id", "user_id", "conversation_id", "id"}
         changes = {}
-        for key, value in tool_call.get("parameters", {}).items():
+        for key, value in params.items():
             if key not in skip_keys and value is not None and value != "":
-                changes[key] = str(value)[:200]  # truncate long values
+                changes[key] = str(value)[:200]
         return changes
 
     async def _emit_tool_events(self, final_values: dict):
-        """Yield tool_done, option, plan, and project_updated events from final state."""
         tool_results = final_values.get("tool_results", [])
         visible_results = [tr for tr in tool_results if tr.get("tool") not in ("cowriter_analysis",)]
         for tr in visible_results:
@@ -68,15 +64,11 @@ class SuperAgent:
         if options:
             yield {"type": "option", "data": json.dumps(options, ensure_ascii=False)}
 
-        raw_pending_plan = final_values.get("pending_plan", [])
+        raw_pending_plan = final_values.get("pending_plan", {})
         plan_confirmed = final_values.get("plan_confirmed", False)
         if raw_pending_plan and not plan_confirmed:
-            if isinstance(raw_pending_plan, dict):
-                steps = raw_pending_plan.get("steps", [])
-                extra = {k: v for k, v in raw_pending_plan.items() if k != "steps"}
-            else:
-                steps = raw_pending_plan
-                extra = {}
+            steps = raw_pending_plan.get("steps", [])
+            extra = {k: v for k, v in raw_pending_plan.items() if k != "steps"}
             yield {
                 "type": "plan",
                 "data": json.dumps(
@@ -89,22 +81,25 @@ class SuperAgent:
                 ),
             }
 
-        write_tools = [tr.get("tool") for tr in visible_results if tr.get("success")]
-        if write_tools:
-            # Build detailed tool info with parameter changes
-            tool_details = []
-            for tr in visible_results:
-                if tr.get("success"):
-                    tool_call = tr.get("tool_call", {})
-                    if isinstance(tool_call, dict):
-                        changes = self._extract_changes(tool_call)
+        write_tools = []
+        tool_details = []
+        for tr in visible_results:
+            if tr.get("success"):
+                tool_name = tr.get("tool", "")
+                from app.agent.tools.__init__ import _WRITE_TOOL_NAMES
+                is_write = tool_name in _WRITE_TOOL_NAMES
+                if is_write:
+                    write_tools.append(tool_name)
+                    params = tr.get("params", {})
+                    if isinstance(params, dict):
+                        changes = self._extract_changes(params)
                     else:
                         changes = {}
                     tool_details.append({
-                        "name": tr.get("tool", "unknown"),
+                        "name": tool_name,
                         "changes": changes,
                     })
-            
+        if write_tools:
             yield {
                 "type": "project_updated",
                 "data": json.dumps(
@@ -145,7 +140,7 @@ class SuperAgent:
             )
             log.info("created conversation | conv_id={}", conversation_id)
 
-        config = {"configurable": {"thread_id": conversation_id}}
+        config = {"configurable": {"thread_id": conversation_id}, "recursion_limit": 100}
 
         history = await self.conv_memory.get_history(conversation_id)
 
@@ -161,7 +156,14 @@ class SuperAgent:
         if context_id:
             project_context["current_view_id"] = context_id
 
-        saved_pending_plan, saved_options = await self.conv_memory.load_agent_state(conversation_id)
+        saved_pending_plan, saved_options, saved_plan_confirmed, saved_mode = await self.conv_memory.load_agent_state(conversation_id)
+
+        # Mode switch: clear stale state from previous mode
+        if saved_mode != mode and saved_mode != "chat":
+            saved_pending_plan = {}
+            saved_options = []
+            saved_plan_confirmed = False
+            await self.conv_memory.save_agent_state(conversation_id, {}, [], False, mode)
 
         initial_state: AgentState = {
             "project_id": project_id,
@@ -183,7 +185,7 @@ class SuperAgent:
             "current_step_index": 0,
             "errors": [],
             "pending_plan": saved_pending_plan,
-            "plan_confirmed": False,
+            "plan_confirmed": saved_plan_confirmed,
             "retry_context": None,
             "search_results": [],
             "_context_loaded": False,
@@ -241,10 +243,10 @@ class SuperAgent:
                     elif event["event"] == "on_chain_end":
                         output = event["data"].get("output")
                         if isinstance(output, dict):
-                            # Capture any meaningful final state, not just when project_context present
+                            if output.get("current_options"):
+                                cached_options = output["current_options"]
                             if "project_context" in output or "messages" in output:
-                                final_values = output
-                                # Restore current_options if the output overwrote them
+                                final_values = dict(output)
                                 if "current_options" not in output and cached_options:
                                     final_values["current_options"] = cached_options
         except asyncio.TimeoutError:
@@ -266,15 +268,20 @@ class SuperAgent:
                 log.error("final_state_error | error={}", exc, exc_info=True)
                 yield {"type": "error", "data": json.dumps({"message": "Failed to get final state"})}
 
+        if final_values is None:
+            yield {"type": "error", "data": json.dumps({"message": "No output produced"})}
+            return
+
         # Phase 3: Emit tool results before response
-        if final_values:
-            async for evt in self._emit_tool_events(final_values):
-                yield evt
-            await self.conv_memory.save_agent_state(
-                conversation_id,
-                final_values.get("pending_plan", []),
-                final_values.get("current_options", []),
-            )
+        async for evt in self._emit_tool_events(final_values):
+            yield evt
+        await self.conv_memory.save_agent_state(
+            conversation_id,
+            final_values.get("pending_plan", {}),
+            final_values.get("current_options", []),
+            final_values.get("plan_confirmed", False),
+            mode=final_values.get("mode", mode),
+        )
 
         # Phase 4: Flush buffered response tokens
         if token_buffer:
