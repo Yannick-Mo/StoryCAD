@@ -1,0 +1,201 @@
+"""Privacy / display-name sanitisation for tool-related SSE events.
+
+All internal tool function names, parameters, and error details are
+mapped to user-facing Chinese labels before they leave the server.
+This is the last filter before data goes to ``routes_ai_v2.py``.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+# ── Display-name mapping ────────────────────────────────────────────────
+# Every tool function name the AI assistant may call is mapped to a
+# user-facing Chinese label.  Missing names fall back to a generic label.
+
+TOOL_DISPLAY_NAMES: dict[str, str] = {
+    # Project read
+    "read_project": "读取项目",
+    "read_chapter": "读取章节",
+    "read_scene": "读取场景",
+    "read_full_project": "读取项目全文",
+    "list_characters": "列出角色",
+    "list_chapters": "列出章节",
+    "list_scenes": "列出场景",
+    "list_relations": "列出关系",
+    "list_edges": "列出关联",
+    "search_nodes": "搜索节点",
+    # Project write
+    "create_scene": "创建场景",
+    "update_scene": "修改场景",
+    "delete_scene": "删除场景",
+    "create_chapter": "创建章节",
+    "update_chapter": "修改章节",
+    "delete_chapter": "删除章节",
+    "create_act": "创建幕",
+    "update_act": "修改幕",
+    "delete_act": "删除幕",
+    "update_project": "更新项目",
+    "set_chapter_goal": "设定章节目标",
+    "update_project_setting": "更新项目设置",
+    "create_project_from_material": "从素材创建项目",
+    # Character
+    "create_character": "创建角色",
+    "update_character": "修改角色",
+    "delete_character": "删除角色",
+    "delete_relation": "删除关系",
+    "update_relation": "修改关系",
+    "create_relation": "创建关系",
+    # Edge
+    "create_edge": "创建关联",
+    "update_edge": "修改关联",
+    "delete_edge": "删除关联",
+    # Agents
+    "call_goal_agent": "调用目标分析",
+    "call_outline_agent": "调用大纲分析",
+    # Analysis
+    "check_consistency": "检查一致性",
+    "analyze_rhythm": "分析节奏",
+    "analyze_chapter": "分析章节",
+    "analyze_character_arc": "分析角色弧",
+    "suggest_next": "建议下一步",
+    "project_health": "项目健康检查",
+    # Writing
+    "write_scene_content": "写入场景内容",
+    "continue_scene": "续写场景",
+    "rewrite_scene": "重写场景",
+    "expand_selection": "展开选中内容",
+    "compress_selection": "压缩选中内容",
+    # Knowledge / Web
+    "search_knowledge": "搜索知识库",
+    "web_search": "联网搜索",
+    # Theme
+    "create_theme": "创建主题",
+    "update_theme": "修改主题",
+    "delete_theme": "删除主题",
+    "link_theme_chapter": "关联主题-章节",
+    "unlink_theme_chapter": "取消关联主题-章节",
+    "set_chapter_rhythm": "设置章节节奏",
+    # Internal / plans
+    "cowriter_analysis": "内容分析",
+    "plan_tools": "执行计划",
+    # Misc
+    "list_conversations": "列出会话",
+    "get_conversation": "获取会话",
+}
+
+# Patterns to strip internal function names from error strings.
+# The LLM-assisted recovery path may embed "Tool 'xxx' failed" or
+# similar patterns in messages sent to the front end.
+_ERROR_SANITISE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"Tool '([^']+)'"), "操作"),
+    (re.compile(r"tool '([^']+)'"), "操作"),
+    (re.compile(r"(?i)(function|method|endpoint) '[^']+'"), "接口"),
+]
+
+
+def _sanitise_error_text(text: str) -> str:
+    """Remove internal function names from an error message."""
+    result = text
+    for pattern, replacement in _ERROR_SANITISE_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def _display_name(internal: str) -> str:
+    """Return the user-facing label for an internal tool name."""
+    return TOOL_DISPLAY_NAMES.get(internal, "执行操作")
+
+
+# ── Event sanitizers ────────────────────────────────────────────────────
+
+
+def _sanitise_tool_done(data: dict[str, Any]) -> dict[str, Any]:
+    """Replace the internal tool name with its display label & strip
+    internal fields such as ``_tool_use_id``."""
+    result = dict(data)
+    internal = result.get("tool", "")
+    result["tool"] = _display_name(internal)
+    result.pop("_tool_use_id", None)
+    if result.get("error"):
+        result["error"] = _sanitise_error_text(result["error"])
+    return result
+
+
+def _sanitise_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Sanitise every step's internal tool name and strip raw params."""
+    steps = plan.get("steps", [])
+    clean_steps = []
+    for step in steps:
+        internal = step.get("tool", "")
+        desc = step.get("description", "")
+        # If description fell back to the raw internal name, replace it
+        if desc == internal:
+            desc = _display_name(internal)
+        clean_steps.append({
+            "tool": _display_name(internal),
+            "description": desc,
+        })
+    result = dict(plan)
+    result["steps"] = clean_steps
+    if "reasoning" in result:
+        result["reasoning"] = _sanitise_error_text(result["reasoning"])
+    return result
+
+
+def _sanitise_project_updated(data: dict[str, Any]) -> dict[str, Any]:
+    """Replace tool names and remove details that leak param names."""
+    result = dict(data)
+    result["tools_executed"] = [
+        _display_name(t) for t in result.get("tools_executed", [])
+    ]
+    details = []
+    for td in result.get("tool_details", []):
+        details.append({"name": _display_name(td.get("name", ""))})
+    result["tool_details"] = details
+    return result
+
+
+# ── Main entry ──────────────────────────────────────────────────────────
+
+
+def sanitise_event(event_type: str, data_raw: str) -> str:
+    """Sanitise an SSE event's data payload before sending to the client.
+
+    Args:
+        event_type:  SSE event type (``tool_done``, ``plan``, etc.)
+        data_raw:    Raw string payload (JSON or plain text).
+
+    Returns:
+        Sanitised payload string.  Non‑tool events pass through unchanged.
+    """
+    if event_type == "tool_done":
+        parsed = json.loads(data_raw)
+        return json.dumps(_sanitise_tool_done(parsed), ensure_ascii=False)
+    if event_type == "plan":
+        try:
+            parsed = json.loads(data_raw)
+            return json.dumps(_sanitise_plan(parsed), ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            return data_raw
+    if event_type == "project_updated":
+        try:
+            parsed = json.loads(data_raw)
+            return json.dumps(_sanitise_project_updated(parsed), ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            return data_raw
+    if event_type == "error":
+        try:
+            parsed = json.loads(data_raw)
+            if isinstance(parsed, dict):
+                return json.dumps(
+                    {k: _sanitise_error_text(v) if isinstance(v, str) else v
+                     for k, v in parsed.items()},
+                    ensure_ascii=False,
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return _sanitise_error_text(data_raw)
+    return data_raw

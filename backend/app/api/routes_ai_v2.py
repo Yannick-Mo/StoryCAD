@@ -12,6 +12,7 @@ from pydantic import BaseModel, field_validator
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.privacy import sanitise_event
 from app.agent.super_agent import SuperAgent
 from app.api.deps import get_db, get_current_user, get_redis
 from app.llm.client import get_shared_client, get_tracker
@@ -107,7 +108,8 @@ async def _stream_chat(
             if kind == "event":
                 if request is not None and await request.is_disconnected():
                     break
-                yield _format_sse(payload['type'], payload['data'])
+                safe_data = sanitise_event(payload['type'], payload['data'])
+                yield _format_sse(payload['type'], safe_data)
     except BaseException as exc:
         logger.error("AI chat error: {}", exc, exc_info=True)
         yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': 'An unexpected error occurred'})}\n\n"
