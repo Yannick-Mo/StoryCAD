@@ -76,6 +76,7 @@ class LoopState:
     # ── Lifecycle ───────────────────────────────────────────────────
     turn_count: int = 0
     _context_loaded: bool = False
+    _invalidated_sections: set = field(default_factory=set)
     transition: str = ""  # diagnostic: last action taken
 
     # ── Public API ──────────────────────────────────────────────────
@@ -139,6 +140,7 @@ class LoopState:
             # Lifecycle
             turn_count=int(initial_state.get("_turn_count", 0) or 0),
             _context_loaded=bool(initial_state.get("_context_loaded", False)),
+            _invalidated_sections=set(initial_state.get("_invalidated_sections", []) or []),
             transition="",
         )
 
@@ -171,6 +173,7 @@ class LoopState:
             "retry_context": self.retry_context,
             "cowriter_session": self.cowriter_session,
             "_context_loaded": self._context_loaded,
+            "_invalidated_sections": list(self._invalidated_sections),
             "_turn_count": self.turn_count,
             "recovery_state": self.recovery_state,
             "_model_override": self._model_override,

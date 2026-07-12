@@ -39,7 +39,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "delete_act": "删除幕",
     "update_project": "更新项目",
     "set_chapter_goal": "设定章节目标",
-    "update_project_setting": "更新项目设置",
     "create_project_from_material": "从素材创建项目",
     # Character
     "create_character": "创建角色",
@@ -47,7 +46,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "delete_character": "删除角色",
     "delete_relation": "删除关系",
     "update_relation": "修改关系",
-    "create_relation": "创建关系",
     # Edge
     "create_edge": "创建关联",
     "update_edge": "修改关联",
@@ -81,9 +79,6 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     # Internal / plans
     "cowriter_analysis": "内容分析",
     "plan_tools": "执行计划",
-    # Misc
-    "list_conversations": "列出会话",
-    "get_conversation": "获取会话",
 }
 
 # Patterns to strip internal function names from error strings.

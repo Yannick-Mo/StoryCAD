@@ -16,6 +16,10 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
 
 
 def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
+    from .list_tools import (
+        ListChaptersTool, ListScenesTool,
+        ListRelationsTool, ListEdgesTool, SearchNodesTool,
+    )
     from .project_tools import (
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
@@ -41,6 +45,7 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
     )
     classes = [
+        ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool,

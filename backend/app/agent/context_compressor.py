@@ -47,7 +47,6 @@ _COMPACTABLE_TOOLS: set[str] = {
     "list_relations", "list_edges", "search_nodes",
     "analyze_chapter", "project_health", "check_consistency",
     "analyze_rhythm", "suggest_next",
-    "list_conversations", "get_conversation",
 }
 
 

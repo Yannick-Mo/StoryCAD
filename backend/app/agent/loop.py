@@ -110,13 +110,49 @@ def _invalidate_after_write(
     filtered_tools: dict[str, BaseTool],
 ) -> LoopState:
     """If *tool_name* is a write operation that succeeded, mark context
-    as stale so it's reloaded on the next turn."""
+    as stale so it's reloaded on the next turn.
+
+    Also tracks which sections were modified (``_invalidated_sections``)
+    so the context builder can do targeted cache invalidation.
+    """
     if not result.get("success"):
         return state
     tool = filtered_tools.get(tool_name)
     if tool and tool.is_write_operation:
-        return state.replace(_context_loaded=False, transition="context_invalidated_after_write")
+        section = _section_for_tool(tool_name)
+        invalidated = set(state._invalidated_sections) | {section}
+        return state.replace(
+            _context_loaded=False,
+            _invalidated_sections=invalidated,
+            transition=f"context_invalidated_{section}",
+        )
     return state
+
+
+def _section_for_tool(tool_name: str) -> str:
+    """Map a write tool to the context section it modifies."""
+    if tool_name in ("update_project", "create_project_from_material"):
+        return "project"
+    if tool_name in ("create_act", "update_act", "delete_act",
+                     "create_chapter", "update_chapter", "delete_chapter",
+                     "create_scene", "update_scene", "delete_scene",
+                     "set_chapter_goal"):
+        return "structure"
+    if tool_name in ("write_scene_content", "continue_scene", "rewrite_scene",
+                     "expand_selection", "compress_selection"):
+        return "content"
+    if tool_name in ("create_character", "update_character", "delete_character",
+                     "update_relation", "delete_relation"):
+        return "characters"
+    if tool_name in ("create_edge", "update_edge", "delete_edge"):
+        return "edges"
+    if tool_name in ("create_theme", "update_theme", "delete_theme",
+                     "link_theme_chapter", "unlink_theme_chapter",
+                     "set_chapter_rhythm"):
+        return "themes"
+    if tool_name in ("call_goal_agent", "call_outline_agent"):
+        return "project"
+    return "project"
 
 
 # ── Event constructors ──────────────────────────────────────────────────
@@ -157,6 +193,93 @@ _REJECT_KEYWORDS: list[str] = [
     "换个", "换一个", "重新", "再来",
     "重来", "再想想",
 ]
+
+
+def _detect_context_depth(messages: list["Message"]) -> str:
+    """Analyze recent user messages to determine the appropriate context depth.
+
+    Returns ``"minimal"``, ``"summary"``, or ``"full"``.
+
+    Rules:
+    - Character-related queries (性格, 动机, 人物, 角色) → ``"summary"``
+      so the AI gets character personality/motivation data.
+    - Scene/Settings queries (场景, 地点, 时间线, setting) → ``"summary"``
+      so the AI gets scene setting/time fields.
+    - Content/writing queries (内容, 正文, 写作, 文笔, 风格) → ``"summary"``
+      to give the AI more scene context.
+    - Analysis/structure queries (分析, 结构, 情节, plot) → stays at ``"minimal"``
+      (tools are sufficient).
+    - Default → ``"minimal"``
+    """
+    if not messages:
+        return "minimal"
+
+    # Collect recent user text content
+    texts = []
+    seen = 0
+    for m in reversed(messages):
+        if m.role == "user" and m.content:
+            texts.append(m.content)
+            seen += 1
+            if seen >= 3:
+                break
+    combined = " ".join(texts).lower()
+
+    # Check if query is related to character depth
+    character_kw = {"性格", "动机", "背景故事", "人物关系", "角色弧",
+                     "personality", "motivation", "background", "character arc"}
+    if any(kw in combined for kw in character_kw):
+        return "summary"
+
+    # Scene/setting details
+    setting_kw = {"场景地点", "场景时间", "地点设定", "时间线",
+                   "setting", "scene time", "timeline", "worldbuilding"}
+    if any(kw in combined for kw in setting_kw):
+        return "summary"
+
+    # Content/writing
+    writing_kw = {"正文内容", "文笔", "写作风格", "叙事",
+                   "dialogue", "对话", "描写", "叙述"}
+    if any(kw in combined for kw in writing_kw):
+        return "summary"
+
+    return "minimal"
+
+
+def _get_recent_scenes_hint(
+    context: dict,
+    max_scenes: int = 5,
+) -> str | None:
+    """Build a compact hint of the most recent scene summaries.
+
+    Extracts the last *max_scenes* scenes from the loaded project context
+    (ordered by their position in the structure) so the AI has a quick
+    reference to recent narrative progress without an extra tool call.
+    """
+    acts = context.get("acts", [])
+    all_scenes: list[dict] = []
+    for act in acts:
+        for ch in act.get("chapters", []):
+            for sc in ch.get("scenes", []):
+                all_scenes.append(sc)
+
+    if not all_scenes:
+        return None
+
+    # Take the last N scenes (they're already in sort_order)
+    recent = all_scenes[-max_scenes:]
+    lines = ["\n最近场景快照："]
+    for sc in recent:
+        title = sc.get("title", "?")
+        summary = sc.get("summary", "") or ""
+        pov = sc.get("pov_character", "") or ""
+        snippet = f"- {title}"
+        if pov:
+            snippet += f" [{pov}]"
+        if summary:
+            snippet += f": {summary[:100]}"
+        lines.append(snippet)
+    return "\n".join(lines)
 
 
 def _detect_plan_decision(user_content: str, pending_plan: dict) -> str:
@@ -380,13 +503,23 @@ async def autonomous_loop(
                     last = state.messages[-1]
                     query_hint = (last.content or "")[:200]
 
+                # Determine context depth based on user's intent
+                depth = _detect_context_depth(state.messages)
+
                 ctx = await builder.build_summary(
                     _uuid.UUID(state.project_id),
                     query_hint=query_hint,
-                    depth="minimal",
+                    depth=depth,
                 )
+
+                # Prepend recent scene summaries hint
+                recent_hint = _get_recent_scenes_hint(ctx)
+                if recent_hint:
+                    ctx["_recent_scenes_hint"] = recent_hint
+
                 state = state.replace(project_context=ctx, _context_loaded=True,
-                                      transition="context_loaded")
+                                      _invalidated_sections=set(),
+                                      transition=f"context_loaded_depth_{depth}")
             except Exception as e:
                 logger.warning("Context load skipped/partial: %s", e)
                 state = state.replace(transition="context_load_failed")
@@ -594,6 +727,11 @@ async def autonomous_loop(
                 else:
                     theme_lines.append(f"- {t_name}")
             system_content += "\n".join(theme_lines)
+
+        # --- Recent scenes hint ---
+        recent_hint = state.project_context.get("_recent_scenes_hint")
+        if recent_hint:
+            system_content += recent_hint
 
         # Inject dynamic sections from AttachmentInjector
         for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
