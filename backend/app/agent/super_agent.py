@@ -265,7 +265,7 @@ class SuperAgent:
             from app.agent.loop import agent_loop
             from app.agent.tools import get_tool_registry, get_tool_descriptions
 
-            all_tools = get_tool_registry(db, llm_client=self._llm_client)
+            all_tools = get_tool_registry(self.db, llm_client=self._llm_client)
             td = get_tool_descriptions(all_tools)
 
             try:
