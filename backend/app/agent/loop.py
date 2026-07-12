@@ -1,993 +1,657 @@
+"""Autonomous agent loop — model-driven, not code-driven.
+
+Replaces the fixed-workflow agent_loop with a Claude Code-inspired design
+where the LLM decides: reply, call tools, present options, ask questions.
+
+Key differences from the old agent_loop:
+  - No classify_intent gate: the model sees tools directly and decides.
+  - Multi-tool turns: model can chain read→analyze→write in one turn.
+  - Streaming tool execution: SAFE tools run as they arrive mid-stream.
+  - Interceptor layer: mode gate, confirmation gate, option gate.
+  - Token-aware context compression.
+  - Layered error recovery (wired from recovery.py).
+
+Usage::
+
+    async for event in autonomous_loop(initial_state, tools, llm_client, db, td):
+        if "_stream_token" in event:
+            yield token to frontend
+        elif "_tool_done" in event:
+            yield tool result card
+        elif "_loop_done" in event:
+            final_state = event["final_state"]
+            break
+"""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import re
-import time
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator
 
-from app.agent.nodes.classify_intent import _detect_plan_confirm
-from app.agent.nodes.execute_tool import (
-    _execute_cowriter,
-    _execute_cowriter_choice,
-    _execute_planned_step,
-    _execute_tool_call_streaming,
-    _run_single_tool,
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.context_compressor import (
+    compress_history,
+    should_compress,
 )
-from app.agent.prompts import render_prompt
+from app.agent.interceptors import (
+    InterceptResult,
+    apply_interceptors,
+    build_confirmation_plan,
+)
+from app.agent.loop_state import LoopState
 from app.agent.prompts.builder import get_prompt_builder
-from app.agent.state import AgentState
 from app.agent.tools import get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
+from app.agent.tools.streaming_executor import StreamingToolExecutor
 from app.llm.client import LLMClient
-from app.llm.types import Message, ToolCall as TCT
-from sqlalchemy.ext.asyncio import AsyncSession
+from app.llm.types import Message
 
 logger = logging.getLogger(__name__)
 
-# Max turns before forcing stop
-MAX_TURNS = 50
-# Max recovery attempts per turn
-MAX_RECOVERY = 3
-# Max RAG chars for classify_intent
-MAX_RAG_CHARS = 1000
+# ── Constants ──────────────────────────────────────────────────────────
+
+MAX_TURNS = 30  # Hard safety cap
+MAX_RECOVERY = 3  # Max recovery attempts per error type
+MAX_RAG_CHARS = 1000  # RAG context truncation
+MODEL_CONTEXT_LIMIT = 100_000  # Conservative estimate for DeepSeek V3
+
+# ── Tool execution helpers ──────────────────────────────────────────────
 
 
-# ── Intent classification helper ──────────────────────────────────────
+async def _run_single_tool_wrapper(
+    tool_name: str,
+    args: dict,
+    tools: dict[str, BaseTool],
+    db: AsyncSession,
+) -> dict:
+    """Execute one tool and return a result dict.
 
-
-async def _classify_intent(
-    messages: list[Message],
-    mode: str,
-    project_context: dict,
-    cowriter_session: dict,
-    current_options: list,
-    pending_plan: dict,
-    errors: list[str],
-    llm_client: LLMClient,
-    tool_descriptions: str,
-    retry_count: int,
-    trace_id: str = "",
-) -> str:
-    """Determine user intent from the last message.
-
-    Returns one of: simple_q, tool_call, cowriter, cowriter_choice,
-    complex, plan_confirm, plan_reject.
+    Wraps :func:`_run_single_tool` which returns ``(result_dict, errors_list)``.
     """
-    last_msg = messages[-1] if messages else None
-    if not last_msg or last_msg.role not in ("user", "tool"):
-        return "simple_q"
+    from app.agent.nodes.execute_tool import _run_single_tool
 
-    content = (last_msg.content or "").strip().lower()
-    cowriter_active = mode == "cowriter"
-
-    # --- Pending plan keyword detection (fast path, no LLM) ---
-    if pending_plan:
-        plan_decision = _detect_plan_confirm(content)
-        if plan_decision == "plan_confirm":
-            return "plan_confirm"
-        elif plan_decision == "plan_reject":
-            return "plan_reject"
-
-    # --- Cowriter choice detection (keyword-based fast path) ---
-    is_cowriter_choice = cowriter_active and (
-        "[option:" in content
-        or any(
-            kw in content
-            for kw in [
-                "选a", "选b", "选c", "选1", "选2", "选3",
-                "option a", "option b", "option c",
-                "方案a", "方案b", "方案c",
-                "方案一", "方案二", "方案三", "方案1", "方案2", "方案3",
-                "我选",
-            ]
-        )
-    )
-    if cowriter_active and not is_cowriter_choice and "选择" in content:
-        is_cowriter_choice = any(
-            kw in content
-            for kw in [
-                "我选择", "选择方案", "选择第", "选择a", "选择b", "选择c",
-                "方案一", "方案二", "方案三",
-            ]
-        )
-    if cowriter_active and not is_cowriter_choice and current_options:
-        adoption_kw = ["直接采用", "就用这个", "就按这个", "采用", "就这个", "直接写"]
-        is_cowriter_choice = any(kw in content for kw in adoption_kw)
-    if is_cowriter_choice and cowriter_active:
-        return "cowriter_choice"
-
-    # --- Session-aware continuation (soft override) ---
-    session = cowriter_session or {}
-    if cowriter_active and session.get("is_active") and session.get("phase") in ("review", "execute"):
-        short = len(content.split()) <= 15 and len(content) <= 40
-        is_refinement = any(
-            kw in content
-            for kw in [
-                "再", "还", "更", "改", "修", "调", "细", "补充", "继续",
-                "然后", "接着", "下一步", "再改", "再写", "换一个",
-                "不够", "不好", "太", "重新",
-                "more", "again", "continue", "further", "refine",
-            ]
-        )
-        adoption = any(kw in content for kw in ["好的", "可以", "行", "就这样", "不错", "挺好", "ok"])
-        if short and (is_refinement or adoption):
-            return "cowriter"
-
-    # --- Direct write detection in cowriter mode ---
-    if cowriter_active and not current_options:
-        direct_write_kw = [
-            "帮我写", "帮我创作", "帮我生成", "直接写一段",
-            "write a", "write for me", "write me",
-        ]
-        if any(kw in content for kw in direct_write_kw):
-            return "cowriter"
-
-    # --- LLM classification ---
-    # Fast keyword hints for tool_call (used as fallback)
-    tool_kw = [
-        "创建", "删除", "修改", "更新", "添加", "写入",
-        "create", "delete", "update", "add", "write",
-        "分析", "检查", "analyze", "check",
-        "搜索", "search",
-    ]
-    has_tool_hint = any(kw in content for kw in tool_kw)
-
-    # Build classify system prompt
-    last_ai_response = ""
-    for msg in reversed(messages):
-        if msg.role == "assistant":
-            last_ai_response = (msg.content or "")[:500]
-            break
-
-    session_info = ""
-    if session.get("is_active"):
-        phase = session.get("phase", "explore")
-        goal = session.get("goal", "")
-        decisions = session.get("decisions", [])
-        session_info = f"当前协作阶段：{phase}"
-        if goal:
-            session_info += f" | 目标：{goal}"
-        if decisions:
-            session_info += f" | 已完成 {len(decisions)} 轮决策"
-
-    last_errs = [e for e in (errors or [])[-3:]] if errors else []
-
-    system_text = render_prompt(
-        "classify_intent",
-        has_pending_plan=bool(pending_plan),
-        retry_count=retry_count,
-        max_retries=MAX_RECOVERY,
-        last_errors="; ".join(last_errs) if last_errs else "none",
-        mode=mode,
-        rag_context=(project_context.get("rag_context", "") or "")[:MAX_RAG_CHARS],
-        last_ai_response=last_ai_response,
-        current_options=current_options,
-        cowriter_session=session_info,
-    )
-    if not system_text:
-        builder = get_prompt_builder()
-        system_text = builder.build(["identity"])
-        if not system_text:
-            system_text = (
-                "You are an intent classifier. Respond with JSON: "
-                '{"intent": "simple_q|tool_call|cowriter|complex", "reason": "..."}'
-            )
-
-    tools_section = f"\n\nAvailable tools:\n{tool_descriptions}" if tool_descriptions else ""
-    classify_msgs = [
-        Message(role="system", content=system_text + tools_section),
-        Message(role="user", content=content),
-    ]
-
-    intent = "simple_q"
-    try:
-        _t0 = time.monotonic()
-        result = await llm_client.chat(
-            messages=classify_msgs,
-            tools=None,
-            temperature=0.1,
-            request_id=trace_id,
-        )
-        logger.debug("classify_intent LLM call took %.2fs", time.monotonic() - _t0)
-
-        try:
-            parsed = json.loads(result.content or "{}")
-            intent = parsed.get("intent", "simple_q")
-            reason = parsed.get("reason", "")
-            logger.debug("Classification result: intent=%s reason=%s", intent, reason)
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            raw = (result.content or "").strip().lower()
-            if re.search(r"\bcomplex\b", raw):
-                intent = "complex"
-            elif re.search(r"\bcowriter\b", raw):
-                intent = "cowriter"
-            elif has_tool_hint:
-                intent = "tool_call"
-            else:
-                intent = "simple_q"
-    except Exception as e:
-        logger.warning("Intent classification failed: %s", e)
-        intent = "tool_call" if has_tool_hint else "simple_q"
-
-    if intent not in ("simple_q", "tool_call", "cowriter", "complex"):
-        intent = "simple_q"
-
-    return intent
+    result, errors = await _run_single_tool(tool_name, args, tools, db)
+    return result
 
 
-# ── Main Agent Loop ───────────────────────────────────────────────────
+def _markdown_to_plain(md: str, max_len: int = 120) -> str:
+    """Strip markdown formatting for tool result summaries."""
+    # Remove headers, bold, italic, code
+    md = re.sub(r"#{1,6}\s+", "", md)
+    md = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", md)
+    md = re.sub(r"`{1,3}[^`]+`{1,3}", "", md)
+    md = re.sub(r">\s+", "", md)
+    # Collapse whitespace
+    md = re.sub(r"\s+", " ", md).strip()
+    return md[:max_len] + ("..." if len(md) > max_len else "")
 
 
-async def agent_loop(
-    initial_state: AgentState,
+# ── Event constructors ──────────────────────────────────────────────────
+
+
+def _event_step(label: str) -> dict:
+    return {"_step": label}
+
+
+def _event_token(text: str) -> dict:
+    return {"_stream_token": text}
+
+
+def _event_tool_done(result: dict) -> dict:
+    return {"_tool_done": result}
+
+
+def _event_options(options: list) -> dict:
+    return {"current_options": options}
+
+
+def _event_plan(plan: dict) -> dict:
+    return {"pending_plan": plan}
+
+
+def _event_done(final_state: dict) -> dict:
+    return {"_loop_done": True, "final_state": final_state}
+
+
+# ── System prompt builders (mode-aware) ─────────────────────────────────
+
+
+def _build_chat_system_prompt(sections: list[str]) -> str:
+    """System prompt sections for chat (read-only) mode."""
+    builder = get_prompt_builder()
+    return builder.build(list(sections))
+
+
+def _build_cowriter_persona() -> str:
+    """Return the cowriter persona injected when mode == 'cowriter'."""
+    return """# --- 协作模式：合著者身份 ---
+你是小说的**合著者**，不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
+
+## 核心行为原则
+1. **先分析，再行动** — 在回复之前，从角色动机、故事逻辑、情感弧线三个维度分析当前情况
+2. **提供选项，而非答案** — 当存在多个可行方向时，调用 `present_options` 工具展示 2-3 个结构化选项卡片
+3. **主动提问** — 当用户需求模糊时，反问澄清。不要猜测用户意图
+4. **引用已有设定** — 始终引用角色背景、前文事件、世界观设定来支撑你的分析
+5. **可执行** — 选项中应明确用户选择后将执行什么工具和参数
+
+## 会话阶段
+- **explore（探索）** — 理解用户需求、分析现状、提供思路方向。此阶段禁止写入。
+- **plan（计划）** — 用户选定方向后，规划具体执行步骤
+- **execute（执行）** — 正在执行写入/修改操作
+- **review（评审）** — 内容已写入，等待用户反馈
+- **complete（完成）** — 当前任务已全部完成
+
+## 何时调用 present_options
+- 你分析后发现有多条可行路径需要用户决策
+- 用户面临方向性选择（"你说得对，但怎么改呢？"）
+- 不要每轮都调用 — 讨论和解释时直接回复即可
+- 只有当真正需要用户做选择时才使用选项卡片
+"""
+
+
+def _build_tool_schemas(filtered_tools: dict[str, BaseTool]) -> list:
+    """Convert filtered tools to ToolDef list for the LLM client."""
+    from app.llm.types import ToolDef
+    schemas = []
+    for t in filtered_tools.values():
+        d = t.to_openai_tool()
+        schemas.append(ToolDef(function=d.get("function", {})))
+    return schemas
+
+
+# ── Main Autonomous Loop ────────────────────────────────────────────────
+
+
+async def autonomous_loop(
+    initial_state: dict,
     tools: dict[str, BaseTool],
     llm_client: LLMClient,
     db: AsyncSession,
     tool_descriptions: str,
 ) -> AsyncGenerator[dict, None]:
-    """Main agent loop -- pure while(True) with no state machine framework.
+    """Model-driven autonomous agent loop.
 
-    Inspired by Claude Code's queryLoop in query.ts.
-
-    Yields events that the caller (SuperAgent.chat_stream) consumes:
-        {"_step": str}             -- progress label (e.g. "读取项目数据...")
-        {"_stream_token": str}     -- text token for buffering
-        {"_tool_done": dict}       -- tool result (streaming)
-        {"current_options": list}  -- cowriter option cards
-        {"pending_plan": dict}     -- plan awaiting user confirmation
-        {"_loop_done": True, "final_state": AgentState} -- terminal sentinel
+    The LLM decides what to do each turn — reply, call tools, present
+    options — and the loop continues as long as tool calls are produced.
+    Code only handles safety (mode gating, confirmation, context budget).
     """
-    # ── Mutable state ─────────────────────────────────────────────
-    messages: list[Message] = list(initial_state.get("messages", []))
-    project_id: str = initial_state.get("project_id") or ""
-    user_id: str = initial_state.get("user_id") or ""
-    conversation_id: str = initial_state.get("conversation_id") or ""
-    mode: str = initial_state.get("mode", "chat")
-    project_context: dict = initial_state.get("project_context", {})
-    active_skills: list = initial_state.get("active_skills", [])
-    trace_id: str = initial_state.get("trace_id", "")
 
-    turn: int = 0
-    errors: list[str] = list(initial_state.get("errors", []))
-    tool_results: list[dict] = list(initial_state.get("tool_results", []))
-    intermediate_steps: list[dict] = list(initial_state.get("intermediate_steps", []))
+    # ── State initialization ────────────────────────────────────────
+    state = LoopState.from_initial(initial_state)
+    llm = llm_client
 
-    # Cowriter state
-    cowriter_session: dict = initial_state.get("cowriter_session", {}) or {}
-    current_options: list = initial_state.get("current_options", []) or []
-
-    # Plan state
-    pending_plan: dict = initial_state.get("pending_plan", {}) or {}
-    planned_steps: list = initial_state.get("planned_steps", []) or []
-    plan_confirmed: bool = initial_state.get("plan_confirmed", False)
-    current_step_index: int = initial_state.get("current_step_index", 0)
-
-    # Recovery state
-    retry_count: int = initial_state.get("retry_count", 0)
-    recovery_state: dict = initial_state.get("recovery_state", {}) or {}
-    retry_context: dict | None = None
-
-    # Step tracking for _step events (LangGraph parity)
-    _shown_steps: set[str] = set()
-
-    def _show_step(label: str, key: str = "") -> None:
-        """Yield a step label once (dedup by key)."""
-        nonlocal _shown_steps
-        k = key or label
-        if k not in _shown_steps:
-            _shown_steps.add(k)
-            # Yielded externally via event loop below
-            # We can't yield from a non-async nested function,
-            # so the caller stores this and yields after _show_step returns.
-            # We use a closure list as a workaround.
-            _pending_steps.append(label)
-
-    _pending_steps: list[str] = []
-
-    def _flush_steps() -> None:
-        """Generator helper: drain and yield pending steps."""
-        # This pattern lets non-async helpers queue step labels.
-        pass
-
-    # ── Filter tools by mode & skills ─────────────────────────────
-    filtered_tools = get_filtered_tools(tools, active_skills, mode=mode)
+    # ── Filter tools by mode & skills ───────────────────────────────
+    filtered_tools = get_filtered_tools(tools, state.active_skills, mode=state.mode)
     filtered_tool_desc = "\n".join(
         f"- {t.name}: {t.description}" for t in filtered_tools.values()
     ) or tool_descriptions
+    tool_schemas = _build_tool_schemas(filtered_tools)
 
-    # Pre-instantiate plan node (used for "complex" intent)
-    from app.agent.nodes.plan import create_plan_node
-    _plan_node_fn = await _make_plan_fn(tools, llm_client) if False else None
-    # We'll create it lazily when needed to avoid overhead for simple_q turns.
-
-    # ── Phase 0: Context loading (one-time) ───────────────────────
-    if not initial_state.get("_context_loaded") and project_id:
-        _pending_steps.append("读取项目数据...")
+    # ── Phase 0: Context loading (one-time) ─────────────────────────
+    if not state._context_loaded and state.project_id:
+        yield _event_step("加载项目数据...")
         try:
             from app.agent.context import ContextBuilder
-            builder = ContextBuilder(db)
-            needs_detail = initial_state.get("current_intent", "simple_q") in {
-                "tool_call", "cowriter", "complex", "plan_confirm",
-            }
             import uuid as _uuid
-            if needs_detail:
-                ctx = await builder.build_full(
-                    _uuid.UUID(project_id),
-                    query_hint=(
-                        messages[-1].content[:200]
-                        if messages and messages[-1].content
-                        else ""
-                    ),
-                )
-            else:
-                ctx = await builder.build_summary(
-                    _uuid.UUID(project_id),
-                    query_hint=(
-                        messages[-1].content[:200]
-                        if messages and messages[-1].content
-                        else ""
-                    ),
-                    depth="minimal",
-                )
-            project_context = ctx
+
+            builder = ContextBuilder(db)
+            query_hint = ""
+            if state.messages:
+                last = state.messages[-1]
+                query_hint = (last.content or "")[:200]
+
+            ctx = await builder.build_summary(
+                _uuid.UUID(state.project_id),
+                query_hint=query_hint,
+                depth="minimal",
+            )
+            state = state.replace(project_context=ctx, _context_loaded=True,
+                                  transition="context_loaded")
         except Exception as e:
             logger.warning("Context load skipped/partial: %s", e)
-    else:
-        # Already loaded from initial_state
-        _pending_steps.append("读取项目数据...")
+            state = state.replace(_context_loaded=True, transition="context_load_failed")
 
-    # Flush initial step label
-    for s in _pending_steps:
-        yield {"_step": s}
-    _pending_steps.clear()
+    # ── Build system prompt (cached per mode) ───────────────────────
+    base_sections = ["identity", "output_style", "tool_usage",
+                     "writing_advice", "prohibited_behaviors", "style_guide"]
+    if state.mode == "chat":
+        base_sections.append("chat_mode_restrictions")
 
-    # ── Main Loop ──────────────────────────────────────────────────
-    intent: str = initial_state.get("current_intent", "simple_q")
+    base_system = _build_chat_system_prompt(base_sections)
+    cowriter_persona = _build_cowriter_persona() if state.mode == "cowriter" else ""
 
-    while turn < MAX_TURNS:
-        turn += 1
+    # ── Main Loop ────────────────────────────────────────────────────
+    while state.turn_count < MAX_TURNS:
+        state = state.replace(turn_count=state.turn_count + 1)
         logger.info(
-            "agent_loop turn=%d | mode=%s | intent=%s | pending_plan=%s",
-            turn, mode, intent, bool(pending_plan),
+            "autonomous_loop turn=%d | mode=%s | msgs=%d | transition=%s",
+            state.turn_count, state.mode, len(state.messages), state.transition,
         )
 
-        # ── Phase 1: Classify Intent ────────────────────────────
-        # Re-classify every turn (unless we're mid-execution)
-        if intent not in ("tool_call", "execute_plan", "plan_confirm"):
-            intent = await _classify_intent(
-                messages=messages,
-                mode=mode,
-                project_context=project_context,
-                cowriter_session=cowriter_session,
-                current_options=current_options,
-                pending_plan=pending_plan,
-                errors=errors,
-                llm_client=llm_client,
-                tool_descriptions=tool_descriptions or filtered_tool_desc,
-                retry_count=retry_count,
-                trace_id=trace_id,
+        # ── Step 1: Context Management ────────────────────────────
+        if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
+            original_count = len(state.messages)
+            state = state.replace(
+                messages=compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT),
+                transition="context_compressed",
             )
-            logger.info("agent_loop turn=%d | classified intent=%s", turn, intent)
+            compressed_count = len(state.messages)
+            logger.info("Compressed %d → %d messages", original_count, compressed_count)
 
-        # ── Phase 1b: Handle plan confirm/reject ─────────────────
-        if intent == "plan_confirm" and pending_plan:
-            _pending_steps.append("执行计划...")
-            plan_confirmed = True
-            if not planned_steps and pending_plan.get("steps"):
-                planned_steps = pending_plan["steps"]
-            intent = "execute_plan"
-        elif intent == "plan_reject":
-            pending_plan = {}
-            planned_steps = []
-            plan_confirmed = False
-            current_step_index = 0
-            intent = "simple_q"
-            # Clear options so stale cards don't persist
-            current_options = []
-            continue  # Re-classify on next turn
+        # ── Step 2: Build messages for LLM ─────────────────────────
+        # Build project context section
+        proj = state.project_context.get("project", {})
+        proj_title = proj.get("title", "未命名")
+        proj_genre = proj.get("genre", "")
+        proj_id = state.project_id or proj.get("id", "unknown")
 
-        # ── Phase 2: Plan Generation (complex intent) ────────────
-        if intent == "complex":
-            _pending_steps.append("制定计划...")
-            try:
-                plan_node = create_plan_node(tools, llm_client)
-                plan_mini: AgentState = {
-                    "project_id": project_id,
-                    "user_id": user_id,
-                    "trace_id": trace_id,
-                    "conversation_id": conversation_id,
-                    "project_context": project_context,
-                    "messages": messages,
-                    "current_intent": "complex",
-                    "tool_calls": [],
-                    "tool_results": tool_results,
-                    "active_skills": active_skills,
-                    "mode": mode,
-                    "intermediate_steps": intermediate_steps,
-                    "retry_count": retry_count,
-                    "max_retries": MAX_RECOVERY,
-                    "current_options": current_options,
-                    "planned_steps": [],
-                    "current_step_index": 0,
-                    "errors": errors,
-                    "pending_plan": {},
-                    "plan_confirmed": False,
-                    "retry_context": retry_context,
-                    "search_results": [],
-                    "cowriter_session": cowriter_session,
-                    "_context_loaded": True,
-                    "_turn_count": turn,
-                    "recovery_state": recovery_state,
-                    "_model_override": initial_state.get("_model_override", ""),
-                }
-                plan_result = await plan_node(plan_mini)
-
-                new_planned = plan_result.get("planned_steps", [])
-                new_pending = plan_result.get("pending_plan", {})
-                new_confirmed = plan_result.get("plan_confirmed", False)
-                new_errors = plan_result.get("errors", [])
-                if new_errors:
-                    errors = list(new_errors)
-
-                if new_planned:
-                    planned_steps = new_planned
-                    current_step_index = 0
-
-                if new_pending and not new_confirmed:
-                    # Has write tools -> show plan to user
-                    pending_plan = new_pending
-                    plan_confirmed = False
-                    yield {"pending_plan": new_pending}
-                    intent = "simple_q"  # Generate response to present plan
-                elif new_planned and new_confirmed:
-                    # No write tools -> auto-execute
-                    pending_plan = {}
-                    plan_confirmed = True
-                    intent = "execute_plan"
+        # Build tool result summary (last 5)
+        tool_summary = ""
+        if state.tool_results:
+            lines = ["# --- 上一轮工具执行结果 ---"]
+            for r in state.tool_results[-5:]:
+                status = "OK" if r.get("success") else "FAIL"
+                name = r.get("tool", "?")
+                detail = ""
+                if r.get("success"):
+                    data = r.get("data", "")
+                    if isinstance(data, str):
+                        detail = _markdown_to_plain(data, 150)
                 else:
-                    # Plan failed to produce steps
-                    intent = "simple_q"
-                    if not errors:
-                        errors.append("Plan produced no valid steps")
+                    detail = (r.get("error", "") or "")[:150]
+                lines.append(f"  [{status}] {name}: {detail}")
+            tool_summary = "\n".join(lines)
 
-            except Exception as e:
-                logger.error("Plan generation failed: %s", e, exc_info=True)
-                errors.append(f"Plan generation failed: {e}")
-                intent = "simple_q"
-                continue
+        # Build session progress
+        session_text = ""
+        session = state.cowriter_session or {}
+        if session.get("is_active"):
+            phase = session.get("phase", "explore")
+            goal = session.get("goal", "")
+            focus = session.get("current_focus", "")
+            phase_cn = {"explore": "探索", "plan": "计划", "execute": "执行",
+                        "review": "评审", "complete": "完成"}.get(phase, phase)
+            session_text = f"# --- 协作进度 ---\n阶段: {phase_cn}"
+            if goal:
+                session_text += f"\n目标: {goal}"
+            if focus:
+                session_text += f"\n焦点: {focus}"
 
-        # Flush accumulated step labels
-        for s in _pending_steps:
-            yield {"_step": s}
-        _pending_steps.clear()
+        # Build pending plan reminder
+        plan_text = ""
+        if state.pending_plan and not state.plan_confirmed:
+            steps = state.pending_plan.get("steps", [])
+            if steps:
+                plan_text = "# --- 待确认计划 ---\n"
+                for i, s in enumerate(steps, 1):
+                    plan_text += f"  {i}. {s.get('description', s.get('tool', ''))}\n"
+                plan_text += "等待用户确认或拒绝。"
 
-        # ── Phase 3: Execute Tools ───────────────────────────────
-        if intent == "execute_plan" and planned_steps:
-            # Execute planned steps (with smart batching via _execute_planned_step)
-            exec_errors: list[str] = []
-            _pending_steps.append("执行分析...")
+        # Build error context
+        error_text = ""
+        if state.errors:
+            recent = [e for e in state.errors[-3:] if e]
+            if recent:
+                error_text = "# --- 最近的错误 ---\n" + "\n".join(f"- {e}" for e in recent)
 
-            while current_step_index < len(planned_steps):
-                # Build mini-state for _execute_planned_step
-                exec_mini: AgentState = {
-                    "project_id": project_id,
-                    "user_id": user_id,
-                    "trace_id": trace_id,
-                    "conversation_id": conversation_id,
-                    "project_context": project_context,
-                    "messages": messages,
-                    "current_intent": "execute_plan",
-                    "tool_calls": [],
-                    "tool_results": tool_results,
-                    "active_skills": active_skills,
-                    "mode": mode,
-                    "intermediate_steps": intermediate_steps,
-                    "retry_count": retry_count,
-                    "max_retries": MAX_RECOVERY,
-                    "current_options": current_options,
-                    "planned_steps": planned_steps,
-                    "current_step_index": current_step_index,
-                    "errors": errors,
-                    "pending_plan": pending_plan,
-                    "plan_confirmed": plan_confirmed,
-                    "retry_context": retry_context,
-                    "search_results": [],
-                    "cowriter_session": cowriter_session,
-                    "_context_loaded": True,
-                    "_turn_count": turn,
-                    "recovery_state": recovery_state,
-                    "_model_override": initial_state.get("_model_override", ""),
-                }
+        # Assemble system message
+        system_content = base_system
+        if cowriter_persona:
+            system_content += "\n\n" + cowriter_persona
+        system_content += f"\n\n# --- 当前项目 ---\n项目: {proj_title}"
+        if proj_genre:
+            system_content += f"\n类型: {proj_genre}"
+        system_content += f"\nProject ID: {proj_id}"
 
-                step_result = await _execute_planned_step(exec_mini, filtered_tools, db)
+        # Inject dynamic sections
+        for section in [tool_summary, session_text, plan_text, error_text]:
+            if section:
+                system_content += "\n\n" + section
 
-                new_results = step_result.get("tool_results", [])
-                new_errors = step_result.get("errors", [])
-                new_steps = step_result.get("intermediate_steps", [])
-                new_step_idx = step_result.get("current_step_index", current_step_index)
-                new_retry = step_result.get("retry_count", retry_count)
-                new_pending = step_result.get("pending_plan", pending_plan)
-                new_confirmed = step_result.get("plan_confirmed", plan_confirmed)
+        # Tool list
+        system_content += f"\n\n# --- 可用工具 ---\n{filtered_tool_desc}"
 
-                # Apply updates
-                if new_results:
-                    tool_results = new_results
-                if new_errors:
-                    errors = new_errors
-                if new_steps:
-                    intermediate_steps = new_steps
-                current_step_index = new_step_idx
-                retry_count = new_retry
-                pending_plan = new_pending
-                plan_confirmed = new_confirmed
+        # Mode declaration (highest priority — prepend)
+        if state.mode == "chat":
+            mode_decl = "# ——— 当前模式：对话模式（只读，不可写入）———"
+        else:
+            mode_decl = "# ——— 当前模式：协作模式（可读写）———"
+        system_content = mode_decl + "\n\n" + system_content
 
-                # Yield tool results for frontend
-                for tr in new_results:
-                    yield {"_tool_done": tr}
+        # Build final messages
+        gen_msgs = [Message(role="system", content=system_content)]
+        gen_msgs.extend(state.messages)
 
-                # Check if we should stop retrying
-                if retry_count >= MAX_RECOVERY and current_step_index < len(planned_steps):
-                    # Skip failed step, advance
-                    current_step_index += 1
-                    retry_count = 0
+        yield _event_step("思考中...")
 
-            # Plan execution complete
-            pending_plan = {}
-            plan_confirmed = False
-            current_step_index = 0
-            current_options = []
-            intent = "simple_q"
-            yield {"_step": "生成回复..."}
-            continue  # Go to generate phase
+        # ── Step 3: LLM streaming + tool execution ─────────────────
+        streaming_executor = StreamingToolExecutor(filtered_tools, db)
+        tool_blocks: list[tuple[str, dict, str]] = []  # [(name, args, id), ...]
+        assistant_text_parts: list[str] = []
+        tool_use_count = 0
 
-        elif intent == "tool_call":
-            _pending_steps.append("执行分析...")
-            for s in _pending_steps:
-                yield {"_step": s}
-            _pending_steps.clear()
+        try:
+            async for chunk in llm.chat_stream_with_tools(
+                messages=gen_msgs,
+                tools=tool_schemas,
+                temperature=0.7,
+                request_id=state.trace_id,
+            ):
+                # Text token
+                if chunk.content:
+                    assistant_text_parts.append(chunk.content)
+                    yield _event_token(chunk.content)
 
-            # Check if we can use streaming path
-            use_streaming = (
-                not planned_steps
-                and mode != "chat"
-                and hasattr(llm_client, "chat_stream_with_tools")
-            )
+                # Tool call (complete block or incremental)
+                if chunk.tool_call:
+                    tc = chunk.tool_call
+                    fn = tc.function if hasattr(tc, "function") else {}
+                    name = fn.get("name", "") if isinstance(fn, dict) else getattr(fn, "name", "")
+                    args_raw = fn.get("arguments", "{}") if isinstance(fn, dict) else getattr(fn, "arguments", "{}")
 
-            if use_streaming:
-                # ── Streaming path ────────────────────────────
-                stream_mini: AgentState = {
-                    "project_id": project_id,
-                    "user_id": user_id,
-                    "trace_id": trace_id,
-                    "conversation_id": conversation_id,
-                    "project_context": project_context,
-                    "messages": messages,
-                    "current_intent": "tool_call",
-                    "tool_calls": [],
-                    "tool_results": tool_results,
-                    "active_skills": active_skills,
-                    "mode": mode,
-                    "intermediate_steps": intermediate_steps,
-                    "retry_count": retry_count,
-                    "max_retries": MAX_RECOVERY,
-                    "current_options": current_options,
-                    "planned_steps": planned_steps,
-                    "current_step_index": current_step_index,
-                    "errors": errors,
-                    "pending_plan": pending_plan,
-                    "plan_confirmed": plan_confirmed,
-                    "retry_context": retry_context,
-                    "search_results": [],
-                    "cowriter_session": cowriter_session,
-                    "_context_loaded": True,
-                    "_turn_count": turn,
-                    "recovery_state": recovery_state,
-                    "_model_override": initial_state.get("_model_override", ""),
-                }
-
-                async for chunk in _execute_tool_call_streaming(
-                    stream_mini, filtered_tools,
-                    filtered_tool_desc or tool_descriptions,
-                    llm_client, db,
-                ):
-                    if chunk.get("_stream_done"):
-                        # Extract state updates
-                        new_tr = chunk.get("tool_results")
-                        if new_tr:
-                            tool_results = new_tr
-                        new_steps = chunk.get("intermediate_steps")
-                        if new_steps:
-                            intermediate_steps = new_steps
-                        new_retry = chunk.get("retry_count")
-                        if new_retry is not None:
-                            retry_count = new_retry
-                        new_errors = chunk.get("errors")
-                        if new_errors:
-                            errors = new_errors
-                        new_intent = chunk.get("current_intent")
-                        if new_intent:
-                            intent = new_intent
-                    elif "_stream_token" in chunk:
-                        yield {"_stream_token": chunk["_stream_token"]}
-                    elif "_tool_done" in chunk:
-                        yield {"_tool_done": chunk["_tool_done"]}
-
-                # Check for errors
-                has_tool_error = any(
-                    not r.get("success", True)
-                    for r in tool_results[-3:]
-                    if r.get("tool") not in ("cowriter_analysis",)
-                )
-                if has_tool_error and retry_count < MAX_RECOVERY:
-                    # Retry next turn
-                    retry_count += 1
-                    continue
-                elif has_tool_error and retry_count >= MAX_RECOVERY:
-                    intent = "simple_q"
-
-            else:
-                # ── Non-streaming path (chat mode or no streaming support) ───
-                from app.agent.nodes.execute_tool import _execute_tool_call
-
-                tool_mini: AgentState = {
-                    "project_id": project_id,
-                    "user_id": user_id,
-                    "trace_id": trace_id,
-                    "conversation_id": conversation_id,
-                    "project_context": project_context,
-                    "messages": messages,
-                    "current_intent": "tool_call",
-                    "tool_calls": [],
-                    "tool_results": tool_results,
-                    "active_skills": active_skills,
-                    "mode": mode,
-                    "intermediate_steps": intermediate_steps,
-                    "retry_count": retry_count,
-                    "max_retries": MAX_RECOVERY,
-                    "current_options": current_options,
-                    "planned_steps": planned_steps,
-                    "current_step_index": current_step_index,
-                    "errors": errors,
-                    "pending_plan": pending_plan,
-                    "plan_confirmed": plan_confirmed,
-                    "retry_context": retry_context,
-                    "search_results": [],
-                    "cowriter_session": cowriter_session,
-                    "_context_loaded": True,
-                    "_turn_count": turn,
-                    "recovery_state": recovery_state,
-                    "_model_override": initial_state.get("_model_override", ""),
-                }
-
-                tc_result = await _execute_tool_call(
-                    tool_mini, filtered_tools, db,
-                    tool_descriptions=filtered_tool_desc or tool_descriptions,
-                    llm_client=llm_client,
-                )
-
-                new_tr = tc_result.get("tool_results")
-                if new_tr:
-                    tool_results = new_tr
-                new_steps = tc_result.get("intermediate_steps")
-                if new_steps:
-                    intermediate_steps = new_steps
-                new_retry = tc_result.get("retry_count")
-                if new_retry is not None:
-                    retry_count = new_retry
-                new_errors = tc_result.get("errors")
-                if new_errors:
-                    errors = new_errors
-                new_intent = tc_result.get("current_intent")
-                if new_intent:
-                    intent = new_intent
-
-                # Yield tool results for frontend
-                visible = [
-                    r for r in new_tr
-                    if r.get("tool") not in ("cowriter_analysis",)
-                ]
-                for tr in visible:
-                    yield {"_tool_done": tr}
-
-            # After tool execution, generate response
-            if intent == "simple_q":
-                yield {"_step": "生成回复..."}
-                continue  # Go to generate phase
-
-            # Skip to next turn for retries
-            if intent == "tool_call" and retry_count < MAX_RECOVERY:
-                continue
-            else:
-                intent = "simple_q"
-                yield {"_step": "生成回复..."}
-                continue
-
-        # ── Phase 4: Cowriter ────────────────────────────────────
-        if intent == "cowriter":
-            _pending_steps.append("协作者分析...")
-            for s in _pending_steps:
-                yield {"_step": s}
-            _pending_steps.clear()
-
-            cw_mini: AgentState = {
-                "project_id": project_id,
-                "user_id": user_id,
-                "trace_id": trace_id,
-                "conversation_id": conversation_id,
-                "project_context": project_context,
-                "messages": messages,
-                "current_intent": "cowriter",
-                "tool_calls": [],
-                "tool_results": tool_results,
-                "active_skills": active_skills,
-                "mode": mode,
-                "intermediate_steps": intermediate_steps,
-                "retry_count": retry_count,
-                "max_retries": MAX_RECOVERY,
-                "current_options": current_options,
-                "planned_steps": planned_steps,
-                "current_step_index": current_step_index,
-                "errors": errors,
-                "pending_plan": pending_plan,
-                "plan_confirmed": plan_confirmed,
-                "retry_context": retry_context,
-                "search_results": [],
-                "cowriter_session": cowriter_session,
-                "_context_loaded": True,
-                "_turn_count": turn,
-                "recovery_state": recovery_state,
-                "_model_override": initial_state.get("_model_override", ""),
-            }
-
-            cw_result = await _execute_cowriter(
-                cw_mini, filtered_tools, llm_client,
-                filtered_tool_desc or tool_descriptions,
-            )
-
-            new_opts = cw_result.get("current_options")
-            if new_opts is not None:
-                current_options = new_opts
-            new_session = cw_result.get("cowriter_session")
-            if new_session is not None:
-                cowriter_session = new_session
-            new_tr = cw_result.get("tool_results")
-            if new_tr:
-                tool_results = new_tr
-            new_steps = cw_result.get("intermediate_steps")
-            if new_steps:
-                intermediate_steps = new_steps
-            new_errors = cw_result.get("errors")
-            if new_errors:
-                errors = new_errors
-
-            # Yield options for frontend
-            if current_options:
-                yield {"current_options": current_options}
-
-            # Stream analysis text for the cowriter response
-            for tr in tool_results:
-                if tr.get("tool") == "cowriter_analysis" and tr.get("success"):
-                    analysis = tr.get("data", "") or ""
-                    if analysis and not analysis.startswith("{"):
-                        # Defensive: if data looks like raw JSON, try extraction
+                    if isinstance(args_raw, str):
                         try:
-                            parsed = json.loads(analysis)
-                            if isinstance(parsed, dict):
-                                analysis = (
-                                    parsed.get("analysis")
-                                    or parsed.get("response")
-                                    or parsed.get("text")
-                                    or analysis
-                                )
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                        yield {"_stream_token": analysis}
-                    break
+                            args = json.loads(args_raw)
+                        except json.JSONDecodeError:
+                            args = {}
+                    elif isinstance(args_raw, dict):
+                        args = args_raw
+                    else:
+                        args = {}
 
-            # After cowriter, generate response or break
-            if current_options:
-                intent = "simple_q"
-                yield {"_step": "生成回复..."}
-                continue
+                    if name and name.strip():
+                        tool_use_count += 1
+                        tool_use_id = getattr(tc, "id", f"call_{tool_use_count}")
+                        tool_blocks.append((name.strip(), args, tool_use_id))
+                        streaming_executor.add_tool(
+                            tc,
+                            tool_use_id=tool_use_id,
+                            mode=state.mode,
+                            read_only_tool_names={
+                                t.name for t in filtered_tools.values()
+                                if not t.is_write_operation
+                            },
+                        )
+
+                # Yield completed results during streaming
+                for result in streaming_executor.get_completed_results():
+                    yield _event_tool_done(result)
+
+                # Finish reason
+                if chunk.finish_reason:
+                    logger.debug("Stream finish: %s", chunk.finish_reason)
+
+        except asyncio.CancelledError:
+            streaming_executor.discard()
+            raise
+        except Exception as e:
+            logger.error("LLM streaming error: %s", e, exc_info=True)
+            streaming_executor.discard()
+            # Try recovery
+            decision = _try_recovery(state, llm, str(e))
+            if decision.get("give_up"):
+                assistant_text = "".join(assistant_text_parts)
+                if assistant_text:
+                    state = state.replace(
+                        messages=state.messages + [Message(role="assistant", content=assistant_text)],
+                        transition="error_give_up",
+                    )
+                yield _event_token(f"\n\n[发生错误: {decision.get('message', str(e))}]")
+                break
             else:
-                intent = "simple_q"
-                continue
-
-        elif intent == "cowriter_choice":
-            _pending_steps.append("执行分析...")
-            for s in _pending_steps:
-                yield {"_step": s}
-            _pending_steps.clear()
-
-            cc_mini: AgentState = {
-                "project_id": project_id,
-                "user_id": user_id,
-                "trace_id": trace_id,
-                "conversation_id": conversation_id,
-                "project_context": project_context,
-                "messages": messages,
-                "current_intent": "cowriter_choice",
-                "tool_calls": [],
-                "tool_results": tool_results,
-                "active_skills": active_skills,
-                "mode": mode,
-                "intermediate_steps": intermediate_steps,
-                "retry_count": retry_count,
-                "max_retries": MAX_RECOVERY,
-                "current_options": current_options,
-                "planned_steps": planned_steps,
-                "current_step_index": current_step_index,
-                "errors": errors,
-                "pending_plan": pending_plan,
-                "plan_confirmed": plan_confirmed,
-                "retry_context": retry_context,
-                "search_results": [],
-                "cowriter_session": cowriter_session,
-                "_context_loaded": True,
-                "_turn_count": turn,
-                "recovery_state": recovery_state,
-                "_model_override": initial_state.get("_model_override", ""),
-            }
-
-            cc_result = await _execute_cowriter_choice(cc_mini, filtered_tools, db)
-
-            new_opts = cc_result.get("current_options")
-            if new_opts is not None:
-                current_options = new_opts
-            new_session = cc_result.get("cowriter_session")
-            if new_session is not None:
-                cowriter_session = new_session
-            new_tr = cc_result.get("tool_results")
-            if new_tr:
-                tool_results = new_tr
-            new_steps = cc_result.get("intermediate_steps")
-            if new_steps:
-                intermediate_steps = new_steps
-            new_errors = cc_result.get("errors")
-            if new_errors:
-                errors = new_errors
-            new_pending = cc_result.get("pending_plan")
-            if new_pending:
-                pending_plan = new_pending
-            new_intent = cc_result.get("current_intent")
-            if new_intent:
-                intent = new_intent
-
-            # Handle write-operation plan from cowriter choice
-            if pending_plan and intent == "plan_confirm":
-                yield {"pending_plan": pending_plan}
-                yield {"_step": "生成回复..."}
-                continue
-            elif intent == "cowriter":
-                # Failed choice -> re-route to cowriter for regeneration
-                continue
-            else:
-                # Tool executed successfully, yield results
-                visible = [
-                    r for r in new_tr
-                    if r.get("tool") not in ("cowriter_analysis",)
-                ]
-                for tr in visible:
-                    yield {"_tool_done": tr}
-                if current_options:
-                    yield {"current_options": current_options}
-                intent = "simple_q"
-                yield {"_step": "生成回复..."}
-                continue
-
-        # ── Phase 5: Generate Response ────────────────────────────
-        if intent in ("simple_q",):
-            yield {"_step": "生成回复..."}
-
-            # Build system prompt using the existing _build_system_prompt
-            # We construct a mini-state for it
-            gen_mini: AgentState = {
-                "project_id": project_id,
-                "user_id": user_id,
-                "trace_id": trace_id,
-                "conversation_id": conversation_id,
-                "project_context": project_context,
-                "messages": messages,
-                "current_intent": intent,
-                "tool_calls": [],
-                "tool_results": tool_results,
-                "active_skills": active_skills,
-                "mode": mode,
-                "intermediate_steps": intermediate_steps,
-                "retry_count": retry_count,
-                "max_retries": MAX_RECOVERY,
-                "current_options": current_options,
-                "planned_steps": planned_steps,
-                "current_step_index": current_step_index,
-                "errors": errors,
-                "pending_plan": pending_plan,
-                "plan_confirmed": plan_confirmed,
-                "retry_context": retry_context,
-                "search_results": [],
-                "cowriter_session": cowriter_session,
-                "_context_loaded": True,
-                "_turn_count": turn,
-                "recovery_state": recovery_state,
-                "_model_override": initial_state.get("_model_override", ""),
-            }
-
-            from app.agent.nodes.generate import _build_system_prompt
-            try:
-                sys_content = await _build_system_prompt(gen_mini)
-            except Exception as e:
-                logger.warning("_build_system_prompt failed: %s, using fallback", e)
-                sys_content = (
-                    "You are StoryCAD AI, a creative writing assistant. "
-                    "Respond helpfully in Chinese."
+                # Recovery action applied — get updated state and retry
+                state = decision.get("state", state)
+                state = state.replace(
+                    errors=state.errors + [str(e)],
+                    transition="error_recovery_retry",
                 )
+                continue
 
-            gen_msgs = [
-                Message(role="system", content=sys_content),
-                *messages,
-            ]
+        # ── Step 4: Await remaining tools ────────────────────────────
+        all_results = await streaming_executor.get_remaining_results()
+        for result in all_results:
+            if result.get("tool") not in ("cowriter_analysis",):
+                yield _event_tool_done(result)
 
-            # Stream response tokens
-            try:
-                async for token in llm_client.chat_stream_tokens(
-                    messages=gen_msgs,
-                    temperature=0.7,
-                    request_id=trace_id,
-                ):
-                    yield {"_stream_token": token}
-            except Exception as e:
-                logger.error("Generate streaming error: %s", e, exc_info=True)
-                errors.append(f"Generate error: {e}")
-                yield {"_stream_token": f"\n\n[生成回复时出错: {e}]"}
+        # Update tool results
+        new_tool_results = list(state.tool_results)
+        for r in all_results:
+            if r.get("tool") not in ("cowriter_analysis",):
+                new_tool_results.append(r)
+        state = state.replace(tool_results=new_tool_results)
 
-            # Generation is the terminal phase for this turn
+        # ── Step 5: Build assistant message ──────────────────────────
+        assistant_text = "".join(assistant_text_parts)
+        if assistant_text.strip():
+            state = state.replace(
+                messages=state.messages + [Message(role="assistant", content=assistant_text)],
+            )
+
+        # ── Step 6: Interceptor Layer ────────────────────────────────
+        if tool_blocks:
+            intercept: InterceptResult = apply_interceptors(
+                tool_blocks,
+                mode=state.mode,
+                cowriter_session=state.cowriter_session,
+                tools_registry=filtered_tools,
+            )
+
+            # 6a: Mode-gated blocks
+            if intercept.blocked:
+                for msg in intercept.blocked_messages:
+                    state = state.replace(
+                        messages=state.messages + [Message(role="system", content=msg)],
+                        transition="mode_blocked",
+                    )
+                # Generate response explaining the block
+                yield _event_step("生成回复...")
+                break  # Exit tool loop, generate final response
+
+            # 6b: Confirmation needed
+            if intercept.needs_confirmation:
+                plan = build_confirmation_plan(intercept.pending_tools, filtered_tools)
+                state = state.replace(
+                    pending_plan=plan,
+                    plan_confirmed=False,
+                    transition="plan_generated_for_confirmation",
+                )
+                yield _event_plan(plan)
+                yield _event_step("等待确认...")
+                break  # Pause for user confirmation
+
+            # 6c: Options presented
+            if intercept.has_options:
+                if intercept.analysis_text:
+                    pass  # Already streamed above
+                if intercept.options:
+                    state = state.replace(
+                        current_options=intercept.options,
+                        transition="options_presented",
+                    )
+                    if intercept.session_update:
+                        su = intercept.session_update
+                        new_session = dict(state.cowriter_session)
+                        new_session["is_active"] = True
+                        if "phase" in su:
+                            new_session["phase"] = su["phase"]
+                        if "goal" in su:
+                            new_session["goal"] = su["goal"]
+                        if "current_focus" in su:
+                            new_session["current_focus"] = su["current_focus"]
+                        if su.get("is_complete"):
+                            new_session["is_active"] = False
+                        state = state.replace(cowriter_session=new_session)
+                    yield _event_options(intercept.options)
+                    yield _event_step("等待选择...")
+                    break  # Pause for user decision
+
+            # 6d: Allowed tools — execute them
+            for tool_name, args, tool_use_id in intercept.allowed_tools:
+                try:
+                    result = await _run_single_tool_wrapper(tool_name, args, filtered_tools, db)
+                    new_tool_results.append(result)
+                    yield _event_tool_done(result)
+
+                    # Build tool result message
+                    if result.get("success"):
+                        data = result.get("data", "")
+                        if isinstance(data, (dict, list)):
+                            data = json.dumps(data, ensure_ascii=False)
+                        content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                    else:
+                        content = f"[工具执行失败: {tool_name}]\n{result.get('error', 'unknown')[:500]}"
+
+                    state = state.replace(
+                        messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
+                        tool_results=new_tool_results,
+                    )
+                except Exception as tool_err:
+                    logger.error("Tool %s failed: %s", tool_name, tool_err)
+                    state = state.replace(
+                        errors=state.errors + [f"Tool {tool_name}: {tool_err}"],
+                    )
+
+        # ── Step 7: Decide next ───────────────────────────────────────
+        if not tool_blocks:
+            # Model only produced text — done
+            logger.debug("No tool calls — finishing turn")
             break
 
-        # ── Loop exit conditions ──────────────────────────────────
-        if intent in ("simple_q",):
+        if state.transition in ("mode_blocked", "plan_generated_for_confirmation",
+                                "options_presented"):
+            # Interceptor paused the loop — break to generate final response
             break
 
-        if turn >= MAX_TURNS:
-            logger.warning("agent_loop: max turns reached (%d)", MAX_TURNS)
-            yield {"_stream_token": "\n\n[已达到最大轮次限制]"}
-            break
+        # Tools were executed successfully — continue for another round
+        # (the model may want to chain more tool calls based on results)
+        logger.info("Tools executed, continuing loop for chained operations")
+        state = state.replace(
+            retry_count=0,  # Reset retries for new round
+            transition="tool_executed_continue",
+        )
 
-    # ── Build final state ───────────────────────────────────────────
-    final_state: AgentState = {
-        "project_id": project_id,
-        "user_id": user_id,
-        "trace_id": trace_id,
-        "conversation_id": conversation_id,
-        "project_context": project_context,
-        "messages": messages,
-        "current_intent": intent,
-        "tool_calls": [],
-        "tool_results": tool_results,
-        "active_skills": active_skills,
-        "mode": mode,
-        "intermediate_steps": intermediate_steps,
-        "retry_count": retry_count,
-        "max_retries": MAX_RECOVERY,
-        "current_options": current_options,
-        "planned_steps": planned_steps,
-        "current_step_index": current_step_index,
-        "errors": errors,
-        "pending_plan": pending_plan,
-        "plan_confirmed": plan_confirmed,
-        "retry_context": retry_context,
-        "search_results": [],
-        "cowriter_session": cowriter_session,
-        "_context_loaded": True,
-        "_turn_count": turn,
-        "recovery_state": recovery_state,
-        "_model_override": initial_state.get("_model_override", ""),
-    }
+        # If the model only called tools and produced no text, retry count
+        # helps avoid infinite loops where tools silently fail
+        if not assistant_text.strip():
+            state = state.replace(retry_count=state.retry_count + 1)
+            if state.retry_count > 3:
+                logger.warning("Tool-only loop detected — breaking")
+                yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
+                break
 
-    yield {"_loop_done": True, "final_state": final_state}
+    # ── Final: Generate response ────────────────────────────────────────
+    yield _event_step("生成回复...")
+
+    # Check if we already have an assistant message
+    last_msg = state.messages[-1] if state.messages else None
+    if last_msg and last_msg.role == "assistant":
+        # Already have a response — just emit what we have
+        pass
+    else:
+        # Build final response using the generate node's prompt builder
+        from app.agent.nodes.generate import _build_system_prompt
+
+        gen_state = state.to_dict()
+        try:
+            sys_content = await _build_system_prompt(gen_state)
+        except Exception as e:
+            logger.warning("_build_system_prompt failed: %s", e)
+            sys_content = (
+                "You are StoryCAD AI, a creative writing assistant. "
+                "Respond helpfully in Chinese."
+            )
+
+        gen_msgs_final = [Message(role="system", content=sys_content)]
+        gen_msgs_final.extend(state.messages)
+
+        try:
+            async for token in llm.chat_stream_tokens(
+                messages=gen_msgs_final,
+                temperature=0.7,
+                request_id=state.trace_id,
+            ):
+                yield _event_token(token)
+        except Exception as e:
+            logger.error("Final generate error: %s", e, exc_info=True)
+            yield _event_token(f"\n\n[生成回复时出错: {e}]")
+
+    # ── Build final state dict ──────────────────────────────────────────
+    final_state = state.to_dict()
+    yield _event_done(final_state)
 
 
-# Placeholder — plan node is created via create_plan_node
-async def _make_plan_fn(tools: dict, llm_client: LLMClient):
-    from app.agent.nodes.plan import create_plan_node
-    return create_plan_node(tools, llm_client)
+# ── Recovery helper ─────────────────────────────────────────────────────
+
+
+def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
+    """Attempt error recovery. Returns a dict with recovery action applied.
+
+    Returns:
+        {"give_up": False} if recovery was applied and we should retry.
+        {"give_up": True, "message": "..."} if recovery is exhausted.
+    """
+    from app.agent.recovery import ErrorClassifier, RecoveryAction
+
+    recovery_history = state.recovery_state.get("recovery_history", [])
+    decision = ErrorClassifier.classify(
+        error,
+        state.retry_count,
+        max_retries=MAX_RECOVERY,
+        recovery_history=recovery_history,
+    )
+
+    logger.info("Recovery: action=%s attempt=%d error=%s",
+                decision.action.value, state.retry_count, error[:100])
+
+    if decision.action == RecoveryAction.RETRY:
+        state = state.replace(retry_count=state.retry_count + 1, transition="recovery_retry")
+        return {"give_up": False, "state": state}
+
+    if decision.action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:
+        state = state.replace(
+            errors=state.errors + [f"[SELF-CORRECTION] {error}"],
+            retry_count=state.retry_count + 1,
+            transition="recovery_error_context",
+        )
+        return {"give_up": False, "state": state}
+
+    if decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
+        from app.agent.recovery import RecoveryExecutor
+        compressed = RecoveryExecutor._compress_messages(state.messages)
+        state = state.replace(
+            messages=compressed,
+            retry_count=state.retry_count + 1,
+            transition="recovery_compressed",
+        )
+        return {"give_up": False, "state": state}
+
+    if decision.action == RecoveryAction.RETRY_ESCALATED_TOKENS:
+        state = state.replace(
+            retry_count=state.retry_count + 1,
+            transition="recovery_escalated",
+        )
+        return {"give_up": False, "state": state}
+
+    if decision.action == RecoveryAction.SWITCH_MODEL:
+        from app.agent.recovery import get_fallback_models
+        fallbacks = get_fallback_models()
+        idx = state.recovery_state.get("model_index", 0)
+        if idx < len(fallbacks):
+            llm.model = fallbacks[idx]
+            state = state.replace(
+                _model_override=fallbacks[idx],
+                recovery_state={
+                    **state.recovery_state,
+                    "model_index": idx + 1,
+                    "switched_model": fallbacks[idx],
+                },
+                transition="recovery_model_switch",
+            )
+            return {"give_up": False, "state": state}
+
+    # Default: give up
+    return {"give_up": True, "message": decision.message}

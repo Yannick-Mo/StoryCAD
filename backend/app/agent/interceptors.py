@@ -1,0 +1,252 @@
+"""Interceptor layer for the autonomous agent loop.
+
+Three gates applied in order after the LLM produces tool calls but before
+execution:
+
+1. **Mode Gate** — chat mode blocks write tools
+2. **Confirmation Gate** — destructive/needs-confirmation tools require user approval
+3. **Option Gate** — ``present_options`` tool is intercepted, not executed
+
+Inspired by Claude Code's permission system but adapted for StoryCAD's
+domain: chat safety, write confirmation, and structured option cards.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.agent.tools.base import BaseTool
+
+logger = logging.getLogger(__name__)
+
+# Tool names that should never execute directly (intercepted as UI events)
+_INTERCEPT_TOOLS: set[str] = {"present_options"}
+
+# Tool names whose writes always need confirmation
+_DESTRUCTIVE_TOOLS: set[str] = {
+    "delete_scene", "delete_chapter", "delete_act", "delete_edge",
+    "create_project_from_material",
+}
+
+# Tool names that write to project data (needs confirmation in cowriter mode
+# when the session phase is "explore")
+_WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE: set[str] = {
+    "create_act", "create_chapter", "create_scene", "create_character",
+    "update_project", "update_act", "update_chapter", "update_scene",
+    "update_character", "update_relation",
+    "write_scene_content", "continue_scene", "rewrite_scene",
+    "expand_selection", "compress_selection",
+    "set_chapter_goal",
+    "call_goal_agent", "call_outline_agent",
+    "create_edge", "update_edge",
+}
+
+
+# ── Data structures ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class InterceptResult:
+    """Result of applying all interceptors to one turn's tool calls."""
+
+    # True if at least one tool was blocked (stop the turn, inject error)
+    blocked: bool = False
+    blocked_tools: list[str] = field(default_factory=list)
+
+    # True if at least one tool needs user confirmation before executing
+    needs_confirmation: bool = False
+    # Tools waiting for confirmation: list of (tool_name, args, tool_use_id)
+    pending_tools: list[tuple[str, dict, str]] = field(default_factory=list)
+
+    # True if the LLM called present_options
+    has_options: bool = False
+    analysis_text: str = ""
+    options: list[dict] = field(default_factory=list)
+    session_update: dict | None = None
+
+    # Tools that passed all gates (can execute immediately)
+    allowed_tools: list[tuple[str, dict, str]] = field(default_factory=list)
+
+    # Messages to inject for blocked tools (error context for LLM)
+    blocked_messages: list[str] = field(default_factory=list)
+
+
+# ── Interceptor functions ────────────────────────────────────────────────────
+
+
+def apply_interceptors(
+    tool_calls: list[tuple[str, dict, str]],  # [(tool_name, args, tool_use_id), ...]
+    mode: str,
+    cowriter_session: dict | None = None,
+    tools_registry: dict[str, "BaseTool"] | None = None,
+) -> InterceptResult:
+    """Apply all three gates to a batch of tool calls.
+
+    Args:
+        tool_calls: List of (tool_name, args, tool_use_id) tuples.
+        mode: ``"chat"`` or ``"cowriter"``.
+        cowriter_session: Current session state (for phase-aware gating).
+        tools_registry: Optional tool lookup for meta attributes.
+
+    Returns:
+        ``InterceptResult`` summarizing which tools are blocked, confirmed,
+        intercepted as options, or allowed through.
+    """
+    result = InterceptResult()
+    session = cowriter_session or {}
+
+    for tool_name, args, tool_use_id in tool_calls:
+        # ── Gate 0: Tool interception (present_options) ──
+        if tool_name in _INTERCEPT_TOOLS:
+            result.has_options = True
+            result.analysis_text = args.get("analysis", "")
+            result.options = args.get("options", [])
+            result.session_update = args.get("session_update")
+            continue
+
+        # ── Gate 1: Mode Gate ──
+        if mode == "chat":
+            tool = tools_registry.get(tool_name) if tools_registry else None
+            is_read = (
+                not getattr(tool, "is_write_operation", True)
+                if tool
+                else _is_read_by_name(tool_name)
+            )
+            if not is_read:
+                result.blocked = True
+                result.blocked_tools.append(tool_name)
+                result.blocked_messages.append(
+                    f"对话模式禁止写入操作。工具 '{tool_name}' 被拦截。"
+                    f"请切换到协作模式后重试。"
+                )
+                continue
+
+        # ── Gate 2: Confirmation Gate ──
+        if _needs_confirmation(tool_name, session, tools_registry):
+            result.needs_confirmation = True
+            result.pending_tools.append((tool_name, args, tool_use_id))
+            continue
+
+        # ── Passed all gates ──
+        result.allowed_tools.append((tool_name, args, tool_use_id))
+
+    return result
+
+
+def build_confirmation_plan(
+    pending_tools: list[tuple[str, dict, str]],
+    tools_registry: dict[str, "BaseTool"] | None = None,
+) -> dict:
+    """Build a plan object for frontend confirmation UI.
+
+    Args:
+        pending_tools: List of (tool_name, args, tool_use_id) tuples that
+                       need user confirmation before execution.
+        tools_registry: Optional tool lookup for human-readable descriptions.
+
+    Returns:
+        A dict with ``steps`` and ``reasoning`` fields suitable for the
+        ``pending_plan`` SSE event.
+    """
+    steps = []
+    for tool_name, args, tool_use_id in pending_tools:
+        tool = tools_registry.get(tool_name) if tools_registry else None
+        desc = (
+            tool.description[:100] if tool and hasattr(tool, "description")
+            else tool_name
+        )
+        steps.append({
+            "tool": tool_name,
+            "description": desc,
+            "params": args,
+            "tool_use_id": tool_use_id,
+        })
+
+    reasoning = (
+        f"以下 {len(pending_tools)} 个写入操作需要你的确认才能执行："
+        + "、".join(s["description"] for s in steps)
+    )
+
+    return {
+        "steps": steps,
+        "reasoning": reasoning,
+        "status": "awaiting_confirmation",
+    }
+
+
+def get_option_card_format() -> dict:
+    """Return the JSON schema for a single option card.
+
+    Frontend uses this to render the option selection UI.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "description": "Unique option identifier (option_a, option_b, ...)"},
+            "label": {"type": "string", "description": "Short title for the option card"},
+            "description": {"type": "string", "description": "Detailed description"},
+            "pros": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Advantages of this option",
+            },
+            "cons": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Disadvantages of this option",
+            },
+            "action": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "params": {"type": "object"},
+                },
+                "description": "Tool to call if this option is selected",
+            },
+        },
+        "required": ["id", "label", "description", "pros", "cons", "action"],
+    }
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _is_read_by_name(name: str) -> bool:
+    """Heuristic for read-only tools when registry is unavailable."""
+    read_prefixes = ("read_", "list_", "search_", "analyze_", "check_", "suggest_", "web_search")
+    return name.startswith(read_prefixes) or name in ("project_health",)
+
+
+def _needs_confirmation(
+    tool_name: str,
+    cowriter_session: dict,
+    tools_registry: dict[str, "BaseTool"] | None = None,
+) -> bool:
+    """Determine if a tool call needs user confirmation.
+
+    Rules:
+    1. Destructive tools (delete_*) ALWAYS need confirmation.
+    2. In cowriter 'explore' phase, write tools need confirmation
+       (the LLM should only be reading/analyzing in explore phase).
+    3. Tools with ToolMeta.needs_confirmation=True always need confirmation.
+    """
+    # Rule 1: Destructive tools
+    if tool_name in _DESTRUCTIVE_TOOLS:
+        return True
+
+    # Rule 3: Explicit meta flag
+    if tools_registry:
+        tool = tools_registry.get(tool_name)
+        if tool and hasattr(tool, "meta") and tool.meta is not None:
+            if getattr(tool.meta, "needs_confirmation", False):
+                return True
+
+    # Rule 2: Cowriter explore phase — confirm writes
+    phase = cowriter_session.get("phase", "")
+    if phase == "explore" and tool_name in _WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE:
+        return True
+
+    return False

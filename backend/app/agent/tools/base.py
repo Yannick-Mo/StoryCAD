@@ -30,6 +30,7 @@ class ToolMeta:
     parameters: dict = field(default_factory=dict)
     concurrency: ConcurrencyMode = ConcurrencyMode.EXCLUSIVE
     is_destructive: bool = False  # Irreversible operations (delete, overwrite, send)
+    needs_confirmation: bool = False  # Must get user approval before execution
     timeout: int = 30  # Seconds
     max_result_chars: int = 8000  # Truncate results beyond this
     search_hint: str = ""  # 3-10 words for keyword matching

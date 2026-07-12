@@ -261,15 +261,15 @@ class SuperAgent:
         _streaming_tool_results: set[str] = set()  # track tool_done events yielded during streaming
 
         if getattr(settings, "agent_use_loop", False):
-            # ── Optimized: agent_loop (LangGraph-free) ─────────────────
-            from app.agent.loop import agent_loop
+            # ── Autonomous: model-driven agent loop (LangGraph-free) ────
+            from app.agent.loop import autonomous_loop
             from app.agent.tools import get_tool_registry, get_tool_descriptions
 
             all_tools = get_tool_registry(self.db, llm_client=self._llm_client)
             td = get_tool_descriptions(all_tools)
 
             try:
-                async for event in agent_loop(
+                async for event in autonomous_loop(
                     initial_state, all_tools, self._llm_client, self.db, td,
                 ):
                     if isinstance(event, dict):
