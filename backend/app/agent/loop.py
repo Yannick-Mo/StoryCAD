@@ -20,14 +20,16 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_compressor import (
-    compress_history,
-    should_compress,
+    compress_context,
+    micro_compact,
 )
+from app.agent.hooks import hook_registry
 from app.agent.interceptors import (
     InterceptResult,
     apply_interceptors,
@@ -35,6 +37,11 @@ from app.agent.interceptors import (
 )
 from app.agent.loop_state import LoopState
 from app.agent.prompts.builder import get_prompt_builder
+from app.agent.token_budget import (
+    check_token_budget,
+    check_turn_continuation,
+    compute_budget,
+)
 from app.agent.tools import get_filtered_tools, get_tool_descriptions
 from app.agent.tools.base import BaseTool
 from app.agent.tools.streaming_executor import StreamingToolExecutor
@@ -91,6 +98,25 @@ def _strip_orphan_tool_messages(messages: list[Message]) -> list[Message]:
                 continue
         cleaned.append(m)
     return cleaned
+
+
+# ── Context invalidation after writes ─────────────────────────────────
+
+
+def _invalidate_after_write(
+    state: LoopState,
+    tool_name: str,
+    result: dict,
+    filtered_tools: dict[str, BaseTool],
+) -> LoopState:
+    """If *tool_name* is a write operation that succeeded, mark context
+    as stale so it's reloaded on the next turn."""
+    if not result.get("success"):
+        return state
+    tool = filtered_tools.get(tool_name)
+    if tool and tool.is_write_operation:
+        return state.replace(_context_loaded=False, transition="context_invalidated_after_write")
+    return state
 
 
 # ── Event constructors ──────────────────────────────────────────────────
@@ -316,32 +342,6 @@ async def autonomous_loop(
     from app.agent.attachments import AttachmentInjector
     _attach = AttachmentInjector()
 
-    # ── Phase 0: Context loading (one-time) ─────────────────────────
-    if not state._context_loaded and state.project_id:
-        yield _event_step("加载项目数据...")
-        try:
-            from app.agent.context import ContextBuilder
-            import uuid as _uuid
-
-            builder = ContextBuilder(db)
-            query_hint = ""
-            if state.messages:
-                last = state.messages[-1]
-                query_hint = (last.content or "")[:200]
-
-            ctx = await builder.build_summary(
-                _uuid.UUID(state.project_id),
-                query_hint=query_hint,
-                depth="minimal",
-            )
-            state = state.replace(project_context=ctx, _context_loaded=True,
-                                  transition="context_loaded")
-        except Exception as e:
-            logger.warning("Context load skipped/partial: %s", e)
-            # DO NOT set _context_loaded=True on failure — allow retry
-            # on the next turn if the error was transient (DB reconnect, etc.)
-            state = state.replace(transition="context_load_failed")
-
     # ── Build static system prompt (once, outside loop) ─────────────
     base_sections = ["identity", "output_style", "tool_usage",
                      "writing_advice", "prohibited_behaviors", "style_guide"]
@@ -353,10 +353,52 @@ async def autonomous_loop(
 
     # ── Main Loop ────────────────────────────────────────────────────
     while state.turn_count < MAX_TURNS:
+        turn_start = time.monotonic()
         state = state.replace(turn_count=state.turn_count + 1)
         logger.info(
             "autonomous_loop turn=%d | mode=%s | msgs=%d | transition=%s",
             state.turn_count, state.mode, len(state.messages), state.transition,
+        )
+
+        # ── Per-turn micro-compact (lightweight tool result clearing) ──
+        if state.turn_count > 1:
+            state = state.replace(
+                messages=micro_compact(list(state.messages), keep_recent=5),
+                transition="micro_compacted",
+            )
+
+        # ── Phase 0: Context loading (runs on first turn AND after writes) ──
+        if not state._context_loaded and state.project_id:
+            yield _event_step("加载项目数据...")
+            try:
+                from app.agent.context import ContextBuilder
+                import uuid as _uuid
+
+                builder = ContextBuilder(db)
+                query_hint = ""
+                if state.messages:
+                    last = state.messages[-1]
+                    query_hint = (last.content or "")[:200]
+
+                ctx = await builder.build_summary(
+                    _uuid.UUID(state.project_id),
+                    query_hint=query_hint,
+                    depth="minimal",
+                )
+                state = state.replace(project_context=ctx, _context_loaded=True,
+                                      transition="context_loaded")
+            except Exception as e:
+                logger.warning("Context load skipped/partial: %s", e)
+                state = state.replace(transition="context_load_failed")
+
+        # ── Token budget check ─────────────────────────────────────
+        budget = compute_budget(state.messages, state.tool_results, MODEL_CONTEXT_LIMIT)
+        budget_check = check_token_budget(budget)
+        state = state.replace(
+            budget_total_estimated=budget.total_estimated_tokens,
+            budget_model_limit=budget.model_limit,
+            budget_warn_level=budget_check["warn"],
+            budget_last_delta=budget.total_estimated_tokens - state.budget_total_estimated,
         )
 
         # ── Confirm/reject detection (before LLM call) ────────────
@@ -401,6 +443,7 @@ async def autonomous_loop(
                     except Exception as exc:
                         result = {"tool": tool_name, "success": False, "error": str(exc)}
                     yield _event_tool_done(result)
+                    state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     # Build tool result message
                     if result.get("success"):
@@ -434,12 +477,14 @@ async def autonomous_loop(
                 yield _event_step("已取消计划...")
                 # Fall through to LLM for response about rejection
 
-        # ── Step 1: Context Management ────────────────────────────
-        if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
-            original_count = len(state.messages)
+        # ── Step 1: Context Management (proactive, with auto-escalation) ──
+        original_count = len(state.messages)
+        compressed = compress_context(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+        if len(compressed) != original_count:
+            reactive = len(compressed) < original_count * 0.3
             state = state.replace(
-                messages=compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT),
-                transition="context_compressed",
+                messages=compressed,
+                transition="reactive_compressed" if reactive else "context_compressed",
             )
             logger.info("Compressed %d → %d messages", original_count, len(state.messages))
 
@@ -556,6 +601,10 @@ async def autonomous_loop(
             if text:
                 system_content += "\n\n" + text
 
+        # Token budget warning (if near limit)
+        if state.budget_warn_level:
+            system_content += "\n\n" + budget_check["message"]
+
         # Tool list
         system_content += f"\n\n# --- 可用工具 ---\n{filtered_tool_desc}"
 
@@ -588,12 +637,16 @@ async def autonomous_loop(
         assistant_text_parts: list[str] = []
         tool_use_count = 0
 
+        # Resolve model override (set by recovery model switch)
+        active_model = state._model_override or None
+
         try:
             async for chunk in llm.chat_stream_with_tools(
                 messages=gen_msgs,
                 tools=tool_schemas,
                 temperature=0.7,
                 request_id=state.trace_id,
+                model=active_model,
             ):
                 if chunk.content:
                     assistant_text_parts.append(chunk.content)
@@ -634,6 +687,9 @@ async def autonomous_loop(
         except Exception as e:
             logger.error("LLM streaming error: %s", e, exc_info=True)
             streaming_executor.discard()
+            # Run post-error hooks
+            await hook_registry.run("post_error", state=state, llm_client=llm, error=str(e),
+                                     turn_start=turn_start)
             # --- Rollback any poisoned transactions from tool errors ---
             # When a tool's run() raises (e.g. duplicate character), asyncpg
             # marks the connection as aborted.  Without a rollback here, ALL
@@ -642,6 +698,19 @@ async def autonomous_loop(
                 await db.rollback()
             except Exception:
                 pass
+            # ── Reactive compression for 413 / context overflow ──
+            error_lower = str(e).lower()
+            if any(kw in error_lower for kw in ("context length", "too long", "413", "token limit", "prompt too long")):
+                from app.agent.context_compressor import reactive_compress
+                compressed = reactive_compress(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+                state = state.replace(
+                    messages=compressed,
+                    retry_count=state.retry_count + 1,
+                    transition="reactive_compressed",
+                )
+                await hook_registry.run("post_turn", state=state, llm_client=llm,
+                                         turn_start=turn_start)
+                continue
             # --- Recover ---
             decision = _try_recovery(state, llm, str(e))
             if decision.get("give_up"):
@@ -652,6 +721,8 @@ async def autonomous_loop(
                         transition="error_give_up",
                     )
                 yield _event_token(f"\n\n[发生错误: {decision.get('message', str(e))}]")
+                await hook_registry.run("post_turn", state=state, llm_client=llm,
+                                         turn_start=turn_start)
                 break
             else:
                 state = decision.get("state", state)
@@ -659,6 +730,8 @@ async def autonomous_loop(
                     errors=state.errors + [str(e)],
                     transition="error_recovery_retry",
                 )
+                await hook_registry.run("post_turn", state=state, llm_client=llm,
+                                         turn_start=turn_start)
                 continue
 
         # ── Step 4: Await in-flight SAFE tools only ────────────────
@@ -732,6 +805,7 @@ async def autonomous_loop(
 
                     new_tool_results.append(result)
                     yield _event_tool_done(result)
+                    state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     if result.get("success"):
                         data = result.get("data", "")
@@ -749,6 +823,7 @@ async def autonomous_loop(
                     # SAFE tool — build message for LLM next turn
                     existing = safe_result_map.get(tool_use_id)
                     if existing:
+                        state = _invalidate_after_write(state, tool_name, existing, filtered_tools)
                         if existing.get("success"):
                             data = existing.get("data", "")
                             if isinstance(data, (dict, list)):
@@ -761,6 +836,10 @@ async def autonomous_loop(
                         )
 
             streaming_executor.clear_queued()
+
+        # ── Post-turn hooks (runs before any break/continue decision) ──
+        await hook_registry.run("post_turn", state=state, llm_client=llm,
+                                 turn_start=turn_start)
 
         # ── Step 7: Decide next ─────────────────────────────────────
         if not tool_blocks:
@@ -778,11 +857,13 @@ async def autonomous_loop(
         )
 
         if not assistant_text.strip():
-            state = state.replace(retry_count=state.retry_count + 1)
-            if state.retry_count > 3:
+            state = state.replace(tool_only_turns=state.tool_only_turns + 1)
+            if state.tool_only_turns > 3:
                 logger.warning("Tool-only loop detected — breaking")
                 yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
                 break
+        else:
+            state = state.replace(tool_only_turns=0)
 
     # ── Final: Generate response ────────────────────────────────────
     yield _event_step("生成回复...")
@@ -821,6 +902,7 @@ async def autonomous_loop(
                 messages=gen_msgs_final,
                 temperature=0.7,
                 request_id=state.trace_id,
+                model=active_model,
             ):
                 yield _event_token(token)
         except Exception as e:
@@ -904,13 +986,17 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
         fallbacks = get_fallback_models()
         idx = state.recovery_state.get("model_index", 0)
         if idx < len(fallbacks):
-            llm.model = fallbacks[idx]
+            new_model = fallbacks[idx]
+            # Do NOT mutate llm.model — use state._model_override instead.
+            # The LLM call sites in the loop pass state._model_override as
+            # the model parameter, so setting it in state is sufficient.
+            logger.info("Switching to fallback model: {}", new_model)
             return {"give_up": False, "state": retry_state.replace(
-                _model_override=fallbacks[idx],
+                _model_override=new_model,
                 recovery_state={
                     **state.recovery_state,
                     "model_index": idx + 1,
-                    "switched_model": fallbacks[idx],
+                    "switched_model": new_model,
                 },
                 transition="recovery_model_switch",
             )}

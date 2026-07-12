@@ -95,16 +95,40 @@ class LLMClient:
         base_url: str | None = None,
         timeout: float = 120.0,
         fallback_models: list[str] | None = None,
+        _client: httpx.AsyncClient | None = None,
     ):
         self.model = model or settings.llm_model
         self.api_key = api_key or settings.llm_api_key
         self.base_url = base_url or settings.llm_base_url
         self.fallback_models = fallback_models or _resolve_fallback_models()
-        proxy_url = self._resolve_proxy()
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            proxy=proxy_url if proxy_url else None,
-            trust_env=False,
+        if _client is not None:
+            self._client = _client
+            self._owns_client = False
+        else:
+            proxy_url = self._resolve_proxy()
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout),
+                proxy=proxy_url if proxy_url else None,
+                trust_env=False,
+            )
+            self._owns_client = True
+
+    def fork(self) -> "LLMClient":
+        """Create a per-request fork sharing the connection pool.
+
+        All requests share the same ``httpx.AsyncClient`` (connection pool is
+        thread-safe), but each fork has independent ``model`` and
+        ``fallback_models`` state — so fallback switching on one request
+        never affects another.
+
+        The fork does NOT own the client; closing it is a no-op.
+        """
+        return LLMClient(
+            model=self.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            fallback_models=list(self.fallback_models) if self.fallback_models else None,
+            _client=self._client,
         )
 
     @staticmethod
@@ -113,7 +137,8 @@ class LLMClient:
         return getattr(settings, "llm_proxy", None) or None
 
     async def close(self) -> None:
-        await self._client.aclose()
+        if self._owns_client:
+            await self._client.aclose()
 
     def _build_body(
         self,

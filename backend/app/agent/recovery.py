@@ -69,11 +69,6 @@ class ErrorClassifier:
         "reduce the length", "too many tokens",
     ]
 
-    # Errors that suggest the current model is a bad fit
-    MODEL_ERROR_PATTERNS: list[str] = [
-        "overloaded", "capacity",
-    ]
-
     @classmethod
     def classify(
         cls,
@@ -154,15 +149,7 @@ class ErrorClassifier:
                 message="Context overflow persists after compression and token escalation",
             )
 
-        # ── Layer 4: Persistent "overloaded" → model switch ──
-        if any(kw in error_lower for kw in cls.MODEL_ERROR_PATTERNS) and RecoveryAction.SWITCH_MODEL not in history:
-            return RecoveryDecision(
-                action=RecoveryAction.SWITCH_MODEL,
-                message="Model appears overloaded, switching to fallback",
-                context={"layer": "model_fallback", "reason": "overloaded"},
-            )
-
-        # ── Layer 5: Unknown errors → backoff, then give up ──
+        # ── Layer 4: Unknown errors → backoff, then give up ──
         if attempt < max_retries:
             delay = min(2 ** attempt, 30)
             return RecoveryDecision(
@@ -295,8 +282,4 @@ def get_fallback_models() -> list[str]:
     return [m for m in fallbacks if m != primary]
 
 
-def is_recovery_enabled() -> bool:
-    """Check whether layered recovery is enabled in settings."""
-    from app.config import settings
 
-    return getattr(settings, "llm_recovery_enabled", False)

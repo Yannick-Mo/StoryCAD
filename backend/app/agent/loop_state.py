@@ -60,6 +60,19 @@ class LoopState:
     recovery_state: dict = field(default_factory=dict)
     _model_override: str = ""
 
+    # ── Token budget ────────────────────────────────────────────────
+    budget_total_estimated: int = 0
+    budget_model_limit: int = 100_000
+    budget_continuation_count: int = 0
+    budget_last_delta: int = 0
+    budget_warn_level: str = ""  # "" | "warning" | "critical"
+
+    # ── Tool-only loop detection ────────────────────────────────────
+    # Separate counter so error recovery (which uses retry_count) does
+    # not pollute tool-only loop detection, and the retry_count=0 reset
+    # at loop.py:848 does not prevent accumulation.
+    tool_only_turns: int = 0
+
     # ── Lifecycle ───────────────────────────────────────────────────
     turn_count: int = 0
     _context_loaded: bool = False
@@ -115,8 +128,16 @@ class LoopState:
             retry_context=initial_state.get("retry_context"),
             recovery_state=dict(initial_state.get("recovery_state", {}) or {}),
             _model_override=initial_state.get("_model_override", "") or "",
+            # Token budget
+            budget_total_estimated=int(initial_state.get("budget_total_estimated", 0) or 0),
+            budget_model_limit=int(initial_state.get("budget_model_limit", 100_000) or 100_000),
+            budget_continuation_count=int(initial_state.get("budget_continuation_count", 0) or 0),
+            budget_last_delta=int(initial_state.get("budget_last_delta", 0) or 0),
+            budget_warn_level=initial_state.get("budget_warn_level", "") or "",
+            # Tool-only loop detection
+            tool_only_turns=int(initial_state.get("tool_only_turns", 0) or 0),
             # Lifecycle
-            turn_count=int(initial_state.get("_turn_count", 1) or 1),
+            turn_count=int(initial_state.get("_turn_count", 0) or 0),
             _context_loaded=bool(initial_state.get("_context_loaded", False)),
             transition="",
         )
@@ -153,4 +174,11 @@ class LoopState:
             "_turn_count": self.turn_count,
             "recovery_state": self.recovery_state,
             "_model_override": self._model_override,
+            "tool_only_turns": self.tool_only_turns,
+            # Token budget
+            "budget_total_estimated": self.budget_total_estimated,
+            "budget_model_limit": self.budget_model_limit,
+            "budget_continuation_count": self.budget_continuation_count,
+            "budget_last_delta": self.budget_last_delta,
+            "budget_warn_level": self.budget_warn_level,
         }

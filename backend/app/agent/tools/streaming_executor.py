@@ -34,6 +34,71 @@ _ANALYSIS_TOOL_NAMES: set[str] = {
     "analyze_rhythm", "suggest_next",
 }
 
+# Generic list/structural tools — the LLM mostly needs IDs and names,
+# not the full content of each entity.  Content-read tools (read_scene,
+# read_full_project, list_characters) are EXCLUDED because they carry
+# creative text that must be preserved in full.
+_STRUCTURAL_TOOL_NAMES: set[str] = {
+    "list_chapters", "list_scenes",
+    "list_relations", "list_edges", "search_nodes",
+}
+
+# Tools that produce purely structural JSON.
+# Content-creative tools (list_characters) are excluded.
+_JSON_OUTPUT_TOOLS: set[str] = {
+    "list_chapters", "list_scenes",
+    "list_relations", "list_edges", "search_nodes",
+    "project_health", "analyze_rhythm",
+}
+
+
+def _smart_summarise(data: str, max_chars: int, tool_name: str) -> str:
+    """Structure-aware summarization instead of blind truncation.
+
+    Three strategies:
+    1. **JSON** — preserve top-level keys, truncate long arrays
+       ("完整角色列表: 15 项，已显示 3 项")
+    2. **Long text** — head + tail with middle compressed
+    3. **Short** — return as-is
+    """
+    if len(data) <= max_chars:
+        return data
+
+    # Strategy 1: JSON structure preservation
+    if tool_name in _JSON_OUTPUT_TOOLS or data.strip().startswith("{"):
+        try:
+            parsed = json.loads(data)
+            if isinstance(parsed, list):
+                total = len(parsed)
+                if total > 3:
+                    kept = json.dumps(parsed[:3], ensure_ascii=False, indent=2)
+                    return f"{kept}\n... (完整列表: {total} 项，已显示前 3 项)"
+                return json.dumps(parsed, ensure_ascii=False, indent=2)[:max_chars]
+            if isinstance(parsed, dict):
+                # Truncate long string values
+                truncated = {}
+                for k, v in parsed.items():
+                    if isinstance(v, str) and len(v) > 500:
+                        truncated[k] = v[:200] + f"... [{len(v)} chars]"
+                    elif isinstance(v, list) and len(v) > 5:
+                        truncated[k] = v[:3] + [f"... ({len(v)} 项)"]
+                    else:
+                        truncated[k] = v
+                result = json.dumps(truncated, ensure_ascii=False, indent=2)
+                if len(result) > max_chars:
+                    result = result[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Strategy 2: Head + tail for long text
+    half = max_chars // 2
+    head = data[:half]
+    tail = data[-half:] if len(data) > half * 2 else ""
+    if tail:
+        return f"{head}\n\n...[中间省略 {len(data) - max_chars} 字符]...\n\n{tail}"
+    return data[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
+
 
 def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | None = None) -> dict[str, Any]:
     """Truncate very long tool outputs to avoid blowing up the context.
@@ -41,17 +106,20 @@ def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | 
     Uses the tool's ``max_result_chars`` when available, otherwise falls
     back to a heuristic based on tool category.
     """
-    # Per-tool max (from ToolMeta), with fallback
     if tool is not None and hasattr(tool, "_effective_max_result_chars"):
         max_chars = tool._effective_max_result_chars
     elif tool_name in _ANALYSIS_TOOL_NAMES:
         max_chars = 2000
+    elif tool_name in _STRUCTURAL_TOOL_NAMES:
+        max_chars = 4000
     else:
         max_chars = 8000
 
     data = result.data
     if isinstance(data, str) and len(data) > max_chars:
-        data = data[:max_chars] + f"\n... [truncated, {len(result.data)} chars total]"
+        data = _smart_summarise(data, max_chars, tool_name)
+    elif data is None or data == "":
+        data = "(empty)"
     return {
         "tool": tool_name,
         "success": result.success,

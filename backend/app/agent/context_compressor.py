@@ -1,18 +1,20 @@
 """Token-aware context compression for the autonomous agent loop.
 
-When the estimated token count exceeds 80% of the model's context window,
-this module compresses older messages into a single summary to free space
-while preserving recent context fidelity.
+Three compression layers, inspired by Claude Code's multi-layer pipeline
+(``src/services/compact/``):
 
-Strategy:
-    head (first 3 msgs) + summary (compressed middle) + tail (last 6 msgs)
-
-Inspired by Claude Code's multi-layer compression pipeline (query.ts:397-543)
-but simplified for StoryCAD's single-compression approach.
+1. **micro_compact** — lightweight, per-turn.  Replaces cached tool
+   results with short markers so the LLM still sees the schema/flow but
+   avoids paying token cost for data it already processed.
+2. **compress_history** — proactive, triggered at 80% threshold.
+   ``head + summary + tail`` classic strategy.
+3. **reactive_compress** — last-resort, triggered on API 413 / context
+   overflow.  More aggressive than proactive compress.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -21,18 +23,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default model context limits (characters, approximate)
+# ── Default model context limits (characters, approximate) ──────────
 DEFAULT_MODEL_LIMIT = 128_000  # DeepSeek V3 context window (chars)
 
-# Threshold ratios
-COMPRESS_THRESHOLD = 0.80  # Start compression at 80% of limit
-AGGRESSIVE_THRESHOLD = 0.95  # Aggressive compression at 95%
+# ── Threshold ratios ────────────────────────────────────────────────
+COMPRESS_THRESHOLD = 0.80
+AGGRESSIVE_THRESHOLD = 0.95
 
-# Message retention counts
+# ── Message retention counts ───────────────────────────────────────
 DEFAULT_HEAD_COUNT = 3
 DEFAULT_TAIL_COUNT = 6
 AGGRESSIVE_HEAD_COUNT = 1
 AGGRESSIVE_TAIL_COUNT = 4
+REACTIVE_HEAD_COUNT = 1
+REACTIVE_TAIL_COUNT = 3
+
+# ── Micro-compact config ────────────────────────────────────────────
+# Tools whose results are safe to clear (read-only / structural).
+# Content-read tools (read_scene, read_full_project, list_characters)
+# are EXCLUDED — they carry creative text the LLM needs across turns.
+_COMPACTABLE_TOOLS: set[str] = {
+    "list_chapters", "list_scenes", "read_chapter",
+    "list_relations", "list_edges", "search_nodes",
+    "analyze_chapter", "project_health", "check_consistency",
+    "analyze_rhythm", "suggest_next",
+    "list_conversations", "get_conversation",
+}
 
 
 def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_LIMIT) -> int:
@@ -45,7 +61,6 @@ def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_
     for msg in messages:
         content = getattr(msg, "content", "") or ""
         total += len(content)
-        # Tool calls add overhead
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 fn = getattr(tc, "function", {})
@@ -63,8 +78,78 @@ def should_compress(
     return tokens > int(model_limit * COMPRESS_THRESHOLD)
 
 
+# ── Layer 1: Micro-compact (per-turn, lightweight) ─────────────────
+
+
+def micro_compact(
+    messages: list["Message"],
+    keep_recent: int = 5,
+) -> list["Message"]:
+    """Replace compactable tool result contents with short markers.
+
+    This is a **lightweight** compression that runs every turn.  It
+    does NOT change the message count or structure — only shortens the
+    ``content`` of ``role="tool"`` messages whose tool is in
+    ``_COMPACTABLE_TOOLS``.
+
+    The LLM still sees the tool call + the marker, so it knows *what*
+    happened, but it no longer pays token cost for the actual output.
+
+    Inspired by Claude Code's ``microcompactMessages()``.
+    """
+    from app.llm.types import Message as M
+
+    compactable_count = 0
+    tokens_saved = 0
+    seen_compactable: list[int] = []  # indices of compactable tool messages
+
+    for i, msg in enumerate(messages):
+        if msg.role != "tool":
+            continue
+        content = msg.content or ""
+        if len(content) < 200:
+            continue  # Already small — skip
+        # Check if this tool result is from a compactable tool
+        # The content starts with "[工具执行结果: <tool_name>]"
+        tool_name = ""
+        if content.startswith("[工具执行结果:"):
+            end = content.find("]")
+            if end > 0:
+                tool_name = content[7:end].strip()
+        elif content.startswith("[工具执行失败:"):
+            continue  # Error messages are small
+
+        if tool_name in _COMPACTABLE_TOOLS:
+            seen_compactable.append(i)
+            compactable_count += 1
+            tokens_saved += len(content)
+
+    # Keep the last `keep_recent` compactable results
+    keep = set(seen_compactable[-keep_recent:]) if keep_recent > 0 else set()
+    for i in seen_compactable:
+        if i not in keep:
+            messages[i] = M(
+                role="tool",
+                content=f"[工具结果已缓存: {len(messages[i].content or '')} chars, 点击查看详情]",
+                tool_call_id=messages[i].tool_call_id,
+                name=messages[i].name,
+            )
+
+    if compactable_count > 0:
+        logger.debug(
+            "micro_compact: cleared %d/%d tool results, saved ~%d chars",
+            len(seen_compactable) - len(keep),
+            compactable_count,
+            tokens_saved,
+        )
+
+    return messages
+
+
+# ── Layer 2: Proactive compress (head + summary + tail) ────────────
+
+
 def _msg_role_label(role: str) -> str:
-    """Map internal role names to Chinese labels for the summary."""
     return {"user": "用户", "assistant": "AI", "system": "系统"}.get(role, role)
 
 
@@ -80,7 +165,7 @@ def compress_history(
     Returns a new list: ``head + [summary] + tail``.
 
     If the list is short enough to not need compression, it's returned
-    unchanged.  Callers should call :func:`should_compress` first.
+    unchanged.
     """
     from app.llm.types import Message as M
 
@@ -90,7 +175,6 @@ def compress_history(
     if ratio <= COMPRESS_THRESHOLD:
         return list(messages)
 
-    # Determine retention based on how over budget we are
     if ratio > AGGRESSIVE_THRESHOLD:
         h = head_count if head_count is not None else AGGRESSIVE_HEAD_COUNT
         t = tail_count if tail_count is not None else AGGRESSIVE_TAIL_COUNT
@@ -98,7 +182,6 @@ def compress_history(
         h = head_count if head_count is not None else DEFAULT_HEAD_COUNT
         t = tail_count if tail_count is not None else DEFAULT_TAIL_COUNT
 
-    # Too few messages to compress
     if len(messages) <= h + t + 2:
         return list(messages)
 
@@ -106,7 +189,6 @@ def compress_history(
     tail = messages[-t:]
     middle = messages[h:-t]
 
-    # Build summary of middle messages
     summary_parts: list[str] = []
     for msg in middle:
         role = _msg_role_label(getattr(msg, "role", "unknown"))
@@ -114,7 +196,6 @@ def compress_history(
         if content:
             summary_parts.append(f"[{role}]: {content}")
 
-    # Keep last 15 summaries (enough for context, not too many)
     kept = summary_parts[-15:] if len(summary_parts) > 15 else summary_parts
 
     summary = M(
@@ -138,14 +219,131 @@ def compress_history(
     return result
 
 
-def build_boundary_message(original_count: int, compressed_count: int) -> "Message":
+# ── Layer 3: Reactive compress (413 / context overflow) ────────────
+
+
+def reactive_compress(
+    messages: list["Message"],
+    *,
+    model_limit: int = DEFAULT_MODEL_LIMIT,
+) -> list["Message"]:
+    """Aggressive compression for API 413 / context overflow recovery.
+
+    More aggressive than ``compress_history``:
+    - Keeps only first 1 message + last 3 messages.
+    - Drops all tool messages (not user/assistant).
+
+    This is a **last resort** — it heavily truncates context to free
+    enough room for the model to continue.
+
+    Inspired by Claude Code's ``reactiveCompact`` triggered on
+    ``prompt_too_long`` error.
+    """
+    from app.llm.types import Message as M
+
+    h = REACTIVE_HEAD_COUNT
+    t = REACTIVE_TAIL_COUNT
+
+    if len(messages) <= h + t + 1:
+        return compress_history(
+            messages, model_limit=model_limit,
+            head_count=h, tail_count=t,
+        )
+
+    # Strategy: keep head + tail, but DROP tool messages entirely
+    # (not just summarize them).  The model may lose some context,
+    # but at least it can continue.
+    non_tool: list[M] = [m for m in messages if m.role != "tool"]
+    if len(non_tool) <= h + t:
+        # Fall back to aggressive compress if stripping tools isn't enough
+        return compress_history(
+            messages, model_limit=model_limit,
+            head_count=h, tail_count=t,
+        )
+
+    head = non_tool[:h]
+    tail = non_tool[-t:]
+
+    middle = non_tool[h:-t]
+    summary_parts: list[str] = []
+    for msg in middle:
+        role_label = _msg_role_label(getattr(msg, "role", "unknown"))
+        content = (getattr(msg, "content", "") or "")[:100]
+        if content:
+            summary_parts.append(f"[{role_label}]: {content}")
+
+    kept = summary_parts[-8:] if len(summary_parts) > 8 else summary_parts
+    summary = M(
+        role="system",
+        content=(
+            "<system-reminder>\n"
+            "[紧急上下文压缩 — 上下文过长已被截断]\n"
+            + "\n".join(kept)
+            + "\n</system-reminder>"
+        ),
+    )
+
+    result = list(head) + [summary] + list(tail)
+
+    tokens_before = estimate_tokens(messages, model_limit)
+    tokens_after = estimate_tokens(result, model_limit)
+    logger.warning(
+        "Reactive compress: %d msgs → %d msgs, ~%d → ~%d tokens (%.0f%% reduction)",
+        len(messages), len(result), tokens_before, tokens_after,
+        (1 - tokens_after / max(tokens_before, 1)) * 100,
+    )
+
+    return result
+
+
+# ── Orchestrator ────────────────────────────────────────────────────
+
+
+def compress_context(
+    messages: list["Message"],
+    *,
+    model_limit: int = DEFAULT_MODEL_LIMIT,
+    reactive: bool = False,
+) -> list["Message"]:
+    """Run the appropriate compression layer.
+
+    Args:
+        messages: Message list to compress.
+        model_limit: Model context window limit.
+        reactive: If True, use reactive compression (for 413 recovery).
+                  Otherwise, use proactive compression.
+
+    Returns:
+        Compressed message list.
+    """
+    if reactive:
+        return reactive_compress(messages, model_limit=model_limit)
+
+    compressed = compress_history(messages, model_limit=model_limit)
+    # If proactive compression wasn't enough (still over threshold),
+    # escalate to reactive.
+    if should_compress(compressed, model_limit):
+        logger.warning("Proactive compress insufficient — escalating to reactive")
+        return reactive_compress(messages, model_limit=model_limit)
+
+    return compressed
+
+
+def build_boundary_message(original_count: int, compressed_count: int, reactive: bool = False) -> "Message":
     """Create a user-visible boundary message for context compression events."""
     from app.llm.types import Message as M
+
+    if reactive:
+        label = "紧急压缩"
+        detail = "由于上下文长度超出限制，已截断部分内容"
+    else:
+        label = "上下文自动压缩"
+        detail = "由于对话较长，已将之前的对话内容压缩为摘要"
 
     return M(
         role="system",
         content=(
-            f"[上下文自动压缩：由于对话较长，已将之前的 {original_count} 条消息"
-            f"压缩为 {compressed_count} 条以保持响应质量。最近的对话内容未受影响。]"
+            f"[{label}：已将之前的 {original_count} 条消息"
+            f"压缩为 {compressed_count} 条以保持响应质量。{detail}。最近的对话内容未受影响。]"
         ),
     )

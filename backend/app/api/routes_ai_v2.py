@@ -125,7 +125,7 @@ async def chat(
     redis_client: Redis | None = Depends(get_redis),
 ):
     await _verify_project_owner(db, project_id, user)
-    llm_client = get_shared_client()
+    llm_client = get_shared_client().fork()
     agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
     return StreamingResponse(
         _stream_chat(str(project_id), user["id"], req.message, req.conversation_id, req.mode, context_view=req.context_view, context_id=req.context_id, agent=agent, request=request),
