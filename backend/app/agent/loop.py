@@ -480,6 +480,15 @@ async def autonomous_loop(
         except Exception as e:
             logger.error("LLM streaming error: %s", e, exc_info=True)
             streaming_executor.discard()
+            # --- Rollback any poisoned transactions from tool errors ---
+            # When a tool's run() raises (e.g. duplicate character), asyncpg
+            # marks the connection as aborted.  Without a rollback here, ALL
+            # subsequent reads fail with InFailedSQLTransactionError.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            # --- Recover ---
             decision = _try_recovery(state, llm, str(e))
             if decision.get("give_up"):
                 assistant_text = "".join(assistant_text_parts)

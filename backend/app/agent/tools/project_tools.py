@@ -42,10 +42,11 @@ class ReadProjectTool(BaseTool):
                 data["config"] = row_to_dict(config)
             return ToolResult(success=True, data=data)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
-class ReadChapterTool(BaseTool):
+class CreateSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter",
         description="获取章节及其场景列表",
@@ -78,6 +79,7 @@ class ReadChapterTool(BaseTool):
             data["scenes"] = scenes
             return ToolResult(success=True, data=data)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -112,10 +114,11 @@ class ReadSceneTool(BaseTool):
             data["content"] = sc_content.content if sc_content else ""
             return ToolResult(success=True, data=data)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
-class CreateSceneTool(BaseTool):
+class ReadChapterTool(BaseTool):
     meta = ToolMeta(
         name="create_scene",
         description="在指定章节中创建新场景",
