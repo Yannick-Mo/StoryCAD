@@ -365,11 +365,7 @@ class CreateProjectFromMaterialTool(BaseTool):
             if not user_id:
                 return ToolResult(success=False, error="创建项目需要用户登录")
 
-            from app.agent.project_creator.graph import build_graph
-            graph = build_graph()
-
-            thread_id = str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            from app.agent.project_creator.graph import run_pipeline
             initial_state: MaterialState = {
                 "material": material,
                 "project_title": (kwargs.get("project_title") or "未命名项目").strip(),
@@ -381,12 +377,12 @@ class CreateProjectFromMaterialTool(BaseTool):
             }
 
             try:
-                async for _event in graph.astream(initial_state, config):
+                async for _ in run_pipeline(initial_state):
                     pass
             except Exception as e:
                 return ToolResult(success=False, error=f"项目生成失败: {e}")
 
-            final_state = graph.get_state(config).values
+            final_state = initial_state
 
             project_id = await _write_new_project(db, final_state, uuid.UUID(user_id))
             return ToolResult(success=True, data={

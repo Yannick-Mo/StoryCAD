@@ -1,5 +1,3 @@
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
 from app.agent.project_creator.state import MaterialState
 from app.agent.project_creator.nodes.analyze import analyze_material
 from app.agent.project_creator.nodes.plan import plan_structure
@@ -9,25 +7,23 @@ from app.agent.project_creator.nodes.settings import build_settings
 from app.agent.project_creator.nodes.edges import generate_edges
 from app.agent.project_creator.nodes.validate import validate
 
+NODE_STEPS = [
+    ("analyze_material", analyze_material),
+    ("plan_structure", plan_structure),
+    ("design_characters", design_characters),
+    ("build_settings", build_settings),
+    ("generate_all_scenes", generate_all_scenes),
+    ("generate_edges", generate_edges),
+    ("validate", validate),
+]
 
-def build_graph():
-    builder = StateGraph(state_schema=MaterialState)
 
-    builder.add_node("analyze_material", analyze_material)
-    builder.add_node("plan_structure", plan_structure)
-    builder.add_node("generate_all_scenes", generate_all_scenes)
-    builder.add_node("design_characters", design_characters)
-    builder.add_node("build_settings", build_settings)
-    builder.add_node("generate_edges", generate_edges)
-    builder.add_node("validate", validate)
+async def run_pipeline(initial_state: MaterialState):
+    """Run project creation pipeline sequentially, yielding (node_name, output) for each step.
 
-    builder.add_edge(START, "analyze_material")
-    builder.add_edge("analyze_material", "plan_structure")
-    builder.add_edge("plan_structure", "design_characters")
-    builder.add_edge("design_characters", "build_settings")
-    builder.add_edge("build_settings", "generate_all_scenes")
-    builder.add_edge("generate_all_scenes", "generate_edges")
-    builder.add_edge("generate_edges", "validate")
-    builder.add_edge("validate", END)
-
-    return builder.compile(checkpointer=MemorySaver())
+    The initial_state dict is mutated in place to accumulate the final state.
+    """
+    for name, func in NODE_STEPS:
+        output = await func(initial_state)
+        initial_state.update(output)
+        yield name, output

@@ -11,7 +11,7 @@ from app.api.rate_limiter import rate_limiter
 from app.project.service import ProjectService
 from app.project.models import Project, ProjectConfig
 from app.agent.orchestrator import AgentOrchestrator
-from app.agent.project_creator.graph import build_graph
+from app.agent.project_creator.graph import run_pipeline
 from app.agent.project_creator.state import MaterialState
 from app.llm.client import LLMClient
 from app.llm.types import Message
@@ -183,7 +183,7 @@ async def ai_continue(
 
 
 # ============================================================
-# Create project from material (LangGraph pipeline + SSE)
+# Create project from material (sequential pipeline + SSE)
 # ============================================================
 
 class CreateFromMaterialRequest(BaseModel):
@@ -209,8 +209,6 @@ async def create_from_material(
         raise HTTPException(status_code=400, detail="素材不能超过5000字")
 
     async def event_stream():
-        graph = build_graph()
-        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         initial_state: MaterialState = {
             "material": payload.material.strip(),
             "project_title": payload.title.strip() or "未命名项目",
@@ -222,16 +220,15 @@ async def create_from_material(
         }
 
         try:
-            async for event in graph.astream(initial_state, config):
-                for node_name, node_output in event.items():
-                    if isinstance(node_output, dict):
-                        preview = _make_preview(node_name, node_output)
-                        yield f"data: {json_mod.dumps({'step': node_name, 'status': 'done', 'preview': preview})}\n\n"
+            async for node_name, node_output in run_pipeline(initial_state):
+                if isinstance(node_output, dict):
+                    preview = _make_preview(node_name, node_output)
+                    yield f"data: {json_mod.dumps({'step': node_name, 'status': 'done', 'preview': preview})}\n\n"
         except Exception as e:
             yield f"data: {json_mod.dumps({'step': 'error', 'message': str(e)})}\n\n"
             return
 
-        final_state = graph.get_state(config).values
+        final_state = initial_state
         try:
             project_id = await _write_project_to_db(db, final_state, uuid.UUID(current_user["id"]))
             yield f"data: {json_mod.dumps({'step': 'done', 'project_id': str(project_id)})}\n\n"

@@ -32,13 +32,10 @@ class AgentOrchestrator:
         self, user_id: uuid.UUID, material: str, db: AsyncSession, project_title: str = "未命名项目"
     ) -> AsyncGenerator[dict, None]:
         """Create a project from raw material with transaction rollback on failure."""
-        from app.agent.project_creator.graph import build_graph
+        from app.agent.project_creator.graph import run_pipeline
         from app.agent.project_creator.state import MaterialState
         from app.agent.tools.project_admin_tools import _write_new_project
 
-        graph = build_graph()
-        thread_id = str(uuid.uuid4())
-        config = {"configurable": {"thread_id": thread_id}}
         initial_state: MaterialState = {
             "material": material,
             "project_title": project_title.strip() or "未命名项目",
@@ -51,13 +48,12 @@ class AgentOrchestrator:
 
         try:
             async with db.begin_nested():
-                async for event in graph.astream(initial_state, config):
-                    for node_name, node_output in event.items():
-                        if isinstance(node_output, dict) and node_output.get("errors"):
-                            raise RuntimeError(f"Step {node_name} failed: {node_output['errors']}")
-                        yield {"type": "step", "node": node_name, "data": node_output}
+                async for node_name, node_output in run_pipeline(initial_state):
+                    if isinstance(node_output, dict) and node_output.get("errors"):
+                        raise RuntimeError(f"Step {node_name} failed: {node_output['errors']}")
+                    yield {"type": "step", "node": node_name, "data": node_output}
 
-                final_state = graph.get_state(config).values
+                final_state = initial_state
                 project_id = await _write_new_project(db, final_state, user_id, do_commit=False)
                 yield {"type": "project_id", "project_id": str(project_id)}
         except Exception as e:
