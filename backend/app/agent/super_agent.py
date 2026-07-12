@@ -172,8 +172,10 @@ class SuperAgent:
 
         saved_pending_plan, saved_options, saved_plan_confirmed, saved_mode, saved_session = await self.conv_memory.load_agent_state(conversation_id)
 
-        # Mode switch: clear stale state from previous mode
-        if saved_mode != mode and saved_mode != "chat":
+        # Mode switch: clear stale state from previous mode.
+        # Any mode change (chat→cowriter or cowriter→chat) must reset
+        # options / plans / session so the AI doesn't act on old context.
+        if saved_mode and saved_mode != mode:
             saved_pending_plan = {}
             saved_options = []
             saved_plan_confirmed = False
