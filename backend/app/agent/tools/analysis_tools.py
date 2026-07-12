@@ -29,6 +29,7 @@ class ConsistencyCheckTool(BaseTool):
             report = await checker.check_all(kwargs["project_id"])
             return ToolResult(success=True, data=report.model_dump(mode="json"))
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -58,4 +59,5 @@ class RhythmAnalyzeTool(BaseTool):
             result = await analyzer.analyze(project_id)
             return ToolResult(success=True, data=result)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))

@@ -101,8 +101,8 @@ def apply_interceptors(
                 result.blocked = True
                 result.blocked_tools.append(tool_name)
                 result.blocked_messages.append(
-                    f"对话模式禁止写入操作。工具 '{tool_name}' 被拦截。"
-                    f"请切换到协作模式后重试。"
+                    f"对话模式禁止写入操作。工具 '{tool_name}' 被拦截（对话模式仅允许读工具）。"
+                    f"请向用户说明：需要切换到协作模式才能执行写入操作。"
                 )
                 continue
 

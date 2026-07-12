@@ -47,6 +47,8 @@ from app.agent.tools.base import BaseTool
 from app.agent.tools.streaming_executor import StreamingToolExecutor
 from app.llm.client import LLMClient
 from app.llm.types import Message
+from app.knowledge.skill_engine import SkillEngine
+_skill_engine = SkillEngine()
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,18 @@ def _invalidate_after_write(
             _invalidated_sections=invalidated,
             transition=f"context_invalidated_{section}",
         )
+    # Handle invoke_skill — add to active_skills
+    if tool_name == "invoke_skill" and result.get("data"):
+        skill_name = result["data"].get("skill_name", "")
+        if skill_name:
+            active = list(state.active_skills)
+            if skill_name not in active:
+                active.append(skill_name)
+            return state.replace(
+                active_skills=active,
+                _context_loaded=False,
+                transition=f"skill_activated_{skill_name}",
+            )
     return state
 
 
@@ -193,6 +207,38 @@ _REJECT_KEYWORDS: list[str] = [
     "换个", "换一个", "重新", "再来",
     "重来", "再想想",
 ]
+
+
+def _build_skill_probe_paths(ctx: dict) -> list[str]:
+    """Build synthetic file-like paths from project metadata for skill auto-activation.
+
+    Converts the project's genre, title, and logline keywords into path
+    strings that ``match_skill_paths_async`` can match against each skill's
+    ``paths`` glob patterns.  This bridges the file-path-based conditional
+    activation system with the DB-driven project context.
+    """
+    paths: list[str] = []
+    proj_data = ctx.get("project", {})
+    genre = proj_data.get("genre", "")
+    if genre:
+        paths.append(f"genre/{genre}")
+        # Also add variant without underscores/dashes for glob matching
+        clean_genre = genre.replace("_", "").replace("-", "")
+        if clean_genre != genre:
+            paths.append(f"genre/{clean_genre}")
+    title = proj_data.get("title", "")
+    if title:
+        for word in re.split(r'[\s,，。、_\-：:()（）]', title):
+            word = word.strip().lower()
+            if len(word) >= 2:
+                paths.append(f"content/{word}")
+    logline = proj_data.get("logline", "")
+    if logline:
+        for word in re.split(r'[\s,，。、_\-：:()（）]', logline):
+            word = word.strip().lower()
+            if len(word) >= 2:
+                paths.append(f"logline/{word}")
+    return paths
 
 
 def _detect_context_depth(messages: list["Message"]) -> str:
@@ -454,13 +500,6 @@ async def autonomous_loop(
     state = LoopState.from_initial(initial_state)
     llm = llm_client
 
-    # ── Filter tools by mode & skills ───────────────────────────────
-    filtered_tools = get_filtered_tools(tools, state.active_skills, mode=state.mode)
-    filtered_tool_desc = "\n".join(
-        f"- {t.name}: {t.description}" for t in filtered_tools.values()
-    ) or tool_descriptions
-    tool_schemas = _build_tool_schemas(filtered_tools)
-
     # ── Attachment injector (for per-turn context sections) ────────
     from app.agent.attachments import AttachmentInjector
     _attach = AttachmentInjector()
@@ -520,9 +559,36 @@ async def autonomous_loop(
                 state = state.replace(project_context=ctx, _context_loaded=True,
                                       _invalidated_sections=set(),
                                       transition=f"context_loaded_depth_{depth}")
+
+                # ── Auto-activate skills by genre/title keyword ──
+                try:
+                    probe_paths = _build_skill_probe_paths(ctx)
+                    if probe_paths:
+                        matched = await _skill_engine.match_skill_paths_async(probe_paths)
+                        if matched:
+                            new_skills = list(state.active_skills)
+                            for name in matched:
+                                if name not in new_skills:
+                                    new_skills.append(name)
+                            if len(new_skills) != len(state.active_skills):
+                                state = state.replace(
+                                    active_skills=new_skills,
+                                    transition=f"skills_auto_activated_{len(matched)}",
+                                )
+                                logger.info("Auto-activated skills by genre: %s", matched)
+                except Exception:
+                    logger.warning("Skill auto-activation failed", exc_info=True)
             except Exception as e:
                 logger.warning("Context load skipped/partial: %s", e)
-                state = state.replace(transition="context_load_failed")
+                await db.rollback()
+                state = state.replace(transition="context_load_failed", _context_loaded=True)
+
+        # ── Re-filter tools (skills may have changed) ──────────────
+        filtered_tools = get_filtered_tools(tools, mode=state.mode)
+        filtered_tool_desc = "\n".join(
+            f"- {t.name}: {t.description}" for t in filtered_tools.values()
+        ) or tool_descriptions
+        tool_schemas = _build_tool_schemas(filtered_tools)
 
         # ── Token budget check ─────────────────────────────────────
         budget = compute_budget(state.messages, state.tool_results, MODEL_CONTEXT_LIMIT)
@@ -627,9 +693,6 @@ async def autonomous_loop(
 
         # Project context
         proj = state.project_context.get("project", {})
-        proj_title = proj.get("title", "未命名")
-        proj_genre = proj.get("genre", "")
-        proj_id = state.project_id or proj.get("id", "unknown")
 
         # Assemble system message
         system_content = base_system
@@ -732,6 +795,37 @@ async def autonomous_loop(
         recent_hint = state.project_context.get("_recent_scenes_hint")
         if recent_hint:
             system_content += recent_hint
+
+        # --- Available skills ---
+        available_skills = state.project_context.get("available_skills", [])
+        if available_skills:
+            skill_lines = ["\n# --- 可用写作技能（AI 可主动调用） ---"]
+            for s in available_skills:
+                name = s.get("name", "?")
+                desc = s.get("description", "")
+                when = s.get("when_to_use", "")
+                if when:
+                    skill_lines.append(f"- {name}: {desc}")
+                    skill_lines.append(f"  适用场景：{when[:200]}")
+                else:
+                    skill_lines.append(f"- {name}: {desc}")
+            skill_lines.append("")
+            skill_lines.append("你可以通过调用 invoke_skill 工具来启用某个技能。启用后其专属提示词将生效，在创作模式下还会解锁专属工具。")
+            skill_lines.append("用户也可在消息中以 /技能名称 的形式直接调用。")
+            system_content += "\n".join(skill_lines)
+
+        # --- Active skill prompts ---
+        active_skills = state.active_skills or []
+        if active_skills and state.project_id:
+            try:
+                merged_prompts = await _skill_engine.get_merged_prompts(active_skills)
+                if merged_prompts:
+                    prompt_lines = ["\n# --- 当前已激活技能写作指导 ---"]
+                    for key, val in merged_prompts.items():
+                        prompt_lines.append(f"\n## {key}\n{val.strip()}")
+                    system_content += "\n".join(prompt_lines)
+            except Exception:
+                logger.warning("Failed to load active skill prompts", exc_info=True)
 
         # Inject dynamic sections from AttachmentInjector
         for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
@@ -908,16 +1002,30 @@ async def autonomous_loop(
                 tid for _, _, tid in queued_excl + queued_barrier
             }
 
-            # 6a: Mode-gated blocks
+            # 6a: Mode-gated blocks — feed back as tool errors, continue loop
             if intercept.blocked:
                 streaming_executor.clear_queued()
-                for msg in intercept.blocked_messages:
-                    state = state.replace(
-                        messages=state.messages + [Message(role="system", content=msg)],
-                        transition="mode_blocked",
-                    )
-                yield _event_step("生成回复...")
-                break
+                for tool_name, args, tool_use_id in tool_blocks:
+                    if tool_name in intercept.blocked_tools:
+                        logger.warning("Tool '%s' blocked in chat mode", tool_name)
+                        result = {
+                            "tool": tool_name,
+                            "success": False,
+                            "error": f"对话模式禁止写入操作，工具已被拦截",
+                        }
+                        new_tool_results.append(result)
+                        yield _event_tool_done(result)
+                        content = (
+                            f"[工具执行失败: {tool_name}]\n"
+                            f"对话模式禁止写入操作，工具已被拦截。请向用户说明需要切换到协作模式来完成写入操作。"
+                        )
+                        state = state.replace(
+                            messages=state.messages
+                            + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
+                            tool_results=new_tool_results,
+                            transition="tool_blocked_continue",
+                        )
+                # Fall through to execute allowed tools if any
 
             # 6b: Confirmation needed
             if intercept.needs_confirmation:

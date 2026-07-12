@@ -56,7 +56,11 @@ async def create_character(
             "motivation": motivation,
         }
         created = await repo.create_entity(Character, data)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return created
 
 
@@ -86,7 +90,11 @@ async def update_character(
             if val is not None:
                 data[field] = val
         updated = await repo.update_entity(Character, data)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return updated
 
 
@@ -121,7 +129,11 @@ async def update_relation(
             updated = await repo.update_entity(CharacterRelation, data)
             if not updated:
                 raise ValueError(f"Relation {relation_id} not found")
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
             return updated
         else:
             from uuid import UUID
@@ -137,5 +149,9 @@ async def update_relation(
                 "attraction": attraction,
             }
             created = await repo.create_entity(CharacterRelation, data)
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
             return created

@@ -22,9 +22,10 @@ class BaseAgent:
         persona_data = render_prompt(persona_path)
         persona = persona_data if persona_data else ""
 
-        skill_names = context.get("active_skills") or []
-        if skill_names:
-            persona = f"已启用技能：{', '.join(skill_names)}\n" + persona
+        available_skills = context.get("available_skills") or []
+        if available_skills:
+            skill_hints = [s.get("name", str(s)) for s in available_skills[:5]]
+            persona = f"可用写作技能：{'、'.join(skill_hints)}\n" + persona
 
         kwargs = {"persona": persona, "user_prompt": user_prompt}
         kwargs.update(context)

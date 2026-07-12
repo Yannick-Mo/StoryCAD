@@ -8,8 +8,11 @@ This is the last filter before data goes to ``routes_ai_v2.py``.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ── Display-name mapping ────────────────────────────────────────────────
 # Every tool function name the AI assistant may call is mapped to a
@@ -99,6 +102,34 @@ def _sanitise_error_text(text: str) -> str:
     return result
 
 
+def _short_user_error(text: str) -> str:
+    """Shorten a technical error to a brief user-facing message.
+
+    The full error is logged separately; the frontend only sees this
+    short hint so it doesn't confuse the user with DB/SQL details.
+    """
+    if not text:
+        return ""
+    # Map known long patterns to short messages
+    if "InFailedSQLTransactionError" in text or "current transaction is aborted" in text:
+        return "数据库异常"
+    if "timeout" in text.lower() or "timed out" in text:
+        return "操作超时"
+    if "not found" in text.lower():
+        return "数据不存在"
+    if "not authorized" in text.lower() or "permission" in text.lower() or "denied" in text.lower():
+        return "权限不足"
+    if "connection" in text.lower() and ("refused" in text.lower() or "reset" in text.lower()):
+        return "连接失败"
+    if "duplicate" in text.lower() or "already exists" in text.lower():
+        return "数据重复"
+    # Default: keep short
+    text = text.strip().rstrip(".")
+    if len(text) > 40:
+        return text[:37] + "..."
+    return text
+
+
 def _display_name(internal: str) -> str:
     """Return the user-facing label for an internal tool name."""
     return TOOL_DISPLAY_NAMES.get(internal, "执行操作")
@@ -108,14 +139,20 @@ def _display_name(internal: str) -> str:
 
 
 def _sanitise_tool_done(data: dict[str, Any]) -> dict[str, Any]:
-    """Replace the internal tool name with its display label & strip
-    internal fields such as ``_tool_use_id``."""
+    """Replace the internal tool name with its display label, strip
+    internal fields, and shorten error messages for the frontend.
+
+    The full error is logged server-side; the AI assistant receives
+    the full error via the ``tool`` role message built in ``loop.py``.
+    """
     result = dict(data)
     internal = result.get("tool", "")
     result["tool"] = _display_name(internal)
     result.pop("_tool_use_id", None)
     if result.get("error"):
-        result["error"] = _sanitise_error_text(result["error"])
+        full = result["error"]
+        logger.warning("Tool '%s' error: %s", internal, full)
+        result["error"] = _short_user_error(full)
     return result
 
 

@@ -38,4 +38,5 @@ class SearchKnowledgeTool(BaseTool):
             )
             return ToolResult(success=True, data=result)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))

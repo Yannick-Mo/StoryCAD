@@ -260,6 +260,7 @@ class ReadFullProjectTool(BaseTool):
             ctx = await builder.build_full(pid)
             return ToolResult(success=True, data=ctx)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 

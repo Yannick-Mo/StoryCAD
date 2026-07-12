@@ -154,7 +154,9 @@ class StreamingToolExecutor:
         executor.discard()
 
     Concurrency rules:
-      * SAFE tools execute immediately in parallel.
+      * SAFE tools execute immediately, serialised through an :class:`asyncio.Lock`
+        because all tools share a single :class:`AsyncSession` instance which
+        is **not** safe for concurrent use.
       * EXCLUSIVE tools are queued and execute serially *after* all SAFE
         tools complete.
       * BARRIER tools wait for SAFE + EXCLUSIVE to finish before running
@@ -164,6 +166,9 @@ class StreamingToolExecutor:
     def __init__(self, tools: dict[str, BaseTool], db: Any = None) -> None:
         self._tools = tools
         self._db = db
+
+        # Serialise SAFE tool access — AsyncSession is not coroutine-safe
+        self._safe_lock = asyncio.Lock()
 
         # Pending async tasks (tool_use_id -> Task)
         self._pending: dict[str, asyncio.Task] = {}
@@ -418,10 +423,20 @@ class StreamingToolExecutor:
         timeout = tool._effective_timeout if tool._effective_timeout else 30
 
         try:
-            result: ToolResult = await asyncio.wait_for(
-                tool.run(db=self._db, **args),
-                timeout=timeout,
-            )
+            # SAFE tools share the same AsyncSession (not coroutine-safe), so
+            # serialise their DB access through the executor lock.  EXCLUSIVE
+            # and BARRIER tools are already serial via the queue.
+            if tool._effective_concurrency == ConcurrencyMode.SAFE:
+                async with self._safe_lock:
+                    result: ToolResult = await asyncio.wait_for(
+                        tool.run(db=self._db, **args),
+                        timeout=timeout,
+                    )
+            else:
+                result: ToolResult = await asyncio.wait_for(
+                    tool.run(db=self._db, **args),
+                    timeout=timeout,
+                )
             d = _summarise_tool_output(name, result, tool)
             d["_tool_use_id"] = tool_use_id
             return d

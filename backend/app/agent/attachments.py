@@ -90,22 +90,45 @@ class AttachmentInjector:
                 )
             )
 
-        # 4. Active skills context
-        skills: list = state.get("active_skills", []) or []
-        if skills:
-            skill_names: list[str] = []
-            for s in skills:
+        # 4. Available skills context — list all skills with when_to_use
+        available_skills: list = state.get("project_context", {}).get("available_skills", []) or []
+        if available_skills:
+            lines = ["可用技能列表（AI 可调用 invoke_skill 主动启用）："]
+            for s in available_skills:
+                name = s.get("name", "?")
+                desc = s.get("description", "")
+                when = s.get("when_to_use", "")
+                if when:
+                    lines.append(f"  - {name}: {desc}（适用场景：{when[:120]}）")
+                else:
+                    lines.append(f"  - {name}: {desc}")
+            attachments.append(
+                Message(
+                    role="system",
+                    content=(
+                        "<system-reminder>\n"
+                        + "\n".join(lines)
+                        + "\n</system-reminder>"
+                    ),
+                )
+            )
+
+        # 5. Active skill names reminder (compact)
+        active: list = state.get("active_skills", []) or []
+        if active:
+            active_names: list[str] = []
+            for s in active:
                 if isinstance(s, str):
-                    skill_names.append(s)
+                    active_names.append(s)
                 elif isinstance(s, dict):
-                    skill_names.append(s.get("name", str(s)))
-            if skill_names:
+                    active_names.append(s.get("name", str(s)))
+            if active_names:
                 attachments.append(
                     Message(
                         role="system",
                         content=(
                             "<system-reminder>\n"
-                            f"已启用的技能：{', '.join(skill_names)}\n"
+                            f"当前已激活技能：{', '.join(active_names)}\n"
                             "</system-reminder>"
                         ),
                     )

@@ -9,6 +9,6 @@ async def init_db():
     from app.project.models import Base
     from app.user.models import User  # noqa: F401
     from app.storycad.models import Act, Chapter, Scene, SceneContent, Character, CharacterRelation, Theme, ThemeChapter, ChapterEdge, ChapterRhythm  # noqa: F401
-    from app.knowledge.models import KnowledgeChunk, SkillDefinition  # noqa: F401
+    from app.knowledge.models import KnowledgeChunk  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

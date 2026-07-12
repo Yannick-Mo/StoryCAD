@@ -18,6 +18,9 @@ from app.llm.client import LLMClient
 from app.llm.types import Message
 from app.agent.tools import get_tool_registry as _get_registry
 from app.agent.tools import get_tool_descriptions as _build_tool_descriptions
+from app.knowledge.skill_engine import SkillEngine
+
+_skill_engine = SkillEngine()
 
 _CHAT_STREAM_TIMEOUT = 120  # 2 min (was 60s — too tight for writing tools)
 
@@ -181,6 +184,36 @@ class SuperAgent:
         messages = list(history)
         messages.append(Message(role="user", content=message))
 
+        # ── Parse /skillname user command ────────────────────────────
+        active_skills: list[str] = []
+        parsed_message = message
+        if message.startswith("/"):
+            skill_query = message[1:].strip()
+            skill_data = await _skill_engine.get_skill(skill_query)
+            if skill_data is None:
+                # Try partial match on display name
+                all_skills = await _skill_engine.get_all_skills_meta()
+                for s in all_skills:
+                    name = s.get("name", "")
+                    if skill_query in name:
+                        skill_data = await _skill_engine.get_skill(name)
+                        if skill_data:
+                            break
+            if skill_data is None:
+                # Try alias match
+                for s in await _skill_engine.get_all_skills_meta():
+                    aliases = s.get("aliases", []) or []
+                    if skill_query in aliases:
+                        skill_data = await _skill_engine.get_skill(s.get("name", ""))
+                        if skill_data:
+                            break
+            if skill_data is not None:
+                display = skill_data.get("name", skill_query)
+                active_skills.append(display)
+                parsed_message = f"启用技能「{display}」"
+                messages[-1] = Message(role="user", content=parsed_message)
+                log.info("user invoked skill via / | skill=%s", display)
+
         project_context: dict = {}
         if context_view:
             project_context["current_view"] = context_view
@@ -215,7 +248,7 @@ class SuperAgent:
             "project_context": project_context,
             "messages": messages,
             "tool_results": [],
-            "active_skills": [],
+            "active_skills": active_skills,
             "mode": mode,
             "intermediate_steps": [],
             "retry_count": 0,
@@ -256,7 +289,7 @@ class SuperAgent:
             "conversation_id": conversation_id,
             "cowriter_session": saved_session or {},
             "errors": prev_errors,
-            "active_skills": [],
+            "active_skills": active_skills,
             "pending_plan": saved_pending_plan,
             "plan_confirmed": saved_plan_confirmed,
             "_context_loaded": False,  # Always reload context on resume

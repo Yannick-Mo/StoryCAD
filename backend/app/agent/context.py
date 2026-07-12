@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge.rag import RAGEngine
-from app.knowledge.skill_engine import SkillEngine
+from app.knowledge.skill_engine import SkillEngine as _SkillEngine
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import (
     Act,
@@ -89,13 +89,13 @@ class ContextBuilder:
     def __init__(self, db: AsyncSession, redis_client: Redis | None = None):
         self.db = db
         self._redis = redis_client
-        self._skill_engine: SkillEngine | None = None
+        self._skill_engine: _SkillEngine | None = None
         self._rag_engine: RAGEngine | None = None
 
     @property
-    def skill_engine(self) -> SkillEngine:
+    def skill_engine(self) -> _SkillEngine:
         if self._skill_engine is None:
-            self._skill_engine = SkillEngine(self.db)
+            self._skill_engine = _SkillEngine()
         return self._skill_engine
 
     @property
@@ -180,7 +180,7 @@ class ContextBuilder:
         if mode in ("outline", "writing"):
             ctx["relations_summary"] = await self._relations_text(project_id)
 
-        ctx["active_skills"] = await self._get_active_skills(project_id)
+        ctx["available_skills"] = await self._get_available_skills()
 
         return ctx
 
@@ -293,8 +293,7 @@ class ContextBuilder:
         )
         edges_data = [row_to_dict(e) for e in edges_result.scalars().all()]
 
-        active_skills = await self.skill_engine.get_active_skills(project_id)
-        merged_prompts = await self.skill_engine.get_merged_prompts(project_id)
+        available_skills = await self._get_available_skills()
 
         rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
 
@@ -306,8 +305,7 @@ class ContextBuilder:
             "relations": relations_data,
             "themes": themes_data,
             "edges": edges_data,
-            "active_skills": [s["name"] for s in active_skills],
-            "merged_prompts": merged_prompts,
+            "available_skills": available_skills,
             "rag_context": rag_context or "",
         }
 
@@ -412,8 +410,7 @@ class ContextBuilder:
                 "proposition": t.proposition or "",
             })
 
-        active_skills = await self.skill_engine.get_active_skills(project_id)
-        rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
+        available_skills = await self._get_available_skills()
 
         # Relations and edges — now included at all depths
         rels_result = await self.db.execute(
@@ -442,13 +439,17 @@ class ContextBuilder:
             "themes": themes_data,
             "relations": relations_data,
             "edges": edges_data,
-            "active_skills": [s["name"] for s in active_skills],
-            "rag_context": rag_context or "",
+            "available_skills": available_skills,
             "chapter_count": len(all_chapters),
             "scene_count": scene_count,
         }
 
         await self._cache_set(ck, result)
+
+        # RAG is query-dependent — always fetch fresh separately
+        rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
+        result["rag_context"] = rag_context or ""
+
         return result
 
     # ------------------------------------------------------------------
@@ -564,8 +565,12 @@ class ContextBuilder:
             lines.append(f"- {src} → {rel.label or rel.rel_type or '关联'} → {tgt}{trust}")
         return "\n".join(lines)
 
-    async def _get_active_skills(self, project_id: uuid.UUID) -> list:
-        return await self.skill_engine.get_active_skills(project_id)
+    async def _get_available_skills(self) -> list:
+        try:
+            return await self.skill_engine.get_all_skills_meta()
+        except Exception:
+            logger.warning("Failed to load skills", exc_info=True)
+            return []
 
     async def _get_rag_context_if_meaningful(self, query_hint: str, genre: str) -> str:
         if not _is_meaningful_query(query_hint):
@@ -579,4 +584,5 @@ class ContextBuilder:
             )
         except Exception as e:
             logger.warning("RAG context retrieval failed: %s", e, exc_info=True)
+            await self.db.rollback()
             return ""

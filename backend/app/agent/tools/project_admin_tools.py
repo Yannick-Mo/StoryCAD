@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 from sqlalchemy import select, func
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterRelation, Scene, SceneContent
@@ -543,25 +546,8 @@ class DeleteEdgeTool(BaseTool):
 
 
 async def _recalc_chapter_counts(db: AsyncSession, project_id: uuid.UUID) -> None:
-    counts = await db.execute(
-        select(Scene.chapter_id, func.count(Scene.id), func.coalesce(func.sum(Scene.word_count), 0))
-        .where(Scene.project_id == project_id)
-        .group_by(Scene.chapter_id)
-    )
-    for row in counts.all():
-        await db.execute(
-            Chapter.__table__.update().where(Chapter.id == row[0])
-            .values(scene_count=row[1], total_words=row[2])
-        )
-    chapters_without_scenes = await db.execute(
-        select(Chapter.id).where(Chapter.project_id == project_id)
-        .where(~Chapter.id.in_(select(Scene.chapter_id).where(Scene.project_id == project_id)))
-    )
-    for (cid,) in chapters_without_scenes.all():
-        await db.execute(
-            Chapter.__table__.update().where(Chapter.id == cid)
-            .values(scene_count=0, total_words=0)
-        )
+    from app.storycad.repository import StoryCADRepository
+    await StoryCADRepository(db)._recalc_chapter_counts(project_id)
 
 
 async def _write_new_project(
@@ -620,8 +606,7 @@ async def _write_new_project(
         key = (sc.get("act_idx", 0), sc.get("chapter_idx", 0))
         per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
         if per_chapter_count[key] > 5:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Skipping scene '%s' — chapter %s already has 5 scenes (cap reached)",
                 sc.get("title", "untitled"), key
             )

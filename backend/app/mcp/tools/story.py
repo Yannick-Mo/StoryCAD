@@ -77,15 +77,19 @@ async def create_scene(
             "scene_time": scene_time,
         }
         created = await repo.create_entity(Scene, scene_data)
-        if content:
-            sc_id = uuid.UUID(created["id"])
-            db.add(SceneContent(scene_id=sc_id, project_id=uuid.UUID(project_id), content=content))
-            result = await db.execute(select(Scene).where(Scene.id == sc_id))
-            scene_obj = result.scalar_one_or_none()
-            if scene_obj:
-                scene_obj.word_count = count_words(content)
-            await db.flush()
-        await db.commit()
+        try:
+            if content:
+                sc_id = uuid.UUID(created["id"])
+                db.add(SceneContent(scene_id=sc_id, project_id=uuid.UUID(project_id), content=content))
+                result = await db.execute(select(Scene).where(Scene.id == sc_id))
+                scene_obj = result.scalar_one_or_none()
+                if scene_obj:
+                    scene_obj.word_count = count_words(content)
+                await db.flush()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return created
 
 
@@ -117,21 +121,25 @@ async def update_scene(
             if val is not None:
                 update_data[field] = val
         updated = await repo.update_entity(Scene, update_data)
-        if content is not None:
-            sid = uuid.UUID(scene_id)
-            result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sid))
-            sc = result.scalar_one_or_none()
-            if sc:
-                sc.content = content
-            else:
+        try:
+            if content is not None:
+                sid = uuid.UUID(scene_id)
+                result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sid))
+                sc = result.scalar_one_or_none()
+                if sc:
+                    sc.content = content
+                else:
+                    result = await db.execute(select(Scene).where(Scene.id == sid))
+                    scene_obj = result.scalar_one_or_none()
+                    if scene_obj:
+                        db.add(SceneContent(scene_id=sid, project_id=scene_obj.project_id, content=content))
                 result = await db.execute(select(Scene).where(Scene.id == sid))
                 scene_obj = result.scalar_one_or_none()
                 if scene_obj:
-                    db.add(SceneContent(scene_id=sid, project_id=scene_obj.project_id, content=content))
-            result = await db.execute(select(Scene).where(Scene.id == sid))
-            scene_obj = result.scalar_one_or_none()
-            if scene_obj:
-                scene_obj.word_count = count_words(content)
-            await db.flush()
-        await db.commit()
+                    scene_obj.word_count = count_words(content)
+                await db.flush()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return updated

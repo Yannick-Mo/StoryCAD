@@ -13,7 +13,11 @@ class UserRepository:
     async def create(self, username: str, email: str, password_hash: str) -> User:
         user = User(username=username, email=email, password_hash=password_hash)
         self.db.add(user)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         await self.db.refresh(user)
         return user
 
@@ -35,25 +39,33 @@ class UserRepository:
             return False
         for key, value in kwargs.items():
             setattr(user, key, value)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return True
 
     async def delete(self, user_id: uuid.UUID) -> bool:
         user = await self.db.get(User, user_id)
         if not user:
             return False
-        result = await self.db.execute(
-            select(Project).where(Project.owner_id == user_id)
-        )
-        projects = result.scalars().all()
-        for project in projects:
-            await self.db.execute(
-                ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project.id)
+        try:
+            result = await self.db.execute(
+                select(Project).where(Project.owner_id == user_id)
             )
-            await self.db.execute(
-                ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project.id)
-            )
-            await self.db.delete(project)
-        await self.db.delete(user)
-        await self.db.commit()
+            projects = result.scalars().all()
+            for project in projects:
+                await self.db.execute(
+                    ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project.id)
+                )
+                await self.db.execute(
+                    ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project.id)
+                )
+                await self.db.delete(project)
+            await self.db.delete(user)
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return True

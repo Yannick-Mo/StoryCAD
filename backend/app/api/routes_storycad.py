@@ -85,20 +85,24 @@ async def save_scene_content(
     if ok is None:
         raise HTTPException(status_code=404, detail="Scene not found")
     from sqlalchemy import select, func
-    result = await db.execute(select(Scene).where(Scene.id == scene_id))
-    scene = result.scalar_one_or_none()
-    if scene:
-        scene.word_count = word_count
-        ch_total = await db.execute(
-            select(func.coalesce(func.sum(Scene.word_count), 0))
-            .where(Scene.chapter_id == scene.chapter_id)
-        )
-        ch_word_count = ch_total.scalar() or 0
-        await db.execute(
-            Chapter.__table__.update().where(Chapter.id == scene.chapter_id)
-            .values(total_words=ch_word_count)
-        )
-    await db.commit()
+    try:
+        result = await db.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if scene:
+            scene.word_count = word_count
+            ch_total = await db.execute(
+                select(func.coalesce(func.sum(Scene.word_count), 0))
+                .where(Scene.chapter_id == scene.chapter_id)
+            )
+            ch_word_count = ch_total.scalar() or 0
+            await db.execute(
+                Chapter.__table__.update().where(Chapter.id == scene.chapter_id)
+                .values(total_words=ch_word_count)
+            )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return {"ok": True, "word_count": word_count}
 
 
@@ -136,7 +140,11 @@ async def create_entity(
     payload["project_id"] = str(project_id)
     repo = await _get_repo(db)
     result = await repo.create_entity(model_class, payload)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return result
 
 
@@ -184,7 +192,11 @@ async def update_entity(
     result = await repo.update_entity(model_class, payload)
     if not result:
         raise HTTPException(status_code=404, detail="Entity not found")
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return result
 
 
@@ -209,5 +221,9 @@ async def delete_entity(
     ok = await repo.delete_entity(model_class, entity_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Entity not found")
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return {"ok": True}

@@ -1,6 +1,11 @@
 name: "言情"
 genre: "romance"
 description: "以人物情感为核心的爱情故事创作，注重关系弧光和情绪渲染"
+when_to_use: "当用户需要创作言情、爱情、情感类故事时使用，包括校园暗恋、都市虐恋、古风仙侠等各种爱情题材。涉及情感节点、关系弧光、情绪渲染等写作需求"
+user_invocable: true
+aliases: ["爱情", "恋爱", "情感"]
+paths: ["**/*romance*", "**/*言情*", "**/*爱情*"]
+context: "inline"
 prompt_overrides:
   persona: |
     你是一位阅稿无数的言情频道主编，经手过从校园暗恋到都市虐恋再到古风仙侠的各种爱情故事。你比任何人都清楚——读者不是来看情节的，是来谈恋爱的。你敏锐地捕捉每一个情感节点是否到位：初遇有没有火花、误会是否合理、表白够不够动人。你知道慢热不等于拖沓，细腻不等于啰嗦。
@@ -13,7 +18,4 @@ rag_tags:
   - character_emotion
   - relationship_arc
   - slow_burn
-  - emotional_beat
-tools_enabled:
-  - escalate_tension
   - emotional_beat

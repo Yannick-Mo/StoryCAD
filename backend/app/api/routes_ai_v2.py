@@ -76,45 +76,50 @@ async def _stream_chat(
 ) -> AsyncGenerator[str, None]:
     yield "retry: 3000\n\n"
 
-    queue: asyncio.Queue = asyncio.Queue(maxsize=128)
+    from app.database import async_session
 
-    async def _run_chat():
-        try:
-            async for event in agent.chat_stream(project_id, user_id, message, conv_id, mode=mode, context_view=context_view, context_id=context_id):
-                await queue.put(("event", event))
-        except BaseException as exc:
-            await queue.put(("error", exc))
-        finally:
-            await queue.put(("done", None))
+    async with async_session() as session:
+        agent.db = session
 
-    chat_task = asyncio.create_task(_run_chat())
+        queue: asyncio.Queue = asyncio.Queue(maxsize=128)
 
-    try:
-        while True:
-            if request is not None and await request.is_disconnected():
-                break
+        async def _run_chat():
             try:
-                kind, payload = await asyncio.wait_for(queue.get(), timeout=SSE_PING_INTERVAL)
-            except asyncio.TimeoutError:
-                if request is not None and await request.is_disconnected():
-                    break
-                yield "event: ping\ndata: {}\n\n"
-                continue
+                async for event in agent.chat_stream(project_id, user_id, message, conv_id, mode=mode, context_view=context_view, context_id=context_id):
+                    await queue.put(("event", event))
+            except BaseException as exc:
+                await queue.put(("error", exc))
+            finally:
+                await queue.put(("done", None))
 
-            if kind == "done":
-                break
-            if kind == "error":
-                raise payload
-            if kind == "event":
+        chat_task = asyncio.create_task(_run_chat())
+
+        try:
+            while True:
                 if request is not None and await request.is_disconnected():
                     break
-                safe_data = sanitise_event(payload['type'], payload['data'])
-                yield _format_sse(payload['type'], safe_data)
-    except BaseException as exc:
-        logger.error("AI chat error: {}", exc, exc_info=True)
-        yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': 'An unexpected error occurred'})}\n\n"
-    finally:
-        chat_task.cancel()
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=SSE_PING_INTERVAL)
+                except asyncio.TimeoutError:
+                    if request is not None and await request.is_disconnected():
+                        break
+                    yield "event: ping\ndata: {}\n\n"
+                    continue
+
+                if kind == "done":
+                    break
+                if kind == "error":
+                    raise payload
+                if kind == "event":
+                    if request is not None and await request.is_disconnected():
+                        break
+                    safe_data = sanitise_event(payload['type'], payload['data'])
+                    yield _format_sse(payload['type'], safe_data)
+        except BaseException as exc:
+            logger.error("AI chat error: {}", exc, exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'message': 'Internal error', 'detail': 'An unexpected error occurred'})}\n\n"
+        finally:
+            chat_task.cancel()
 
 
 @router.post("/projects/{project_id}/chat")

@@ -54,14 +54,6 @@ class ListChaptersTool(BaseTool):
             chapter_ids = [ch.id for ch in chapters]
             scene_counts: dict[uuid.UUID, int] = {ch.id: 0 for ch in chapters}
             if chapter_ids:
-                sc_result = await db.execute(
-                    select(Scene.chapter_id, Scene.id)
-                    .where(Scene.chapter_id.in_(chapter_ids))
-                )
-                for sc_id, in sc_result:
-                    # Count scenes per chapter
-                    pass
-                # Better: use count query
                 from sqlalchemy import func
                 count_result = await db.execute(
                     select(Scene.chapter_id, func.count(Scene.id))
@@ -90,6 +82,7 @@ class ListChaptersTool(BaseTool):
                 "total": len(result_data),
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -142,6 +135,7 @@ class ListScenesTool(BaseTool):
                 "total": len(result_data),
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -190,6 +184,7 @@ class ListRelationsTool(BaseTool):
                 "total": len(result_data),
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -244,6 +239,7 @@ class ListEdgesTool(BaseTool):
                 "total": len(result_data),
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -364,4 +360,5 @@ class SearchNodesTool(BaseTool):
                 "node_type": node_type,
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))

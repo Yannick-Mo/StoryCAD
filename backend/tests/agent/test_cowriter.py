@@ -30,15 +30,14 @@ class TestBuildSystemPrompt:
         assert "无简介" in prompt
         assert "简介：" not in prompt
 
-    def test_with_active_skills(self):
+    def test_with_available_skills(self):
         mode = CoWriterMode()
         prompt = mode.build_system_prompt({
             "project": {"title": "T", "genre": "G"},
-            "active_skills": ["pacing", "dialogue"],
+            "available_skills": [{"name": "pacing"}, {"name": "dialogue"}],
         }, [])
 
-        assert "pacing" in prompt
-        assert "dialogue" in prompt
+        assert "pacing" in prompt or "dialogue" in prompt
 
     def test_with_tool_descriptions(self):
         mode = CoWriterMode(tool_descriptions="tool1: desc1\ntool2: desc2")

@@ -272,126 +272,130 @@ async def _write_project_to_db(db: AsyncSession, state: dict, owner_id: uuid.UUI
     await db.refresh(project)
     project_id = project.id
 
-    act_id_map: dict[int, str] = {}
-    for act_idx, act in enumerate(state.get("acts", [])):
-        result = await repo.create_entity(
-            ENTITY_MAP["acts"],
-            {
-                "project_id": str(project_id),
-                "name": act.get("name", ""),
-                "sort_order": act.get("order", act_idx + 1),
-                "color": act.get("color", "#8b5cf6"),
-            },
-        )
-        act_id_map[act_idx] = result["id"]
-
-    chapter_sort = 0
-    chap_id_map: dict[tuple[int, int], str] = {}
-    for act_idx, act in enumerate(state.get("acts", [])):
-        for ch_idx, ch in enumerate(act.get("chapters", [])):
-            chapter_sort += 1
-            act_id = act_id_map.get(act_idx, "")
-            chapter_result = await repo.create_entity(
-                ENTITY_MAP["chapters"],
+    try:
+        act_id_map: dict[int, str] = {}
+        for act_idx, act in enumerate(state.get("acts", [])):
+            result = await repo.create_entity(
+                ENTITY_MAP["acts"],
                 {
                     "project_id": str(project_id),
-                    "act_id": str(act_id),
-                    "title": ch.get("title", ""),
-                    "goal": ch.get("goal", ""),
-                    "sort_order": chapter_sort,
-                    "status": "draft",
+                    "name": act.get("name", ""),
+                    "sort_order": act.get("order", act_idx + 1),
+                    "color": act.get("color", "#8b5cf6"),
                 },
             )
-            chap_id_map[(act_idx, ch_idx)] = chapter_result["id"]
+            act_id_map[act_idx] = result["id"]
 
-    scene_sort_total = 0
-    per_chapter_count: dict[tuple[int, int], int] = {}
-    for sc in sorted(state.get("scenes", []), key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0))):
-        cid = chap_id_map.get((sc["act_idx"], sc["chapter_idx"]))
-        if not cid:
-            continue
-        key = (sc["act_idx"], sc["chapter_idx"])
-        per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
-        if per_chapter_count[key] > 5:
-            continue
-        scene_sort_total += 1
-        await repo.create_entity(
-                ENTITY_MAP["scenes"],
-                {
-                    "project_id": str(project_id),
-                    "chapter_id": str(cid),
-                    "title": sc["title"],
-                    "pov_character": sc.get("pov_character", ""),
-                    "setting": sc.get("setting", ""),
-                    "scene_time": sc.get("scene_time", ""),
-                    "summary": sc.get("summary", ""),
-                    "sort_order": scene_sort_total,
-                },
-            )
+        chapter_sort = 0
+        chap_id_map: dict[tuple[int, int], str] = {}
+        for act_idx, act in enumerate(state.get("acts", [])):
+            for ch_idx, ch in enumerate(act.get("chapters", [])):
+                chapter_sort += 1
+                act_id = act_id_map.get(act_idx, "")
+                chapter_result = await repo.create_entity(
+                    ENTITY_MAP["chapters"],
+                    {
+                        "project_id": str(project_id),
+                        "act_id": str(act_id),
+                        "title": ch.get("title", ""),
+                        "goal": ch.get("goal", ""),
+                        "sort_order": chapter_sort,
+                        "status": "draft",
+                    },
+                )
+                chap_id_map[(act_idx, ch_idx)] = chapter_result["id"]
 
-    char_name_to_id: dict[str, str] = {}
-    for char in state.get("characters", []):
-        result = await repo.create_entity(
-            ENTITY_MAP["characters"],
-            {
-                "project_id": str(project_id),
-                "name": char["name"],
-                "role": char.get("role", "supporting"),
-                "personality": char.get("personality", ""),
-                "appearance": char.get("appearance", ""),
-                "background": char.get("background", ""),
-                "motivation": char.get("motivation", ""),
-                "sort_order": len(char_name_to_id),
-            },
-        )
-        char_name_to_id[char["name"]] = result["id"]
-
-    for rel in state.get("relations", []):
-        src_id = char_name_to_id.get(rel.get("char_name", ""))
-        tgt_id = char_name_to_id.get(rel.get("target_name", ""))
-        if src_id and tgt_id:
+        scene_sort_total = 0
+        per_chapter_count: dict[tuple[int, int], int] = {}
+        for sc in sorted(state.get("scenes", []), key=lambda s: (s.get("act_idx", 0), s.get("chapter_idx", 0))):
+            cid = chap_id_map.get((sc["act_idx"], sc["chapter_idx"]))
+            if not cid:
+                continue
+            key = (sc["act_idx"], sc["chapter_idx"])
+            per_chapter_count[key] = per_chapter_count.get(key, 0) + 1
+            if per_chapter_count[key] > 5:
+                continue
+            scene_sort_total += 1
             await repo.create_entity(
-                ENTITY_MAP["character_relations"],
+                    ENTITY_MAP["scenes"],
+                    {
+                        "project_id": str(project_id),
+                        "chapter_id": str(cid),
+                        "title": sc["title"],
+                        "pov_character": sc.get("pov_character", ""),
+                        "setting": sc.get("setting", ""),
+                        "scene_time": sc.get("scene_time", ""),
+                        "summary": sc.get("summary", ""),
+                        "sort_order": scene_sort_total,
+                    },
+                )
+
+        char_name_to_id: dict[str, str] = {}
+        for char in state.get("characters", []):
+            result = await repo.create_entity(
+                ENTITY_MAP["characters"],
                 {
                     "project_id": str(project_id),
-                    "character_id": str(src_id),
-                    "target_id": str(tgt_id),
-                    "rel_type": rel.get("rel_type", "关联"),
-                    "label": rel.get("label", ""),
-                    "description": rel.get("description", ""),
+                    "name": char["name"],
+                    "role": char.get("role", "supporting"),
+                    "personality": char.get("personality", ""),
+                    "appearance": char.get("appearance", ""),
+                    "background": char.get("background", ""),
+                    "motivation": char.get("motivation", ""),
+                    "sort_order": len(char_name_to_id),
                 },
             )
+            char_name_to_id[char["name"]] = result["id"]
 
-    for edge in state.get("edges", []):
-        src = chap_id_map.get((edge.get("source_act_idx", 0), edge.get("source_chapter_idx", 0)))
-        tgt = chap_id_map.get((edge.get("target_act_idx", 0), edge.get("target_chapter_idx", 0)))
-        if src and tgt:
-            await repo.create_entity(
-                ENTITY_MAP["edges"],
-                {
-                    "project_id": str(project_id),
-                    "source_id": str(src),
-                    "target_id": str(tgt),
-                    "edge_type": edge.get("type", "timeline"),
-                    "label": edge.get("label", ""),
-                    "source_handle": "s-r",
-                    "target_handle": "t-l",
-                },
-            )
+        for rel in state.get("relations", []):
+            src_id = char_name_to_id.get(rel.get("char_name", ""))
+            tgt_id = char_name_to_id.get(rel.get("target_name", ""))
+            if src_id and tgt_id:
+                await repo.create_entity(
+                    ENTITY_MAP["character_relations"],
+                    {
+                        "project_id": str(project_id),
+                        "character_id": str(src_id),
+                        "target_id": str(tgt_id),
+                        "rel_type": rel.get("rel_type", "关联"),
+                        "label": rel.get("label", ""),
+                        "description": rel.get("description", ""),
+                    },
+                )
 
-    config = ProjectConfig(
-        project_id=project_id,
-        total_words=state.get("estimated_words", 50000),
-        template_type="custom",
-    )
-    db.add(config)
+        for edge in state.get("edges", []):
+            src = chap_id_map.get((edge.get("source_act_idx", 0), edge.get("source_chapter_idx", 0)))
+            tgt = chap_id_map.get((edge.get("target_act_idx", 0), edge.get("target_chapter_idx", 0)))
+            if src and tgt:
+                await repo.create_entity(
+                    ENTITY_MAP["edges"],
+                    {
+                        "project_id": str(project_id),
+                        "source_id": str(src),
+                        "target_id": str(tgt),
+                        "edge_type": edge.get("type", "timeline"),
+                        "label": edge.get("label", ""),
+                        "source_handle": "s-r",
+                        "target_handle": "t-l",
+                    },
+                )
 
-    gs = state.get("global_settings", "")
-    if gs:
-        result = await db.execute(select(Project).where(Project.id == project_id))
-        proj = result.scalar_one_or_none()
-        if proj:
-            proj.global_settings = gs
+        config = ProjectConfig(
+            project_id=project_id,
+            total_words=state.get("estimated_words", 50000),
+            template_type="custom",
+        )
+        db.add(config)
 
-    await db.commit()
+        gs = state.get("global_settings", "")
+        if gs:
+            result = await db.execute(select(Project).where(Project.id == project_id))
+            proj = result.scalar_one_or_none()
+            if proj:
+                proj.global_settings = gs
+
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return project_id

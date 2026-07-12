@@ -105,6 +105,7 @@ class AnalyzeChapterTool(BaseTool):
 
             return ToolResult(success=True, data=parsed)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -186,6 +187,7 @@ class AnalyzeCharacterArcTool(BaseTool):
 
             return ToolResult(success=True, data=parsed)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -285,6 +287,7 @@ class SuggestNextTool(BaseTool):
 
             return ToolResult(success=True, data={**summary, **parsed})
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -355,4 +358,5 @@ class ProjectHealthTool(BaseTool):
                 "total_edges": len(edges),
             })
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))

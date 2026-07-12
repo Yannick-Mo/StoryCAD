@@ -37,6 +37,7 @@ class ListCharactersTool(BaseTool):
             relations = [row_to_dict(r) for r in relations_result.scalars().all()]
             return ToolResult(success=True, data={"characters": characters, "relations": relations})
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 

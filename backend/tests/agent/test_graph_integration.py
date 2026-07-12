@@ -56,6 +56,7 @@ def _make_state(overrides: dict | None = None) -> AgentState:
         "tool_calls": [],
         "tool_results": [],
         "active_skills": [],
+        "available_skills": [],
         "mode": "chat",
         "intermediate_steps": [],
         "retry_count": 0,

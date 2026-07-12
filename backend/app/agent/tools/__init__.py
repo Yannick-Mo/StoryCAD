@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
 from .base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
@@ -44,6 +43,7 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
     )
+    from .skill_tool import InvokeSkillTool
     classes = [
         ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
@@ -62,6 +62,7 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
         CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
+        InvokeSkillTool,
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:
@@ -75,11 +76,10 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
 
 def get_filtered_tools(
     all_tools: dict[str, BaseTool],
-    active_skills: list[str | dict[str, Any]] | None = None,
     mode: str = "chat",
 ) -> dict[str, BaseTool]:
     from app.agent.tool_filter import get_available_tools
-    return get_available_tools(all_tools, active_skills or [], mode=mode)
+    return get_available_tools(all_tools, mode=mode)
 
 
 def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:

@@ -37,21 +37,29 @@ class ProjectRepository:
             return False
         for key, value in kwargs.items():
             setattr(project, key, value)
-        await self.db.commit()
+        try:
+            await self.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return True
 
     async def delete(self, project_id: uuid.UUID) -> bool:
         project = await self.get(project_id)
         if not project:
             return False
-        await self.db.execute(
-            ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project_id)
-        )
-        await self.db.execute(
-            ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project_id)
-        )
-        await self.db.delete(project)
-        await self.db.commit()
+        try:
+            await self.db.execute(
+                ProjectConfig.__table__.delete().where(ProjectConfig.project_id == project_id)
+            )
+            await self.db.execute(
+                ProjectVersion.__table__.delete().where(ProjectVersion.project_id == project_id)
+            )
+            await self.db.delete(project)
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         return True
 
     async def save_version(self, project_id: uuid.UUID, snapshot: dict) -> ProjectVersion:
@@ -64,7 +72,11 @@ class ProjectRepository:
         version = (latest.version + 1) if latest else 1
         pv = ProjectVersion(project_id=project_id, version=version, snapshot=snapshot)
         self.db.add(pv)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         await self.db.refresh(pv)
         return pv
 
@@ -90,6 +102,10 @@ class ProjectRepository:
         else:
             config = ProjectConfig(project_id=project_id, **kwargs)
             self.db.add(config)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception:
+            await self.db.rollback()
+            raise
         await self.db.refresh(config)
         return config

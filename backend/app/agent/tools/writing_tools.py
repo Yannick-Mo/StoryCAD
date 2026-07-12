@@ -86,6 +86,7 @@ class ContinueSceneTool(BaseTool):
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -121,6 +122,7 @@ class RewriteSceneTool(BaseTool):
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=content)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -173,6 +175,7 @@ class ExpandSelectionTool(BaseTool):
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))
 
 
@@ -225,4 +228,5 @@ class CompressSelectionTool(BaseTool):
             writer = WriteSceneContentTool(llm_client=self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
+            await db.rollback()
             return ToolResult(success=False, error=str(e))

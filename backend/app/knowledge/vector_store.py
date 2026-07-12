@@ -21,25 +21,37 @@ class VectorStore:
             project_id = None
         query = query[:500]
         limit = min(limit, 100)
-        sql = text("""
+
+        # Build params dynamically: when genre/project_id is None, omit the
+        # WHERE clause entirely so asyncpg never sees a NULL-bound parameter
+        # in an equality comparison — that causes AmbiguousParameterError
+        # because PostgreSQL can't infer the column type.
+        params: dict = {"query": query, "limit": limit}
+        where_clauses = [
+            "to_tsvector('simple', content) @@ plainto_tsquery('simple', :query)",
+        ]
+        if genre is not None:
+            where_clauses.append("genre = :genre")
+            params["genre"] = genre
+        if project_id is not None:
+            where_clauses.append(
+                "(project_id = :project_id OR project_id IS NULL)"
+            )
+            if isinstance(project_id, uuid.UUID):
+                params["project_id"] = project_id
+            else:
+                params["project_id"] = project_id
+        where_sql = " AND ".join(where_clauses)
+
+        sql = text(f"""
             SELECT id, content, source_type, genre, tags,
                    ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', :query)) as rank
             FROM knowledge_chunks
-            WHERE to_tsvector('simple', content) @@ plainto_tsquery('simple', :query)
-            AND (:genre IS NULL OR genre = :genre)
-            AND (:project_id IS NULL OR project_id = :project_id OR project_id IS NULL)
+            WHERE {where_sql}
             ORDER BY rank DESC
             LIMIT :limit
         """)
-        result = await self.db.execute(
-            sql,
-            {
-                "query": query,
-                "genre": genre,
-                "project_id": project_id,
-                "limit": limit,
-            },
-        )
+        result = await self.db.execute(sql, params)
         rows = result.fetchall()
         return [
             {
@@ -65,26 +77,35 @@ class VectorStore:
         if not project_id:
             project_id = None
         limit = min(limit, 100)
-        sql = text("""
+
+        params: dict = {
+            "query_emb": query_embedding,
+            "query_emb2": query_embedding,
+            "limit": limit,
+        }
+        where_clauses = ["embedding IS NOT NULL"]
+        if genre is not None:
+            where_clauses.append("genre = :genre")
+            params["genre"] = genre
+        if project_id is not None:
+            where_clauses.append(
+                "(project_id = :project_id OR project_id IS NULL)"
+            )
+            if isinstance(project_id, uuid.UUID):
+                params["project_id"] = project_id
+            else:
+                params["project_id"] = project_id
+        where_sql = " AND ".join(where_clauses)
+
+        sql = text(f"""
             SELECT id, content, source_type, genre, tags,
                     1 - (embedding <=> :query_emb) as similarity
             FROM knowledge_chunks
-            WHERE embedding IS NOT NULL
-            AND (:genre IS NULL OR genre = :genre)
-            AND (:project_id IS NULL OR project_id = :project_id OR project_id IS NULL)
+            WHERE {where_sql}
             ORDER BY embedding <=> :query_emb2
             LIMIT :limit
         """)
-        result = await self.db.execute(
-            sql,
-            {
-                "query_emb": query_embedding,
-                "query_emb2": query_embedding,
-                "genre": genre,
-                "project_id": project_id,
-                "limit": limit,
-            },
-        )
+        result = await self.db.execute(sql, params)
         rows = result.fetchall()
         return [
             {
