@@ -20,7 +20,10 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
     )
-    from .character_tools import ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool
+    from .character_tools import (
+        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool,
+        DeleteCharacterTool, DeleteRelationTool,
+    )
     from .agent_tools import GoalAgentTool, OutlineAgentTool
     from .analysis_tools import ConsistencyCheckTool, RhythmAnalyzeTool
     from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
@@ -33,10 +36,15 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
     )
+    from .theme_tools import (
+        CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
+        LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
+    )
     classes = [
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool,
+        DeleteCharacterTool, DeleteRelationTool,
         GoalAgentTool, OutlineAgentTool,
         ConsistencyCheckTool, RhythmAnalyzeTool,
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
@@ -47,6 +55,8 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,
         CreateEdgeTool, UpdateEdgeTool, DeleteEdgeTool,
+        CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
+        LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:

@@ -119,15 +119,17 @@ def _event_done(final_state: dict) -> dict:
 # ── Confirm/reject detection ────────────────────────────────────────────
 
 # Keywords that signal the user wants to confirm a pending plan.
+# These must be EXACT matches on the entire message or the message must
+# be very short (=3 chars for Chinese single-word confirmations).
 _CONFIRM_KEYWORDS: list[str] = [
-    "确认", "好的", "可以", "行", "执行", "开始", "ok", "yes",
+    "确认", "执行", "开始", "ok", "yes",
     "没问题", "就这样", "同意", "接受", "做吧", "干吧",
-    "按这个来", "照这个来", "用这个", "直接", "就按",
+    "按这个来", "照这个来", "用这个", "就按",
 ]
 _REJECT_KEYWORDS: list[str] = [
-    "拒绝", "取消", "不要", "不行", "算了", "no", "cancel",
-    "换个", "换一个", "重新", "再来", "不对", "不好",
-    "重来", "再想想", "不",
+    "拒绝", "取消", "算了", "no", "cancel",
+    "换个", "换一个", "重新", "再来",
+    "重来", "再想想",
 ]
 
 
@@ -135,21 +137,56 @@ def _detect_plan_decision(user_content: str, pending_plan: dict) -> str:
     """Check if *user_content* confirms or rejects a pending plan.
 
     Returns ``"confirm"``, ``"reject"``, or ``""`` (no decision detected).
+
+    To avoid false positives on common conversational words (like "可以",
+    "好的", "不", "不行"), this uses stricter matching:
+    - Short messages (up to 10 chars after stripping): direct keyword match
+    - Longer messages: the keyword must appear as a standalone phrase
+      (preceded/followed by punctuation or whitespace boundary)
     """
     if not pending_plan or not pending_plan.get("steps"):
         return ""
 
-    content_lower = user_content.strip().lower()
+    content = user_content.strip()
+    content_lower = content.lower()
+    is_short = len(content) <= 10
 
-    # Check confirm keywords first (more specific matches)
-    for kw in _CONFIRM_KEYWORDS:
-        if kw in content_lower:
-            return "confirm"
+    # ── Confirm detection ──────────────────────────────────────────
+    # For short messages, also check the broad-but-dangerous keywords
+    # "好的", "可以", "行" — these are safe only when the ENTIRE
+    # message is about confirmation.
+    short_confirm_extra = ["好的", "可以", "行", "直接"]
 
-    # Check reject keywords
-    for kw in _REJECT_KEYWORDS:
-        if kw in content_lower:
-            return "reject"
+    keywords_to_check = list(_CONFIRM_KEYWORDS)
+    if is_short:
+        keywords_to_check.extend(short_confirm_extra)
+
+    for kw in keywords_to_check:
+        if is_short:
+            if kw in content_lower:
+                return "confirm"
+        else:
+            # For longer messages, require word-boundary match
+            if re.search(r'(?:^|[\s，。！？,;；、])' + re.escape(kw) + r'(?:$|[\s，。！？,;；、])', content_lower):
+                return "confirm"
+
+    # ── Reject detection ───────────────────────────────────────────
+    # "不" is too common to be a keyword; removed entirely.
+    # "不行", "不对", "不好" are also removed — too likely in
+    # feedback like "这个角色不好看".
+    short_reject_extra = ["不行", "不对", "不好"]
+
+    keywords_to_check = list(_REJECT_KEYWORDS)
+    if is_short:
+        keywords_to_check.extend(short_reject_extra)
+
+    for kw in keywords_to_check:
+        if is_short:
+            if kw in content_lower:
+                return "reject"
+        else:
+            if re.search(r'(?:^|[\s，。！？,;；、])' + re.escape(kw) + r'(?:$|[\s，。！？,;；、])', content_lower):
+                return "reject"
 
     return ""
 
@@ -172,15 +209,37 @@ def _build_cowriter_persona() -> str:
     return """# --- 协作模式：合著者身份 ---
 你是小说的**合著者**，不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
 
+## 项目数据模型（必须理解）
+StoryCAD 的数据层级如下：
+- **Project（项目）**：顶层容器，包含标题、类型、梗概、global_settings（世界观设定）
+- **Act（幕）**：故事的宏观分章，通常 3-5 幕
+- **Chapter（章节）**：幕内的章节，有标题、状态（draft/revising/final）、goal（写作目标）
+- **Scene（场景）**：章节内的最小创作单元，有 title、summary、pov_character、setting、scene_time
+- **SceneContent（场景正文）**：场景的实际正文内容，存储在 scene_contents 表中（与 Scene 是 1:1 关系）
+- **Character（角色）**：有 name、role（protagonist/supporting/antagonist）、personality、appearance、background、motivation
+- **CharacterRelation（角色关系）**：连接两个角色，有 rel_type、label、description、trust/threat/attraction（0-100 三维评分）
+- **ChapterEdge（章节连线）**：连接**章节**（不是场景），类型有 timeline/cause_effect/flashback/parallel
+- **Theme（主题）**：有 name、proposition（命题）、note；可通过 ThemeChapter 关联到章节
+- **ChapterRhythm（章节节奏）**：每章的 action/suspense/emotion/humor/intensity 五维评分（0-10）
+
+### 依赖规则
+- 建 Chapter 需要 act_id → 必须先有 Act
+- 建 Scene 需要 chapter_id → 必须先有 Chapter
+- 写入正文需要 scene_id → 必须先有 Scene
+- 建 ChapterEdge 需要 source_id + target_id → 必须已有两个 Chapter
+- 建 CharacterRelation 需要 character_id + target_id → 必须已有两个 Character
+
 ## 核心行为原则
-1. **先分析，再行动** — 在回复之前，从角色动机、故事逻辑、情感弧线三个维度分析当前情况
+1. **先读后写，绝不跳过** — 在执行任何写入操作之前，必须先调用 read_full_project 或相关读取工具获取当前项目状态。你已有预加载的上下文，但写入前务必确认最新状态
 2. **提供选项，而非答案** — 当存在多个可行方向时，在回复中使用 markdown 列表展示 2-3 个选项及其利弊分析
 3. **选项只是参考** — 用户可能接受某个选项、组合多个方案、或完全提出自己的方向。选项是讨论起点，不是限制
 4. **主动提问** — 当用户需求模糊时，反问澄清。不要猜测用户意图
 5. **引用已有设定** — 始终引用角色背景、前文事件、世界观设定来支撑你的分析
+6. **创建前检查重复** — 创建角色等实体时，先检查是否已存在同名实体。如果工具返回"已存在"错误，告知用户并建议修改名称或更新已有条目
+7. **必要时回退** — 如果操作失败，告诉用户具体原因，不要假装成功
 
 ## 会话阶段
-- **explore（探索）** — 理解用户需求、分析现状、提供思路方向。此阶段禁止写入。
+- **explore（探索）** — 理解用户需求、分析现状、提供思路方向。此阶段只能读取和分析，禁止写入
 - **plan（计划）** — 用户选定方向后，规划具体执行步骤
 - **execute（执行）** — 正在执行写入/修改操作
 - **review（评审）** — 内容已写入，等待用户反馈
@@ -279,7 +338,9 @@ async def autonomous_loop(
                                   transition="context_loaded")
         except Exception as e:
             logger.warning("Context load skipped/partial: %s", e)
-            state = state.replace(_context_loaded=True, transition="context_load_failed")
+            # DO NOT set _context_loaded=True on failure — allow retry
+            # on the next turn if the error was transient (DB reconnect, etc.)
+            state = state.replace(transition="context_load_failed")
 
     # ── Build static system prompt (once, outside loop) ─────────────
     base_sections = ["identity", "output_style", "tool_usage",
@@ -396,10 +457,98 @@ async def autonomous_loop(
         system_content = base_system
         if cowriter_persona:
             system_content += "\n\n" + cowriter_persona
+
+        # --- Project context ---
+        proj_title = proj.get("title", "未命名")
+        proj_genre = proj.get("genre", "")
+        proj_id = state.project_id or proj.get("id", "unknown")
+        proj_logline = proj.get("logline", "")
+        proj_global_settings = proj.get("global_settings", "")
+
         system_content += f"\n\n# --- 当前项目 ---\n项目: {proj_title}"
         if proj_genre:
             system_content += f"\n类型: {proj_genre}"
+        if proj_logline:
+            system_content += f"\n一句话梗概: {proj_logline}"
+        if proj_global_settings:
+            settings_preview = proj_global_settings[:500]
+            system_content += f"\n全局设定: {settings_preview}"
         system_content += f"\nProject ID: {proj_id}"
+
+        # --- Structure summary ---
+        acts_data = state.project_context.get("acts", [])
+        if acts_data:
+            structure_lines = ["\n项目结构："]
+            for act in acts_data:
+                ch_count = len(act.get("chapters", []))
+                sc_count = sum(len(ch.get("scenes", [])) for ch in act.get("chapters", []))
+                structure_lines.append(
+                    f"- {act.get('name', '')} ({ch_count}章, {sc_count}场)"
+                )
+            system_content += "\n".join(structure_lines)
+
+        # --- Characters ---
+        characters_data = state.project_context.get("characters", [])
+        if characters_data:
+            char_lines = ["\n角色列表："]
+            for c in characters_data[:20]:
+                c_name = c.get("name", "?")
+                c_role = c.get("role", "")
+                c_id = c.get("id", "")
+                c_personality = c.get("personality", "")
+                line = f"- {c_name} [{c_id}]"
+                if c_role:
+                    line += f" ({c_role})"
+                if c_personality:
+                    line += f": {c_personality[:120]}"
+                char_lines.append(line)
+            if len(characters_data) > 20:
+                char_lines.append(f"  ... 以及另外 {len(characters_data) - 20} 个角色")
+            system_content += "\n".join(char_lines)
+
+        # --- Relations ---
+        relations_data = state.project_context.get("relations", [])
+        if relations_data:
+            # Build name lookup
+            char_name_by_id = {}
+            for c in characters_data:
+                cid = c.get("id")
+                if cid:
+                    char_name_by_id[cid] = c.get("name", "?")
+            rel_lines = ["\n角色关系："]
+            for r in relations_data[:15]:
+                src_id = r.get("character_id", "")
+                tgt_id = r.get("target_id", "")
+                src_name = char_name_by_id.get(src_id, "?")
+                tgt_name = char_name_by_id.get(tgt_id, "?")
+                rel_label = r.get("label") or r.get("rel_type") or "关联"
+                rel_lines.append(f"- {src_name} → {rel_label} → {tgt_name}")
+            if len(relations_data) > 15:
+                rel_lines.append(f"  ... 以及另外 {len(relations_data) - 15} 条关系")
+            system_content += "\n".join(rel_lines)
+
+        # --- Chapter edges ---
+        edges_data = state.project_context.get("edges", [])
+        if edges_data:
+            edge_lines = ["\n章节连线："]
+            for e in edges_data[:10]:
+                e_type = e.get("edge_type", "")
+                e_label = e.get("label", "")
+                edge_lines.append(f"- [{e_type}] {e_label}")
+            system_content += "\n".join(edge_lines)
+
+        # --- Themes ---
+        themes_data = state.project_context.get("themes", [])
+        if themes_data:
+            theme_lines = ["\n主题："]
+            for t in themes_data[:10]:
+                t_name = t.get("name", "")
+                t_prop = t.get("proposition", "")
+                if t_prop:
+                    theme_lines.append(f"- {t_name}: {t_prop[:150]}")
+                else:
+                    theme_lines.append(f"- {t_name}")
+            system_content += "\n".join(theme_lines)
 
         # Inject dynamic sections from AttachmentInjector
         for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
@@ -409,6 +558,11 @@ async def autonomous_loop(
 
         # Tool list
         system_content += f"\n\n# --- 可用工具 ---\n{filtered_tool_desc}"
+
+        # APP_GUIDE — inject the data model reference and workflow guide
+        # so the AI understands entity dependencies during tool-calling.
+        from app.agent.knowledge import APP_GUIDE
+        system_content += f"\n\n# --- 应用参考 ---\n{APP_GUIDE}"
 
         # Mode declaration (highest priority — prepend)
         if state.mode == "chat":
@@ -644,9 +798,14 @@ async def autonomous_loop(
             sys_content = await build_system_prompt(gen_state)
         except Exception as e:
             logger.warning("build_system_prompt failed: %s", e)
+            # Build a reasonable fallback in Chinese
+            proj_name = gen_state.get("project_context", {}).get("project", {}).get("title", "")
+            mode_name = "协作模式" if gen_state.get("mode") == "cowriter" else "对话模式"
             sys_content = (
-                "You are StoryCAD AI, a creative writing assistant. "
-                "Respond helpfully in Chinese."
+                f"你是 StoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
+                f"当前项目：{proj_name or '未命名'}\n"
+                f"当前模式：{mode_name}\n"
+                f"请根据对话历史，用中文回复用户。"
             )
 
         # Strip orphaned tool messages that lack a preceding assistant

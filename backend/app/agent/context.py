@@ -415,6 +415,17 @@ class ContextBuilder:
         active_skills = await self.skill_engine.get_active_skills(project_id)
         rag_context = await self._get_rag_context_if_meaningful(query_hint, proj.genre or "")
 
+        # Relations and edges — now included at all depths
+        rels_result = await self.db.execute(
+            select(CharacterRelation).where(CharacterRelation.project_id == project_id)
+        )
+        relations_data = [row_to_dict(r) for r in rels_result.scalars().all()]
+
+        edges_result = await self.db.execute(
+            select(ChapterEdge).where(ChapterEdge.project_id == project_id)
+        )
+        edges_data = [row_to_dict(e) for e in edges_result.scalars().all()]
+
         scene_count = sum(len(scenes_by_chapter.get(cid, [])) for cid in chapter_ids)
 
         result = {
@@ -424,10 +435,13 @@ class ContextBuilder:
                 "genre": proj.genre or "",
                 "logline": proj.logline or "",
                 "status": proj.status or "",
+                "global_settings": (proj.global_settings or "")[:2000],
             },
             "acts": acts_data,
             "characters": characters_data,
             "themes": themes_data,
+            "relations": relations_data,
+            "edges": edges_data,
             "active_skills": [s["name"] for s in active_skills],
             "rag_context": rag_context or "",
             "chapter_count": len(all_chapters),

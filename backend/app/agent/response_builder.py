@@ -348,13 +348,34 @@ async def build_system_prompt(state: dict) -> str:
 
     relations = project_ctx.get("relations", [])
     if relations:
+        # Build a character ID → name lookup from the character data
+        characters = project_ctx.get("characters", [])
+        char_name_by_id: dict[str, str] = {}
+        for c in characters:
+            cid = c.get("id")
+            if cid:
+                char_name_by_id[cid] = c.get("name", "?")
         rel_lines = ["角色关系："]
         for r in relations[:10]:
-            char_a = r.get("from", "?")
-            char_b = r.get("to", "?")
-            rel_type = r.get("type", "")
+            char_a_id = r.get("character_id", "")
+            char_b_id = r.get("target_id", "")
+            char_a = char_name_by_id.get(char_a_id, "?")
+            char_b = char_name_by_id.get(char_b_id, "?")
+            rel_type = r.get("rel_type", "")
+            label = r.get("label", "")
+            display_type = label or rel_type or "关联"
             trust = r.get("trust", 0)
-            rel_lines.append(f"- {char_a} → {char_b}：{rel_type}（信任度：{trust}）")
+            threat = r.get("threat", 0)
+            attraction = r.get("attraction", 0)
+            extra = []
+            if trust and trust != 50:
+                extra.append(f"信任{trust}")
+            if threat and threat != 50:
+                extra.append(f"威胁{threat}")
+            if attraction and attraction != 50:
+                extra.append(f"吸引{attraction}")
+            extra_str = f"（{'; '.join(extra)}）" if extra else ""
+            rel_lines.append(f"- {char_a} → {char_b}：{display_type}{extra_str}")
         sections.append(_ContextSection(tier=2, label="relations", text="\n".join(rel_lines)))
 
     sections.append(_ContextSection(tier=2, label="app_guide", text=APP_GUIDE))

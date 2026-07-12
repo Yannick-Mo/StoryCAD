@@ -259,7 +259,7 @@ class SuperAgent:
             "active_skills": [],
             "pending_plan": saved_pending_plan,
             "plan_confirmed": saved_plan_confirmed,
-            "_context_loaded": True,
+            "_context_loaded": False,  # Always reload context on resume
             "mode": mode,
         }
         turn = len([m for m in history if m.role == "user"]) + 1

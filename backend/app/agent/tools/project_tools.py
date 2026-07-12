@@ -14,12 +14,12 @@ from app.utils import row_to_dict
 class ReadProjectTool(BaseTool):
     meta = ToolMeta(
         name="read_project",
-        description="加载完整项目上下文，包括标题、体裁、描述和配置",
+        description="加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景。获取完整结构请用 read_full_project",
         concurrency=ConcurrencyMode.SAFE,
         search_hint="read project context config",
     )
     name = "read_project"
-    description = "加载完整项目上下文，包括标题、体裁、描述和配置"
+    description = "加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景结构。获取完整结构请用 read_full_project"
     parameters = {
         "type": "object",
         "properties": {
@@ -46,7 +46,7 @@ class ReadProjectTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
-class CreateSceneTool(BaseTool):
+class ReadChapterTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter",
         description="获取章节及其场景列表",
@@ -118,7 +118,7 @@ class ReadSceneTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
-class ReadChapterTool(BaseTool):
+class CreateSceneTool(BaseTool):
     meta = ToolMeta(
         name="create_scene",
         description="在指定章节中创建新场景",

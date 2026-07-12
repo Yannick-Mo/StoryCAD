@@ -6,6 +6,8 @@ from app.agent.tools.base import BaseTool
 SKILL_TO_TOOLS: dict[str, set[str]] = {
     "character_dev": {
         "list_characters", "create_character", "update_character", "update_relation",
+        "delete_character", "delete_relation",
+        "read_full_project",
         "analyze_character_arc",
     },
     "plot_outline": {
@@ -17,6 +19,9 @@ SKILL_TO_TOOLS: dict[str, set[str]] = {
         "delete_scene", "delete_chapter", "delete_act",
         "create_project_from_material",
         "create_edge", "update_edge", "delete_edge",
+        "create_theme", "update_theme", "delete_theme",
+        "link_theme_chapter", "unlink_theme_chapter",
+        "set_chapter_rhythm",
     },
     "writing_assist": {
         "write_scene_content", "continue_scene", "rewrite_scene",
@@ -59,6 +64,9 @@ COWRITER_BASE_TOOLS: set[str] = {
     "update_scene",
     "update_character",
     "write_scene_content",
+    "list_characters",
+    "update_relation",
+    "create_edge",
 }
 
 # Maps actual skill display names (from skill YAML name field)

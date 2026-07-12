@@ -30,7 +30,7 @@ Project 项目
 ├── Characters 角色
 │   └── Relations 关系（角色之间的关系网络）
 │
-└── Edges 连线（场景间的剧情流向，表示情节因果关系）
+└── Edges 连线（章节间的剧情流向，表示情节因果关系）
 ```
 
 ### 依赖规则（必须遵守）
@@ -39,7 +39,7 @@ Project 项目
 | create_chapter | 需要 act_id | 必须先有 Act 才能在其中建 Chapter |
 | create_scene | 需要 chapter_id | 必须先有 Chapter 才能在其中建 Scene |
 | write_scene_content | 需要 scene_id | 必须先有 Scene 才能写入正文 |
-| create_edge | 需要 from_scene_id + to_scene_id | 必须关联两个已存在的场景 |
+| create_edge | 需要 project_id + source_id + target_id | 必须关联两个已存在的章节 |
 
 ## 3. 工作模式
 
@@ -79,7 +79,7 @@ description、genre、logline。**这是所有创作的前提。**
 `write_scene_content` — 向已有 Scene 写入正文（需要 scene_id）。
 
 ### 第 5 步：连接剧情
-`create_edge` — 创建场景间的连线，表示情节因果关系。
+`create_edge` — 创建章节间的连线，表示情节因果关系。
 
 ## 5. 工具业务参考（创作场景中的用途）
 
@@ -92,7 +92,7 @@ description、genre、logline。**这是所有创作的前提。**
 | write_scene_content | 写入场景正文 | 实际写小说内容 | project_id, scene_id |
 | create_character | 创建角色 | 添加新人物 | project_id |
 | update_character | 修改角色 | 调整人设 | character_id |
-| create_edge | 连接场景 | 表示剧情流向 | project_id, from_scene_id, to_scene_id |
+| create_edge | 连接章节 | 表示剧情流向 | project_id, source_id, target_id |
 | read_project / read_chapter / read_scene | 读取数据 | 不确定状态时「先读后写」 | 对应 ID |
 
 ## 6. 核心原则

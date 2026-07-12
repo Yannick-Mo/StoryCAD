@@ -98,6 +98,92 @@ class CreateCharacterTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
+class DeleteCharacterTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_character",
+        description="删除指定角色（同时删除该角色的所有关系连线）",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="delete character remove",
+    )
+    name = "delete_character"
+    description = "删除指定角色（同时删除该角色的所有关系连线）"
+    is_write_operation = True
+    is_destructive = True
+    parameters = {
+        "type": "object",
+        "properties": {
+            "character_id": {"type": "string", "description": "角色ID"},
+            "project_id": {"type": "string", "description": "项目ID（用于权限验证）"},
+        },
+        "required": ["character_id", "project_id"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            char_id = uuid.UUID(kwargs["character_id"])
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            char = await db.get(Character, char_id)
+            if not char:
+                return ToolResult(success=False, error="Character not found")
+            if char.project_id != pid:
+                return ToolResult(success=False, error="Character does not belong to this project")
+            name = char.name
+            # Delete all relations involving this character
+            rels = (await db.execute(
+                select(CharacterRelation).where(
+                    (CharacterRelation.character_id == char_id)
+                    | (CharacterRelation.target_id == char_id)
+                )
+            )).scalars().all()
+            for rel in rels:
+                await db.delete(rel)
+            await db.delete(char)
+            await db.commit()
+            return ToolResult(success=True, data={"deleted": name, "character_id": str(char_id)})
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
+class DeleteRelationTool(BaseTool):
+    meta = ToolMeta(
+        name="delete_relation",
+        description="删除角色关系连线",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
+        search_hint="delete relation character relationship remove",
+    )
+    name = "delete_relation"
+    description = "删除角色关系连线"
+    is_write_operation = True
+    is_destructive = True
+    parameters = {
+        "type": "object",
+        "properties": {
+            "relation_id": {"type": "string", "description": "关系ID"},
+            "project_id": {"type": "string", "description": "项目ID（用于权限验证）"},
+        },
+        "required": ["relation_id", "project_id"],
+    }
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            rel_id = uuid.UUID(kwargs["relation_id"])
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            rel = await db.get(CharacterRelation, rel_id)
+            if not rel:
+                return ToolResult(success=False, error="Relation not found")
+            if rel.project_id != pid:
+                return ToolResult(success=False, error="Relation does not belong to this project")
+            await db.delete(rel)
+            await db.commit()
+            return ToolResult(success=True, data={"deleted": rel.label or rel.rel_type, "relation_id": str(rel_id)})
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
 class UpdateCharacterTool(BaseTool):
     meta = ToolMeta(
         name="update_character",
