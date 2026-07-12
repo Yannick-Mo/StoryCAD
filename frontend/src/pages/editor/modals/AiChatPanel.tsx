@@ -294,10 +294,10 @@ function OptionCard({ option, idx, onSelect }: { option: OptionItem; idx: number
   return (
     <div
       onClick={() => onSelect(option)}
-      className="border border-gray-700 rounded-lg p-3 cursor-pointer hover:border-amber-600 hover:bg-gray-800/50 transition-colors"
+      className="border border-gray-700 rounded-lg p-3 cursor-pointer hover:border-amber-600 hover:bg-gray-800/50 transition-colors group"
     >
       <div className="flex items-start gap-2">
-        <span className="text-amber-500 font-mono text-xs mt-0.5">
+        <span className="text-amber-500 font-mono text-xs mt-0.5 shrink-0">
           {['①', '②', '③', '④'][idx] || `#${idx + 1}`}
         </span>
         <div className="flex-1 min-w-0">
@@ -310,7 +310,80 @@ function OptionCard({ option, idx, onSelect }: { option: OptionItem; idx: number
             <p className="text-xs text-red-500/70">✗ {option.cons.join(' · ')}</p>
           )}
         </div>
+        <span className="text-gray-600 group-hover:text-amber-500 text-xs shrink-0 transition-colors">选择 →</span>
       </div>
+    </div>
+  )
+}
+
+function OptionsPanel({ options, onSelect, onCustomFeedback, loading }: {
+  options: OptionItem[]
+  onSelect: (opt: OptionItem) => void
+  onCustomFeedback: (text: string) => void
+  loading: boolean
+}) {
+  const [customInput, setCustomInput] = useState('')
+  const [showCustom, setShowCustom] = useState(false)
+
+  const handleSendCustom = () => {
+    const text = customInput.trim()
+    if (!text) return
+    setCustomInput('')
+    onCustomFeedback(text)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendCustom()
+    }
+  }
+
+  if (showCustom) {
+    return (
+      <div className="space-y-2 border border-amber-700/40 rounded-lg p-3 bg-gray-800/30">
+        <p className="text-xs text-amber-400 font-medium">✏️ 说说你的想法：</p>
+        <textarea
+          value={customInput}
+          onChange={(e) => setCustomInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="你的想法可能比选项更好——说说你的方向、需求、或调和的方案..."
+          disabled={loading}
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 resize-none focus:outline-none focus:border-amber-500 disabled:opacity-50 min-h-[60px]"
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={() => setShowCustom(false)}
+            className="px-3 py-1.5 rounded-lg bg-gray-700 text-gray-300 text-xs hover:bg-gray-600 transition-colors"
+          >
+            返回选项
+          </button>
+          <button
+            onClick={handleSendCustom}
+            disabled={!customInput.trim() || loading}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 text-black text-xs font-medium hover:bg-amber-500 transition-colors disabled:opacity-30"
+          >
+            发送
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-500">选择方向，或提出你的想法：</p>
+        <button
+          onClick={() => setShowCustom(true)}
+          className="text-xs text-amber-500 hover:text-amber-400 transition-colors underline underline-offset-2"
+        >
+          💬 我另有想法
+        </button>
+      </div>
+      {options.map((opt, idx) => (
+        <OptionCard key={opt.id} option={opt} idx={idx} onSelect={onSelect} />
+      ))}
     </div>
   )
 }
@@ -413,6 +486,10 @@ export default function AiChatPanel({
     chat.send(`[option:${option.id}] ${option.label}`, onProjectUpdated)
   }, [chat, onProjectUpdated])
 
+  const handleCustomFeedback = useCallback((feedback: string) => {
+    chat.send(feedback, onProjectUpdated)
+  }, [chat, onProjectUpdated])
+
   const handlePlanConfirm = useCallback(() => {
     chat.setPendingPlan(null)
     setInput('')
@@ -491,12 +568,12 @@ export default function AiChatPanel({
 
         {/* Options cards (cowriter mode) */}
         {chat.currentOptions.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">选择方向：</p>
-            {chat.currentOptions.map((opt, idx) => (
-              <OptionCard key={opt.id} option={opt} idx={idx} onSelect={handleOptionSelect} />
-            ))}
-          </div>
+          <OptionsPanel
+            options={chat.currentOptions}
+            onSelect={handleOptionSelect}
+            onCustomFeedback={handleCustomFeedback}
+            loading={chat.loading}
+          />
         )}
 
         {/* Plan confirm/reject buttons */}
