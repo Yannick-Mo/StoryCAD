@@ -10,7 +10,7 @@ export interface Conversation {
 }
 
 export interface ChatEvent {
-  type: 'conv_id' | 'step' | 'token' | 'done' | 'tool_done' | 'option' | 'plan' | 'project_updated'
+  type: 'conv_id' | 'step' | 'token' | 'done' | 'tool_done' | 'plan' | 'project_updated'
   data: string
 }
 
@@ -34,7 +34,6 @@ export interface SendMessageOptions {
   conversationId: string | null
   onToken: (token: string) => void
   onToolDone?: (data: string) => void
-  onOption?: (options: any[]) => void
   onPlan?: (plan: PlanPayload) => void
   onStep?: (step: string) => void
   onConvId?: (id: string) => void
@@ -83,12 +82,6 @@ export function sendMessage(options: SendMessageOptions): AbortController {
     token: (data) => options.onToken(data),
     done: () => options.onDone?.(),
     tool_done: (data) => options.onToolDone?.(data),
-    option: (data) => {
-      try {
-        const parsed = JSON.parse(data)
-        if (Array.isArray(parsed)) options.onOption?.(parsed)
-      } catch { /* ignore malformed option data */ }
-    },
     plan: (data) => {
       try {
         const parsed = JSON.parse(data)

@@ -1,26 +1,17 @@
 """Autonomous agent loop — model-driven, not code-driven.
 
-Replaces the fixed-workflow agent_loop with a Claude Code-inspired design
-where the LLM decides: reply, call tools, present options, ask questions.
+A Claude Code-inspired design where the LLM decides: reply, call tools,
+ask questions.  Code only handles safety (mode gating, confirmation,
+context budget).
 
-Key differences from the old agent_loop:
-  - No classify_intent gate: the model sees tools directly and decides.
-  - Multi-tool turns: model can chain read→analyze→write in one turn.
+Key features:
+  - No intent classification — the model sees tools directly and decides.
+  - Multi-tool turns: model can chain read → analyze → write in one turn.
   - Streaming tool execution: SAFE tools run as they arrive mid-stream.
-  - Interceptor layer: mode gate, confirmation gate, option gate.
+  - Interceptor layer: mode gate + confirmation gate.
   - Token-aware context compression.
-  - Layered error recovery (wired from recovery.py).
-
-Usage::
-
-    async for event in autonomous_loop(initial_state, tools, llm_client, db, td):
-        if "_stream_token" in event:
-            yield token to frontend
-        elif "_tool_done" in event:
-            yield tool result card
-        elif "_loop_done" in event:
-            final_state = event["final_state"]
-            break
+  - Plan confirm/reject detection at loop entry (no LLM re-generation).
+  - Layered error recovery (delegated to recovery.py).
 """
 
 from __future__ import annotations
@@ -54,40 +45,52 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────
 
-MAX_TURNS = 30  # Hard safety cap
-MAX_RECOVERY = 3  # Max recovery attempts per error type
-MAX_RAG_CHARS = 1000  # RAG context truncation
-MODEL_CONTEXT_LIMIT = 100_000  # Conservative estimate for DeepSeek V3
+MAX_TURNS = 30
+MAX_RECOVERY = 3
+MAX_RAG_CHARS = 1000
+MODEL_CONTEXT_LIMIT = 100_000
 
-# ── Tool execution helpers ──────────────────────────────────────────────
-
-
-async def _run_single_tool_wrapper(
-    tool_name: str,
-    args: dict,
-    tools: dict[str, BaseTool],
-    db: AsyncSession,
-) -> dict:
-    """Execute one tool and return a result dict.
-
-    Wraps :func:`_run_single_tool` which returns ``(result_dict, errors_list)``.
-    """
-    from app.agent.nodes.execute_tool import _run_single_tool
-
-    result, errors = await _run_single_tool(tool_name, args, tools, db)
-    return result
+# ── Helpers ────────────────────────────────────────────────────────────
 
 
 def _markdown_to_plain(md: str, max_len: int = 120) -> str:
     """Strip markdown formatting for tool result summaries."""
-    # Remove headers, bold, italic, code
     md = re.sub(r"#{1,6}\s+", "", md)
     md = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", md)
     md = re.sub(r"`{1,3}[^`]+`{1,3}", "", md)
     md = re.sub(r">\s+", "", md)
-    # Collapse whitespace
     md = re.sub(r"\s+", " ", md).strip()
     return md[:max_len] + ("..." if len(md) > max_len else "")
+
+
+def _strip_orphan_tool_messages(messages: list[Message]) -> list[Message]:
+    """Remove ``tool`` messages whose preceding ``assistant`` lacks ``tool_calls``.
+
+    DeepSeek / OpenAI enforce::
+
+        Messages with role 'tool' must be a response to a preceding
+        message with 'tool_calls'.
+
+    When the autonomous loop adds a tool result via a separate turn (plan
+    confirm, or the final "no tools" turn), the assistant message may not
+    carry ``tool_calls``, which makes the subsequent ``tool`` message
+    invalid.  This helper strips those orphaned tool messages so the LLM
+    call succeeds.
+    """
+    cleaned: list[Message] = []
+    for m in messages:
+        if m.role == "tool":
+            # Find the most recent assistant message before this tool
+            prev_assistant = None
+            for prev in reversed(cleaned):
+                if prev.role == "assistant":
+                    prev_assistant = prev
+                    break
+            if prev_assistant is None or not prev_assistant.tool_calls:
+                # Orphaned tool message — drop it
+                continue
+        cleaned.append(m)
+    return cleaned
 
 
 # ── Event constructors ──────────────────────────────────────────────────
@@ -105,10 +108,6 @@ def _event_tool_done(result: dict) -> dict:
     return {"_tool_done": result}
 
 
-def _event_options(options: list) -> dict:
-    return {"current_options": options}
-
-
 def _event_plan(plan: dict) -> dict:
     return {"pending_plan": plan}
 
@@ -117,27 +116,68 @@ def _event_done(final_state: dict) -> dict:
     return {"_loop_done": True, "final_state": final_state}
 
 
-# ── System prompt builders (mode-aware) ─────────────────────────────────
+# ── Confirm/reject detection ────────────────────────────────────────────
+
+# Keywords that signal the user wants to confirm a pending plan.
+_CONFIRM_KEYWORDS: list[str] = [
+    "确认", "好的", "可以", "行", "执行", "开始", "ok", "yes",
+    "没问题", "就这样", "同意", "接受", "做吧", "干吧",
+    "按这个来", "照这个来", "用这个", "直接", "就按",
+]
+_REJECT_KEYWORDS: list[str] = [
+    "拒绝", "取消", "不要", "不行", "算了", "no", "cancel",
+    "换个", "换一个", "重新", "再来", "不对", "不好",
+    "重来", "再想想", "不",
+]
+
+
+def _detect_plan_decision(user_content: str, pending_plan: dict) -> str:
+    """Check if *user_content* confirms or rejects a pending plan.
+
+    Returns ``"confirm"``, ``"reject"``, or ``""`` (no decision detected).
+    """
+    if not pending_plan or not pending_plan.get("steps"):
+        return ""
+
+    content_lower = user_content.strip().lower()
+
+    # Check confirm keywords first (more specific matches)
+    for kw in _CONFIRM_KEYWORDS:
+        if kw in content_lower:
+            return "confirm"
+
+    # Check reject keywords
+    for kw in _REJECT_KEYWORDS:
+        if kw in content_lower:
+            return "reject"
+
+    return ""
+
+
+# ── System prompt builders ─────────────────────────────────────────────
 
 
 def _build_chat_system_prompt(sections: list[str]) -> str:
-    """System prompt sections for chat (read-only) mode."""
+    """System prompt sections from the modular builder (system.yaml)."""
     builder = get_prompt_builder()
     return builder.build(list(sections))
 
 
 def _build_cowriter_persona() -> str:
-    """Return the cowriter persona injected when mode == 'cowriter'."""
+    """Return the cowriter persona injected when mode == 'cowriter'.
+
+    No ``present_options`` tool reference — the LLM writes options as
+    plain markdown text in its response.  Users reply freely.
+    """
     return """# --- 协作模式：合著者身份 ---
 你是小说的**合著者**，不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
 
 ## 核心行为原则
 1. **先分析，再行动** — 在回复之前，从角色动机、故事逻辑、情感弧线三个维度分析当前情况
-2. **提供选项，而非答案** — 当存在多个可行方向时，调用 `present_options` 工具展示 2-3 个结构化选项卡片
-3. **用户不限于选项** — 用户可以选 A、选 B、说"把 A 和 B 结合一下"、或者完全否定并提出自己的方案。选项是沟通起点，不是限制
+2. **提供选项，而非答案** — 当存在多个可行方向时，在回复中使用 markdown 列表展示 2-3 个选项及其利弊分析
+3. **选项只是参考** — 用户可能接受某个选项、组合多个方案、或完全提出自己的方向。选项是讨论起点，不是限制
 4. **主动提问** — 当用户需求模糊时，反问澄清。不要猜测用户意图
 5. **引用已有设定** — 始终引用角色背景、前文事件、世界观设定来支撑你的分析
-6. **可执行** — 选项中应明确用户选择后将执行什么工具和参数
 
 ## 会话阶段
 - **explore（探索）** — 理解用户需求、分析现状、提供思路方向。此阶段禁止写入。
@@ -146,20 +186,33 @@ def _build_cowriter_persona() -> str:
 - **review（评审）** — 内容已写入，等待用户反馈
 - **complete（完成）** — 当前任务已全部完成
 
-## 何时调用 present_options
-- 你分析后发现有多条可行路径需要用户决策
-- 用户面临方向性选择（"你说得对，但怎么改呢？"）
-- 不要每轮都调用 — 讨论和解释时直接回复即可
-- 只有当真正需要用户做选择时才使用选项卡片
+## 展示选项的方式
+当需要用户做方向选择时，在对话中直接使用 markdown 列出选项：
 
-## 用户回应选项的多种方式
-用户看到选项卡片后可能：
-1. 点击某个选项 → 你会收到 "[option:X] ..." 格式的消息，执行对应的 action
-2. 输入自己的想法 → 你会收到普通文本，像正常对话一样回应（讨论、调整方向、重新分析等）
-3. 在选项基础上发挥 → "我选方案B，但是把结尾改成悲剧"
-4. 完全否定 → "都不对，我想的是..."
+### 关于角色动机，有三个可能方向
 
-不要把用户的想法当作"不在选项中所以无效"。——选项只是建议，最终决定权在用户手里。"""
+**方案一：复仇驱动** — 角色因过去的创伤而寻求复仇
+- 优点：动机强烈，容易引起读者共鸣
+- 缺点：可能过于老套，需要独特的转折
+
+**方案二：利益驱动** — 角色为了自身利益而行动
+- 优点：现实感强，空间更大
+- 缺点：角色容易显得自私
+
+**方案三：扭曲的爱** — 角色出于扭曲的"爱"而行动
+- 优点：深度足，人物更立体
+- 缺点：写作难度较高
+
+请告诉我你的想法，或选择其中某个方向。
+
+## 选项回应规则
+用户可能回应：
+- "我选方案二" — 执行方案二
+- "把 A 和 B 结合一下" — 讨论怎么融合
+- "我想的方向是..." — 尊重用户的创意并分析可行性
+- "都不对，换个思路" — 重新分析并提供新的选项
+
+不要把用户的回应当作"不在选项中所以无效"。选项只是建议，最终决定权在用户手里。"""
 
 
 def _build_tool_schemas(filtered_tools: dict[str, BaseTool]) -> list:
@@ -184,9 +237,9 @@ async def autonomous_loop(
 ) -> AsyncGenerator[dict, None]:
     """Model-driven autonomous agent loop.
 
-    The LLM decides what to do each turn — reply, call tools, present
-    options — and the loop continues as long as tool calls are produced.
-    Code only handles safety (mode gating, confirmation, context budget).
+    The LLM decides what to do each turn — reply, call tools, ask for
+    direction.  Code only handles safety (mode gating, confirmation,
+    context budget).
     """
 
     # ── State initialization ────────────────────────────────────────
@@ -199,6 +252,10 @@ async def autonomous_loop(
         f"- {t.name}: {t.description}" for t in filtered_tools.values()
     ) or tool_descriptions
     tool_schemas = _build_tool_schemas(filtered_tools)
+
+    # ── Attachment injector (for per-turn context sections) ────────
+    from app.agent.attachments import AttachmentInjector
+    _attach = AttachmentInjector()
 
     # ── Phase 0: Context loading (one-time) ─────────────────────────
     if not state._context_loaded and state.project_id:
@@ -224,7 +281,7 @@ async def autonomous_loop(
             logger.warning("Context load skipped/partial: %s", e)
             state = state.replace(_context_loaded=True, transition="context_load_failed")
 
-    # ── Build system prompt (cached per mode) ───────────────────────
+    # ── Build static system prompt (once, outside loop) ─────────────
     base_sections = ["identity", "output_style", "tool_usage",
                      "writing_advice", "prohibited_behaviors", "style_guide"]
     if state.mode == "chat":
@@ -241,6 +298,81 @@ async def autonomous_loop(
             state.turn_count, state.mode, len(state.messages), state.transition,
         )
 
+        # ── Confirm/reject detection (before LLM call) ────────────
+        if state.pending_plan and not state.plan_confirmed:
+            last_user_msg = ""
+            for m in reversed(state.messages):
+                if m.role == "user":
+                    last_user_msg = m.content or ""
+                    break
+
+            decision = _detect_plan_decision(last_user_msg, state.pending_plan)
+            if decision == "confirm":
+                logger.info("Plan confirmed by user — executing plan steps directly")
+                yield _event_step("执行已确认的计划...")
+
+                # Build a synthetic assistant message with tool_calls from
+                # the pending_plan so the tool-result messages that follow
+                # have a valid preceding tool_calls message (OpenAI API req).
+                from app.llm.types import ToolCall
+                plan_tool_calls = []
+                for step in state.pending_plan.get("steps", []):
+                    tc = ToolCall(
+                        id=step.get("tool_use_id", f"plan_{step.get('tool', '')}"),
+                        function={"name": step.get("tool", ""), "arguments": json.dumps(step.get("params", {}))},
+                    )
+                    plan_tool_calls.append(tc)
+
+                state = state.replace(
+                    messages=state.messages + [
+                        Message(role="assistant", content=None, tool_calls=plan_tool_calls)
+                    ],
+                )
+
+                for step in state.pending_plan.get("steps", []):
+                    tool_name = step.get("tool", "")
+                    args = step.get("params", {})
+                    tool_use_id = step.get("tool_use_id", "")
+                    try:
+                        result = await StreamingToolExecutor(filtered_tools, db).execute_tool(
+                            tool_name, args, tool_use_id,
+                        )
+                    except Exception as exc:
+                        result = {"tool": tool_name, "success": False, "error": str(exc)}
+                    yield _event_tool_done(result)
+
+                    # Build tool result message
+                    if result.get("success"):
+                        data = result.get("data", "")
+                        if isinstance(data, (dict, list)):
+                            data = json.dumps(data, ensure_ascii=False)
+                        content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                    else:
+                        content = f"[工具执行失败: {tool_name}]\n{result.get('error', 'unknown')[:500]}"
+
+                    new_tr = list(state.tool_results) + [result]
+                    state = state.replace(
+                        messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
+                        tool_results=new_tr,
+                    )
+
+                state = state.replace(
+                    pending_plan={},
+                    plan_confirmed=True,
+                    transition="plan_confirmed_and_executed",
+                )
+                break  # Skip LLM call, go to final response
+
+            elif decision == "reject":
+                logger.info("Plan rejected by user — clearing pending plan")
+                state = state.replace(
+                    pending_plan={},
+                    plan_confirmed=False,
+                    transition="plan_rejected",
+                )
+                yield _event_step("已取消计划...")
+                # Fall through to LLM for response about rejection
+
         # ── Step 1: Context Management ────────────────────────────
         if should_compress(state.messages, MODEL_CONTEXT_LIMIT):
             original_count = len(state.messages)
@@ -248,64 +380,17 @@ async def autonomous_loop(
                 messages=compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT),
                 transition="context_compressed",
             )
-            compressed_count = len(state.messages)
-            logger.info("Compressed %d → %d messages", original_count, compressed_count)
+            logger.info("Compressed %d → %d messages", original_count, len(state.messages))
 
         # ── Step 2: Build messages for LLM ─────────────────────────
-        # Build project context section
+        # Use AttachmentInjector for per-turn context sections
+        dynamic_sections = _attach.build_system_sections(state)
+
+        # Project context
         proj = state.project_context.get("project", {})
         proj_title = proj.get("title", "未命名")
         proj_genre = proj.get("genre", "")
         proj_id = state.project_id or proj.get("id", "unknown")
-
-        # Build tool result summary (last 5)
-        tool_summary = ""
-        if state.tool_results:
-            lines = ["# --- 上一轮工具执行结果 ---"]
-            for r in state.tool_results[-5:]:
-                status = "OK" if r.get("success") else "FAIL"
-                name = r.get("tool", "?")
-                detail = ""
-                if r.get("success"):
-                    data = r.get("data", "")
-                    if isinstance(data, str):
-                        detail = _markdown_to_plain(data, 150)
-                else:
-                    detail = (r.get("error", "") or "")[:150]
-                lines.append(f"  [{status}] {name}: {detail}")
-            tool_summary = "\n".join(lines)
-
-        # Build session progress
-        session_text = ""
-        session = state.cowriter_session or {}
-        if session.get("is_active"):
-            phase = session.get("phase", "explore")
-            goal = session.get("goal", "")
-            focus = session.get("current_focus", "")
-            phase_cn = {"explore": "探索", "plan": "计划", "execute": "执行",
-                        "review": "评审", "complete": "完成"}.get(phase, phase)
-            session_text = f"# --- 协作进度 ---\n阶段: {phase_cn}"
-            if goal:
-                session_text += f"\n目标: {goal}"
-            if focus:
-                session_text += f"\n焦点: {focus}"
-
-        # Build pending plan reminder
-        plan_text = ""
-        if state.pending_plan and not state.plan_confirmed:
-            steps = state.pending_plan.get("steps", [])
-            if steps:
-                plan_text = "# --- 待确认计划 ---\n"
-                for i, s in enumerate(steps, 1):
-                    plan_text += f"  {i}. {s.get('description', s.get('tool', ''))}\n"
-                plan_text += "等待用户确认或拒绝。"
-
-        # Build error context
-        error_text = ""
-        if state.errors:
-            recent = [e for e in state.errors[-3:] if e]
-            if recent:
-                error_text = "# --- 最近的错误 ---\n" + "\n".join(f"- {e}" for e in recent)
 
         # Assemble system message
         system_content = base_system
@@ -316,10 +401,11 @@ async def autonomous_loop(
             system_content += f"\n类型: {proj_genre}"
         system_content += f"\nProject ID: {proj_id}"
 
-        # Inject dynamic sections
-        for section in [tool_summary, session_text, plan_text, error_text]:
-            if section:
-                system_content += "\n\n" + section
+        # Inject dynamic sections from AttachmentInjector
+        for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
+            text = dynamic_sections.get(section_name)
+            if text:
+                system_content += "\n\n" + text
 
         # Tool list
         system_content += f"\n\n# --- 可用工具 ---\n{filtered_tool_desc}"
@@ -331,15 +417,20 @@ async def autonomous_loop(
             mode_decl = "# ——— 当前模式：协作模式（可读写）———"
         system_content = mode_decl + "\n\n" + system_content
 
-        # Build final messages
+        # Build final messages — strip orphaned tool messages that would
+        # violate the OpenAI/DeepSeek API requirement (tool must follow
+        # an assistant with tool_calls).
         gen_msgs = [Message(role="system", content=system_content)]
-        gen_msgs.extend(state.messages)
+        gen_msgs.extend(_strip_orphan_tool_messages(list(state.messages)))
 
         yield _event_step("思考中...")
 
         # ── Step 3: LLM streaming + tool execution ─────────────────
         streaming_executor = StreamingToolExecutor(filtered_tools, db)
-        tool_blocks: list[tuple[str, dict, str]] = []  # [(name, args, id), ...]
+        tool_blocks: list[tuple[str, dict, str]] = []
+        # Preserve the original ToolCall objects so the assistant message
+        # carries a valid tool_calls field (required by OpenAI/DeepSeek API).
+        tool_call_objects: list = []
         assistant_text_parts: list[str] = []
         tool_use_count = 0
 
@@ -350,12 +441,10 @@ async def autonomous_loop(
                 temperature=0.7,
                 request_id=state.trace_id,
             ):
-                # Text token
                 if chunk.content:
                     assistant_text_parts.append(chunk.content)
                     yield _event_token(chunk.content)
 
-                # Tool call (complete block or incremental)
                 if chunk.tool_call:
                     tc = chunk.tool_call
                     fn = tc.function if hasattr(tc, "function") else {}
@@ -376,21 +465,12 @@ async def autonomous_loop(
                         tool_use_count += 1
                         tool_use_id = getattr(tc, "id", f"call_{tool_use_count}")
                         tool_blocks.append((name.strip(), args, tool_use_id))
-                        streaming_executor.add_tool(
-                            tc,
-                            tool_use_id=tool_use_id,
-                            mode=state.mode,
-                            read_only_tool_names={
-                                t.name for t in filtered_tools.values()
-                                if not t.is_write_operation
-                            },
-                        )
+                        tool_call_objects.append(tc)
+                        streaming_executor.add_tool(tc, tool_use_id=tool_use_id)
 
-                # Yield completed results during streaming
                 for result in streaming_executor.get_completed_results():
                     yield _event_tool_done(result)
 
-                # Finish reason
                 if chunk.finish_reason:
                     logger.debug("Stream finish: %s", chunk.finish_reason)
 
@@ -400,7 +480,6 @@ async def autonomous_loop(
         except Exception as e:
             logger.error("LLM streaming error: %s", e, exc_info=True)
             streaming_executor.discard()
-            # Try recovery
             decision = _try_recovery(state, llm, str(e))
             if decision.get("give_up"):
                 assistant_text = "".join(assistant_text_parts)
@@ -412,7 +491,6 @@ async def autonomous_loop(
                 yield _event_token(f"\n\n[发生错误: {decision.get('message', str(e))}]")
                 break
             else:
-                # Recovery action applied — get updated state and retry
                 state = decision.get("state", state)
                 state = state.replace(
                     errors=state.errors + [str(e)],
@@ -420,27 +498,30 @@ async def autonomous_loop(
                 )
                 continue
 
-        # ── Step 4: Await remaining tools ────────────────────────────
-        all_results = await streaming_executor.get_remaining_results()
-        for result in all_results:
-            if result.get("tool") not in ("cowriter_analysis",):
-                yield _event_tool_done(result)
+        # ── Step 4: Await in-flight SAFE tools only ────────────────
+        safe_results = await streaming_executor.await_pending_safe()
+        queued_excl, queued_barrier = streaming_executor.get_queued_tools()
 
-        # Update tool results
         new_tool_results = list(state.tool_results)
-        for r in all_results:
+        safe_result_map: dict[str, dict] = {}
+        for r in safe_results:
             if r.get("tool") not in ("cowriter_analysis",):
                 new_tool_results.append(r)
+                yield _event_tool_done(r)
+                safe_result_map[r.get("_tool_use_id", "")] = r
         state = state.replace(tool_results=new_tool_results)
 
-        # ── Step 5: Build assistant message ──────────────────────────
+        # ── Step 5: Build assistant message (WITH tool_calls for API spec) ──
         assistant_text = "".join(assistant_text_parts)
-        if assistant_text.strip():
+        if assistant_text.strip() or tool_call_objects:
+            assistant_msg = Message(role="assistant", content=assistant_text or None)
+            if tool_call_objects:
+                assistant_msg.tool_calls = list(tool_call_objects)
             state = state.replace(
-                messages=state.messages + [Message(role="assistant", content=assistant_text)],
+                messages=state.messages + [assistant_msg],
             )
 
-        # ── Step 6: Interceptor Layer ────────────────────────────────
+        # ── Step 6: Interceptor Layer (BEFORE EXCL/BARRIER exec) ───
         if tool_blocks:
             intercept: InterceptResult = apply_interceptors(
                 tool_blocks,
@@ -449,19 +530,24 @@ async def autonomous_loop(
                 tools_registry=filtered_tools,
             )
 
+            queued_ids: set[str] = {
+                tid for _, _, tid in queued_excl + queued_barrier
+            }
+
             # 6a: Mode-gated blocks
             if intercept.blocked:
+                streaming_executor.clear_queued()
                 for msg in intercept.blocked_messages:
                     state = state.replace(
                         messages=state.messages + [Message(role="system", content=msg)],
                         transition="mode_blocked",
                     )
-                # Generate response explaining the block
                 yield _event_step("生成回复...")
-                break  # Exit tool loop, generate final response
+                break
 
             # 6b: Confirmation needed
             if intercept.needs_confirmation:
+                streaming_executor.clear_queued()
                 plan = build_confirmation_plan(intercept.pending_tools, filtered_tools)
                 state = state.replace(
                     pending_plan=plan,
@@ -470,42 +556,20 @@ async def autonomous_loop(
                 )
                 yield _event_plan(plan)
                 yield _event_step("等待确认...")
-                break  # Pause for user confirmation
+                break
 
-            # 6c: Options presented
-            if intercept.has_options:
-                if intercept.analysis_text:
-                    pass  # Already streamed above
-                if intercept.options:
-                    state = state.replace(
-                        current_options=intercept.options,
-                        transition="options_presented",
-                    )
-                    if intercept.session_update:
-                        su = intercept.session_update
-                        new_session = dict(state.cowriter_session)
-                        new_session["is_active"] = True
-                        if "phase" in su:
-                            new_session["phase"] = su["phase"]
-                        if "goal" in su:
-                            new_session["goal"] = su["goal"]
-                        if "current_focus" in su:
-                            new_session["current_focus"] = su["current_focus"]
-                        if su.get("is_complete"):
-                            new_session["is_active"] = False
-                        state = state.replace(cowriter_session=new_session)
-                    yield _event_options(intercept.options)
-                    yield _event_step("等待选择...")
-                    break  # Pause for user decision
-
-            # 6d: Allowed tools — execute them
+            # 6c: Allowed tools — execute queued (non-SAFE) ones
             for tool_name, args, tool_use_id in intercept.allowed_tools:
-                try:
-                    result = await _run_single_tool_wrapper(tool_name, args, filtered_tools, db)
+                if tool_use_id in queued_ids:
+                    try:
+                        result = await streaming_executor.execute_tool(tool_name, args, tool_use_id)
+                    except Exception as tool_err:
+                        result = {"tool": tool_name, "success": False, "error": str(tool_err)}
+                        logger.error("Tool %s failed: %s", tool_name, tool_err)
+
                     new_tool_results.append(result)
                     yield _event_tool_done(result)
 
-                    # Build tool result message
                     if result.get("success"):
                         data = result.get("data", "")
                         if isinstance(data, (dict, list)):
@@ -518,33 +582,38 @@ async def autonomous_loop(
                         messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
                         tool_results=new_tool_results,
                     )
-                except Exception as tool_err:
-                    logger.error("Tool %s failed: %s", tool_name, tool_err)
-                    state = state.replace(
-                        errors=state.errors + [f"Tool {tool_name}: {tool_err}"],
-                    )
+                else:
+                    # SAFE tool — build message for LLM next turn
+                    existing = safe_result_map.get(tool_use_id)
+                    if existing:
+                        if existing.get("success"):
+                            data = existing.get("data", "")
+                            if isinstance(data, (dict, list)):
+                                data = json.dumps(data, ensure_ascii=False)
+                            content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                        else:
+                            content = f"[工具执行失败: {tool_name}]\n{existing.get('error', 'unknown')[:500]}"
+                        state = state.replace(
+                            messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
+                        )
 
-        # ── Step 7: Decide next ───────────────────────────────────────
+            streaming_executor.clear_queued()
+
+        # ── Step 7: Decide next ─────────────────────────────────────
         if not tool_blocks:
-            # Model only produced text — done
             logger.debug("No tool calls — finishing turn")
             break
 
-        if state.transition in ("mode_blocked", "plan_generated_for_confirmation",
-                                "options_presented"):
-            # Interceptor paused the loop — break to generate final response
+        if state.transition in ("mode_blocked", "plan_generated_for_confirmation"):
             break
 
-        # Tools were executed successfully — continue for another round
-        # (the model may want to chain more tool calls based on results)
+        # Tools executed — continue for chained operations
         logger.info("Tools executed, continuing loop for chained operations")
         state = state.replace(
-            retry_count=0,  # Reset retries for new round
+            retry_count=0,
             transition="tool_executed_continue",
         )
 
-        # If the model only called tools and produced no text, retry count
-        # helps avoid infinite loops where tools silently fail
         if not assistant_text.strip():
             state = state.replace(retry_count=state.retry_count + 1)
             if state.retry_count > 3:
@@ -552,30 +621,32 @@ async def autonomous_loop(
                 yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
                 break
 
-    # ── Final: Generate response ────────────────────────────────────────
+    # ── Final: Generate response ────────────────────────────────────
     yield _event_step("生成回复...")
 
-    # Check if we already have an assistant message
     last_msg = state.messages[-1] if state.messages else None
     if last_msg and last_msg.role == "assistant":
-        # Already have a response — just emit what we have
-        pass
+        pass  # Already have a response
     else:
-        # Build final response using the generate node's prompt builder
-        from app.agent.nodes.generate import _build_system_prompt
+        from app.agent.response_builder import build_system_prompt
 
         gen_state = state.to_dict()
         try:
-            sys_content = await _build_system_prompt(gen_state)
+            sys_content = await build_system_prompt(gen_state)
         except Exception as e:
-            logger.warning("_build_system_prompt failed: %s", e)
+            logger.warning("build_system_prompt failed: %s", e)
             sys_content = (
                 "You are StoryCAD AI, a creative writing assistant. "
                 "Respond helpfully in Chinese."
             )
 
+        # Strip orphaned tool messages that lack a preceding assistant
+        # with tool_calls (DeepSeek/OpenAI API rejects these).
+        msgs_for_final = list(state.messages)
+        cleaned = _strip_orphan_tool_messages(msgs_for_final)
+
         gen_msgs_final = [Message(role="system", content=sys_content)]
-        gen_msgs_final.extend(state.messages)
+        gen_msgs_final.extend(cleaned)
 
         try:
             async for token in llm.chat_stream_tokens(
@@ -586,9 +657,14 @@ async def autonomous_loop(
                 yield _event_token(token)
         except Exception as e:
             logger.error("Final generate error: %s", e, exc_info=True)
-            yield _event_token(f"\n\n[生成回复时出错: {e}]")
+            err_msg = str(e)
+            # If we already had assistant text from streaming, don't overwrite
+            if not assistant_text_parts:
+                yield _event_token(f"\n\n[生成回复时出错: {err_msg[:200]}]")
+            else:
+                logger.warning("Final gen failed but partial response exists")
 
-    # ── Build final state dict ──────────────────────────────────────────
+    # ── Build final state dict ──────────────────────────────────────
     final_state = state.to_dict()
     yield _event_done(final_state)
 
@@ -597,13 +673,14 @@ async def autonomous_loop(
 
 
 def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
-    """Attempt error recovery. Returns a dict with recovery action applied.
+    """Attempt error recovery. Delegates to ``RecoveryExecutor.apply()``.
 
     Returns:
-        {"give_up": False} if recovery was applied and we should retry.
-        {"give_up": True, "message": "..."} if recovery is exhausted.
+        ``{"give_up": False, "state": <updated LoopState>}`` if recovery
+        was applied and we should retry.
+        ``{"give_up": True, "message": "..."}`` if recovery is exhausted.
     """
-    from app.agent.recovery import ErrorClassifier, RecoveryAction
+    from app.agent.recovery import ErrorClassifier, RecoveryAction, RecoveryExecutor, get_fallback_models
 
     recovery_history = state.recovery_state.get("recovery_history", [])
     decision = ErrorClassifier.classify(
@@ -613,45 +690,54 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
         recovery_history=recovery_history,
     )
 
-    logger.info("Recovery: action=%s attempt=%d error=%s",
-                decision.action.value, state.retry_count, error[:100])
+    logger.info(
+        "Recovery: action=%s attempt=%d error=%s",
+        decision.action.value, state.retry_count, error[:100],
+    )
+
+    if decision.action == RecoveryAction.GIVE_UP:
+        return {"give_up": True, "message": decision.message}
+
+    # Delegate to RecoveryExecutor for all non-GIVE_UP actions
+    executor = RecoveryExecutor(fallback_models=get_fallback_models())
+    state_dict = state.to_dict()
+    # apply() is async — but we're in a sync helper called from the
+    # exception handler.  We build a sync-compatible result instead.
+    # Recovery actions that modify state (non-async parts) are handled
+    # inline; the delay is handled at the retry level.
+
+    retry_state = state.replace(
+        retry_count=state.retry_count + 1,
+    )
 
     if decision.action == RecoveryAction.RETRY:
-        state = state.replace(retry_count=state.retry_count + 1, transition="recovery_retry")
-        return {"give_up": False, "state": state}
+        return {"give_up": False, "state": retry_state.replace(transition="recovery_retry")}
 
     if decision.action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:
-        state = state.replace(
+        return {"give_up": False, "state": retry_state.replace(
             errors=state.errors + [f"[SELF-CORRECTION] {error}"],
-            retry_count=state.retry_count + 1,
             transition="recovery_error_context",
-        )
-        return {"give_up": False, "state": state}
+        )}
 
     if decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
-        from app.agent.recovery import RecoveryExecutor
-        compressed = RecoveryExecutor._compress_messages(state.messages)
-        state = state.replace(
+        from app.agent.context_compressor import compress_history
+        compressed = compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+        return {"give_up": False, "state": retry_state.replace(
             messages=compressed,
-            retry_count=state.retry_count + 1,
             transition="recovery_compressed",
-        )
-        return {"give_up": False, "state": state}
+        )}
 
     if decision.action == RecoveryAction.RETRY_ESCALATED_TOKENS:
-        state = state.replace(
-            retry_count=state.retry_count + 1,
+        return {"give_up": False, "state": retry_state.replace(
             transition="recovery_escalated",
-        )
-        return {"give_up": False, "state": state}
+        )}
 
     if decision.action == RecoveryAction.SWITCH_MODEL:
-        from app.agent.recovery import get_fallback_models
         fallbacks = get_fallback_models()
         idx = state.recovery_state.get("model_index", 0)
         if idx < len(fallbacks):
             llm.model = fallbacks[idx]
-            state = state.replace(
+            return {"give_up": False, "state": retry_state.replace(
                 _model_override=fallbacks[idx],
                 recovery_state={
                     **state.recovery_state,
@@ -659,8 +745,6 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
                     "switched_model": fallbacks[idx],
                 },
                 transition="recovery_model_switch",
-            )
-            return {"give_up": False, "state": state}
+            )}
 
-    # Default: give up
     return {"give_up": True, "message": decision.message}

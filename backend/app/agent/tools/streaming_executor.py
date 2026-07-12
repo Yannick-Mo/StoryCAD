@@ -35,9 +35,20 @@ _ANALYSIS_TOOL_NAMES: set[str] = {
 }
 
 
-def _summarise_tool_output(tool_name: str, result: ToolResult) -> dict[str, Any]:
-    """Truncate very long tool outputs to avoid blowing up the context."""
-    max_chars = 2000 if tool_name in _ANALYSIS_TOOL_NAMES else 8000
+def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | None = None) -> dict[str, Any]:
+    """Truncate very long tool outputs to avoid blowing up the context.
+
+    Uses the tool's ``max_result_chars`` when available, otherwise falls
+    back to a heuristic based on tool category.
+    """
+    # Per-tool max (from ToolMeta), with fallback
+    if tool is not None and hasattr(tool, "_effective_max_result_chars"):
+        max_chars = tool._effective_max_result_chars
+    elif tool_name in _ANALYSIS_TOOL_NAMES:
+        max_chars = 2000
+    else:
+        max_chars = 8000
+
     data = result.data
     if isinstance(data, str) and len(data) > max_chars:
         data = data[:max_chars] + f"\n... [truncated, {len(result.data)} chars total]"
@@ -111,9 +122,6 @@ class StreamingToolExecutor:
         self,
         tool_use: Any,
         tool_use_id: str = "",
-        *,
-        mode: str = "cowriter",
-        read_only_tool_names: set[str] | None = None,
     ) -> None:
         """Called when a complete tool_use block arrives in the stream.
 
@@ -121,12 +129,9 @@ class StreamingToolExecutor:
             tool_use: A ``ToolCall`` instance or dict with ``function.name``
                       and ``function.arguments``.
             tool_use_id: The tool use block id from the LLM.
-            mode: ``"chat"`` or ``"cowriter"`` – if chat mode, writes are
-                  skipped and reported as blocked.
-            read_only_tool_names: Set of tool names allowed in chat mode.
-                                  When *mode* is ``"chat"``, any tool not in
-                                  this set is rejected.  When omitted,
-                                  ``tool_filter.READ_ONLY_TOOLS`` is used.
+
+        Mode-gating is NOT performed here — that's the interceptor layer's
+        job.  The executor simply queues tools by concurrency mode.
         """
         if self._discarded:
             return
@@ -142,18 +147,6 @@ class StreamingToolExecutor:
         if not tool:
             err = {"tool": tool_name, "success": False, "error": f"Tool '{tool_name}' not found"}
             self._completed.append((tool_use_id, err))
-            return
-
-        # Chat mode guard: block write tools
-        if mode == "chat" and tool_name not in (read_only_tool_names or set()):
-            err = {
-                "tool": tool_name,
-                "success": False,
-                "error": f"对话模式禁止写入操作，工具 '{tool_name}' 被拦截",
-                "params": args,
-            }
-            self._completed.append((tool_use_id, err))
-            self._blocked_writes.append((tool_name, args, tool_use_id))
             return
 
         # Determine concurrency
@@ -202,6 +195,58 @@ class StreamingToolExecutor:
         self._completed.extend((r.get("tool", ""), r) for r in results)
         return results
 
+    # ── Split API for interceptor-aware execution ──────────────────────
+    # The autonomous loop calls these in order:
+    #   1. add_tool() during streaming (SAFE runs immediately; EXCL/BARRIER queued)
+    #   2. await_pending_safe() after stream — waits for in-flight SAFE tools
+    #   3. get_queued_tools() — returns queued EXCL/BARRIER tools (no execution)
+    #   4. interceptor decides which tools are allowed
+    #   5. execute_tool() — public, called by loop for each allowed tool
+    #   6. clear_queued() — discard tools blocked by interceptor
+
+    async def await_pending_safe(self) -> list[dict]:
+        """Wait for in-flight SAFE tools only. Does NOT touch queued tools.
+
+        Returns:
+            Results from SAFE tools that completed (including those already
+            yielded via ``get_completed_results``).
+        """
+        if self._discarded:
+            return []
+
+        if self._pending:
+            tasks = list(self._pending.values())
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for tid, task in list(self._pending.items()):
+                try:
+                    result = task.result()
+                    self._completed.append((tid, result))
+                except asyncio.CancelledError:
+                    self._completed.append((tid, {"tool": tid, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
+                except Exception as exc:
+                    self._completed.append((tid, {"tool": tid, "success": False, "error": str(exc), "_tool_use_id": tid}))
+            self._pending.clear()
+
+        return [r for _, r in self._completed]
+
+    def get_queued_tools(self) -> tuple[list[tuple[str, dict, str]], list[tuple[str, dict, str]]]:
+        """Return queued EXCLUSIVE and BARRIER tools without executing them.
+
+        Returns:
+            ``(exclusive_list, barrier_list)`` where each list contains
+            ``(tool_name, args, tool_use_id)`` tuples.
+        """
+        return list(self._queued_exclusive), list(self._queued_barrier)
+
+    def clear_queued(self) -> None:
+        """Discard queued EXCLUSIVE/BARRIER tools without executing them.
+
+        Called when the interceptor blocks, needs confirmation, or captures
+        options — the queued tools should not execute.
+        """
+        self._queued_exclusive.clear()
+        self._queued_barrier.clear()
+
     async def get_remaining_results(self) -> list[dict]:
         """Wait for all pending SAFE tools, then execute queued tools serially.
 
@@ -213,6 +258,12 @@ class StreamingToolExecutor:
         Returns:
             All results accumulated throughout the executor's lifecycle
             (including those returned earlier by ``get_completed_results``).
+
+        Note:
+            Prefer the split API (``await_pending_safe`` + ``get_queued_tools``
+            + ``execute_tool``) in the autonomous loop so the interceptor can
+            gate EXCLUSIVE/BARRIER tools before execution.  This method exists
+            for backward compatibility with the LangGraph path.
         """
         if self._discarded:
             return []
@@ -226,9 +277,9 @@ class StreamingToolExecutor:
                     result = task.result()
                     self._completed.append((tid, result))
                 except asyncio.CancelledError:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": "Cancelled"}))
+                    self._completed.append((tid, {"tool": tid, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
                 except Exception as exc:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": str(exc)}))
+                    self._completed.append((tid, {"tool": tid, "success": False, "error": str(exc), "_tool_use_id": tid}))
             self._pending.clear()
 
         # 2. Execute EXCLUSIVE tools serially
@@ -267,16 +318,34 @@ class StreamingToolExecutor:
         self._blocked_writes.clear()
 
     # ------------------------------------------------------------------
+    # Public execution entry-point (for interceptor-aware callers)
+    # ------------------------------------------------------------------
+
+    async def execute_tool(
+        self, name: str, args: dict, tool_use_id: str = ""
+    ) -> dict:
+        """Execute a single tool and return a result dict.
+
+        Public — called by the autonomous loop for tools that passed the
+        interceptor gates.  Also called internally by ``_execute_tool``.
+        """
+        return await self._execute_tool(name, args, tool_use_id)
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     async def _execute_tool(
         self, name: str, args: dict, tool_use_id: str = ""
     ) -> dict:
-        """Execute a single tool and return a result dict."""
+        """Execute a single tool and return a result dict.
+
+        The result always includes ``_tool_use_id`` so callers can correlate
+        results with their originating tool-use blocks.
+        """
         tool = self._tools.get(name)
         if not tool:
-            return {"tool": name, "success": False, "error": "Tool not found"}
+            return {"tool": name, "success": False, "error": "Tool not found", "_tool_use_id": tool_use_id}
 
         timeout = tool._effective_timeout if tool._effective_timeout else 30
 
@@ -285,14 +354,16 @@ class StreamingToolExecutor:
                 tool.run(db=self._db, **args),
                 timeout=timeout,
             )
-            return _summarise_tool_output(name, result)
+            d = _summarise_tool_output(name, result, tool)
+            d["_tool_use_id"] = tool_use_id
+            return d
         except asyncio.TimeoutError:
-            return {"tool": name, "success": False, "error": f"Timed out after {timeout}s"}
+            return {"tool": name, "success": False, "error": f"Timed out after {timeout}s", "_tool_use_id": tool_use_id}
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("Tool '%s' execution failed", name)
-            return {"tool": name, "success": False, "error": str(exc)}
+            return {"tool": name, "success": False, "error": str(exc), "_tool_use_id": tool_use_id}
 
 
 # ---------------------------------------------------------------------------

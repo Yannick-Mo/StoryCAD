@@ -247,7 +247,7 @@ class LLMClient:
                     logger.warning("Model '{}' failed, trying next: {}", current_model, e)
                 continue
 
-        raise LLMError("All models failed") from last_error
+        raise LLMError(f"All models failed; final error: {last_error}") from last_error
 
     async def _chat_non_streaming(
         self,
@@ -285,14 +285,34 @@ class LLMClient:
         headers: dict[str, str],
         body: dict[str, Any],
     ) -> AsyncGenerator[dict, None]:
-        """Shared streaming generator. Yields dicts with delta, finish_reason, usage."""
+        """Shared streaming generator. Yields dicts with delta, finish_reason, usage.
+
+        Reads the error response body while the stream is still open so the
+        real API error is surfaced rather than an opaque httpx ResponseNotRead.
+        """
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
                 async with self._client.stream(
                     "POST", url, headers=headers, json=body,
                 ) as resp:
-                    resp.raise_for_status()
+                    # Check status code manually so we can read the error
+                    # body while the connection is still open.
+                    if resp.status_code >= 400:
+                        try:
+                            body_bytes = await resp.aread()
+                            err_text = body_bytes.decode(errors="replace")[:800]
+                        except Exception:
+                            err_text = "<unable to read response body>"
+                        if resp.status_code in RETRYABLE_STATUSES:
+                            last_error = LLMRetryExhaustedError(
+                                f"LLM API error {resp.status_code}: {_sanitize_error(err_text)}"
+                            )
+                            continue  # retry
+                        raise LLMNonRetryableError(
+                            f"LLM API error {resp.status_code}: {_sanitize_error(err_text)}"
+                        )
+
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -310,12 +330,8 @@ class LLMClient:
                             "usage": chunk.get("usage"),
                         }
                     return
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code not in RETRYABLE_STATUSES:
-                    raise LLMNonRetryableError(
-                        f"LLM API error {e.response.status_code}: {_sanitize_error(e.response.text)}"
-                    ) from e
-                last_error = e
+            except (LLMNonRetryableError, LLMRetryExhaustedError):
+                raise
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
             except Exception as e:
@@ -377,7 +393,7 @@ class LLMClient:
                     logger.warning("Model '{}' failed, trying next: {}", current_model, e)
                 continue
 
-        raise LLMError("All models failed") from last_error
+        raise LLMError(f"All models failed; final error: {last_error}") from last_error
 
     async def chat_stream_with_tools(
         self,
@@ -505,7 +521,7 @@ class LLMClient:
                     logger.warning("Model '{}' failed, trying next: {}", current_model, e)
                 continue
 
-        raise LLMError("All models failed") from last_error
+        raise LLMError(f"All models failed; final error: {last_error}") from last_error
 
     def _parse_response(self, data: dict, model_name: str) -> ChatResult:
         choice = data["choices"][0]

@@ -36,16 +36,6 @@ class ToolMeta:
     search_hint: str = ""  # 3-10 words for keyword matching
 
 
-# Defaults used by build_tool() when a value is not explicitly provided.
-TOOL_DEFAULTS: dict[str, Any] = {
-    "concurrency": ConcurrencyMode.EXCLUSIVE,
-    "is_destructive": False,
-    "timeout": 30,
-    "max_result_chars": 8000,
-    "search_hint": "",
-}
-
-
 # ---------------------------------------------------------------------------
 # ToolResult (unchanged)
 # ---------------------------------------------------------------------------
@@ -80,73 +70,7 @@ async def verify_project_owner(
 
 
 # ---------------------------------------------------------------------------
-# build_tool() — Factory
-# ---------------------------------------------------------------------------
-
-def build_tool(
-    name: str,
-    description: str,
-    parameters: dict,
-    *,
-    is_write_operation: bool = False,
-    concurrency: ConcurrencyMode | None = None,
-    is_destructive: bool = False,
-    timeout: int = 30,
-    max_result_chars: int = 8000,
-    search_hint: str = "",
-    tool_cls: type | None = None,  # If None, use BaseTool subclass directly
-) -> type:
-    """Factory to create a tool class with safe defaults.
-
-    Returns a new type that can be instantiated like any BaseTool subclass.
-    When *tool_cls* is given the factory wraps that base class; otherwise a
-    plain BaseTool stub is used (caller must override ``run()``).
-
-    The returned class carries a ``meta`` :class:`ToolMeta` attribute and
-    backwards-compatible ``name`` / ``description`` / ``parameters`` /
-    ``is_write_operation`` class attributes.
-    """
-    base = tool_cls or BaseTool
-
-    meta = ToolMeta(
-        name=name,
-        description=description,
-        parameters=parameters,
-        concurrency=concurrency or TOOL_DEFAULTS["concurrency"],
-        is_destructive=is_destructive,
-        timeout=timeout,
-        max_result_chars=max_result_chars,
-        search_hint=search_hint,
-    )
-
-    # Build a new class that proxies the old flat attributes to ``meta``.
-    class_name = f"Built{name.replace('_', ' ').title().replace(' ', '')}Tool"
-
-    new_cls = type(
-        class_name,
-        (base,),
-        {
-            "meta": meta,
-            "name": meta.name,
-            "description": meta.description,
-            "parameters": meta.parameters,
-            "is_write_operation": is_write_operation,
-            # Expose the factory args as class attrs for introspection
-            "_built_with": {
-                "concurrency": meta.concurrency,
-                "is_destructive": meta.is_destructive,
-                "timeout": meta.timeout,
-                "max_result_chars": meta.max_result_chars,
-                "search_hint": meta.search_hint,
-            },
-        },
-    )
-
-    return new_cls
-
-
-# ---------------------------------------------------------------------------
-# BaseTool (redesigned)
+# BaseTool
 # ---------------------------------------------------------------------------
 
 class BaseTool(ABC):

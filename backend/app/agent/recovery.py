@@ -4,9 +4,6 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
-
-from app.llm.types import Message
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +238,8 @@ class RecoveryExecutor:
             recovery_state["self_correction_applied"] = True
 
         elif decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
-            compressed = self._compress_messages(
+            from app.agent.context_compressor import compress_history  # noqa: F811
+            compressed = compress_history(
                 state.get("messages", [])
             )
             updates["messages"] = compressed
@@ -271,41 +269,9 @@ class RecoveryExecutor:
         return updates
 
     # ------------------------------------------------------------------
-    # Message compression
+    # Deprecated: _compress_messages has been removed.
+    # Use ``context_compressor.compress_history()`` instead.
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _compress_messages(messages: list) -> list:
-        """Compress message history by truncating older messages.
-
-        Keeps the last 8 messages intact; summarizes older ones into a single
-        system message with truncated content.
-        """
-        if not messages or len(messages) <= 10:
-            return list(messages)
-
-        to_summarize = messages[:-8]
-        recent = messages[-8:]
-
-        summary_parts: list[str] = []
-        for msg in to_summarize:
-            content = msg.content if hasattr(msg, "content") else str(msg)
-            if content:
-                truncated = (
-                    content[:100] + "..."
-                    if len(content) > 100
-                    else content
-                )
-                summary_parts.append(truncated)
-
-        # Keep at most the last 5 old-message summaries
-        summary_text = (
-            "[压缩的历史上下文 — 以下为之前对话的摘要]\n"
-            + "\n".join(summary_parts[-5:])
-        )
-
-        summary_msg = Message(role="system", content=summary_text)
-        return [summary_msg] + list(recent)
 
 
 # ---------------------------------------------------------------------------

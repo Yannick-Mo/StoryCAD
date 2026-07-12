@@ -16,10 +16,6 @@ class Settings(BaseSettings):
     llm_proxy: str = ""
     llm_max_sys_chars: int = 12000
     llm_max_rag_chars: int = 1500
-    llm_recovery_enabled: bool = False
-
-    # Agent architecture toggle
-    agent_use_loop: bool = False  # True = new agent_loop, False = LangGraph (default)
 
     # CORS configuration
     cors_origins: list[str] = ["http://localhost:5173"]

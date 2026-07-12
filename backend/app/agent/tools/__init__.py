@@ -3,21 +3,7 @@ from __future__ import annotations
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
-from .base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, build_tool
-
-
-_WRITE_TOOL_NAMES: set[str] = {
-    "update_chapter", "update_act", "update_scene",
-    "set_chapter_goal", "create_scene",
-    "update_character", "create_character", "update_relation",
-    "write_scene_content", "continue_scene", "rewrite_scene",
-    "expand_selection", "compress_selection",
-    "call_goal_agent", "call_outline_agent",
-    "create_act", "create_chapter", "update_project",
-    "delete_scene", "delete_chapter", "delete_act",
-    "create_project_from_material",
-    "create_edge", "update_edge", "delete_edge",
-}
+from .base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
 
 
 def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) -> BaseTool | None:
@@ -41,7 +27,6 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
     from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
     from .knowledge_tools import SearchKnowledgeTool
     from .web_search import WebSearchTool
-    from .present_options import PresentOptionsTool
     from .project_admin_tools import (
         CreateActTool, CreateChapterTool, UpdateProjectTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
@@ -58,7 +43,6 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
         SearchKnowledgeTool,
         WebSearchTool,
-        PresentOptionsTool,
         CreateActTool, CreateChapterTool, UpdateProjectTool,
         DeleteSceneTool, DeleteChapterTool, DeleteActTool,
         CreateProjectFromMaterialTool,
@@ -72,7 +56,6 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         if inst is not None:
             registry[cls.name] = inst
     return registry
-
 
 
 def get_filtered_tools(
@@ -111,35 +94,12 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
     return "\n".join(lines)
 
 
-def get_tool_concurrency_map(
-    tools: dict[str, BaseTool],
-) -> dict[str, ConcurrencyMode]:
-    """Return a mapping of tool name → ConcurrencyMode.
-
-    Fall back to EXCLUSIVE for tools without meta (backward compat).
-    """
-    result: dict[str, ConcurrencyMode] = {}
-    for name, tool in tools.items():
-        if hasattr(tool, "meta") and tool.meta is not None:
-            result[name] = tool.meta.concurrency
-        else:
-            # Legacy heuristic: EXCLUSIVE for write tools, SAFE for reads
-            result[name] = (
-                ConcurrencyMode.EXCLUSIVE
-                if getattr(tool, "is_write_operation", False)
-                else ConcurrencyMode.SAFE
-            )
-    return result
-
-
 __all__ = [
     "BaseTool",
     "ToolResult",
     "ToolMeta",
     "ConcurrencyMode",
-    "build_tool",
     "get_tool_registry",
     "get_filtered_tools",
     "get_tool_descriptions",
-    "get_tool_concurrency_map",
 ]

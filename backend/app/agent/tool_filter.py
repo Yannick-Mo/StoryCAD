@@ -112,6 +112,9 @@ def get_available_tools(
                     allowed.update(t for t in tools if t in READ_ONLY_TOOLS)
     else:
         allowed.update(GENERAL_TOOLS)
+        # Cowriter mode without skills gets base write tools
+        if not skill_names:
+            allowed.update(COWRITER_BASE_TOOLS)
         for sname in skill_names:
             categories = SKILL_ALIAS_MAP.get(sname, {sname})
             for cat in categories:

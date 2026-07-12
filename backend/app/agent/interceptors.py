@@ -1,29 +1,25 @@
 """Interceptor layer for the autonomous agent loop.
 
-Three gates applied in order after the LLM produces tool calls but before
+Two gates applied in order after the LLM produces tool calls but before
 execution:
 
 1. **Mode Gate** — chat mode blocks write tools
 2. **Confirmation Gate** — destructive/needs-confirmation tools require user approval
-3. **Option Gate** — ``present_options`` tool is intercepted, not executed
 
 Inspired by Claude Code's permission system but adapted for StoryCAD's
-domain: chat safety, write confirmation, and structured option cards.
+domain: chat safety and write confirmation.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.agent.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
-
-# Tool names that should never execute directly (intercepted as UI events)
-_INTERCEPT_TOOLS: set[str] = {"present_options"}
 
 # Tool names whose writes always need confirmation
 _DESTRUCTIVE_TOOLS: set[str] = {
@@ -61,12 +57,6 @@ class InterceptResult:
     # Tools waiting for confirmation: list of (tool_name, args, tool_use_id)
     pending_tools: list[tuple[str, dict, str]] = field(default_factory=list)
 
-    # True if the LLM called present_options
-    has_options: bool = False
-    analysis_text: str = ""
-    options: list[dict] = field(default_factory=list)
-    session_update: dict | None = None
-
     # Tools that passed all gates (can execute immediately)
     allowed_tools: list[tuple[str, dict, str]] = field(default_factory=list)
 
@@ -83,7 +73,7 @@ def apply_interceptors(
     cowriter_session: dict | None = None,
     tools_registry: dict[str, "BaseTool"] | None = None,
 ) -> InterceptResult:
-    """Apply all three gates to a batch of tool calls.
+    """Apply both gates to a batch of tool calls.
 
     Args:
         tool_calls: List of (tool_name, args, tool_use_id) tuples.
@@ -93,20 +83,12 @@ def apply_interceptors(
 
     Returns:
         ``InterceptResult`` summarizing which tools are blocked, confirmed,
-        intercepted as options, or allowed through.
+        or allowed through.
     """
     result = InterceptResult()
     session = cowriter_session or {}
 
     for tool_name, args, tool_use_id in tool_calls:
-        # ── Gate 0: Tool interception (present_options) ──
-        if tool_name in _INTERCEPT_TOOLS:
-            result.has_options = True
-            result.analysis_text = args.get("analysis", "")
-            result.options = args.get("options", [])
-            result.session_update = args.get("session_update")
-            continue
-
         # ── Gate 1: Mode Gate ──
         if mode == "chat":
             tool = tools_registry.get(tool_name) if tools_registry else None
@@ -174,40 +156,6 @@ def build_confirmation_plan(
         "steps": steps,
         "reasoning": reasoning,
         "status": "awaiting_confirmation",
-    }
-
-
-def get_option_card_format() -> dict:
-    """Return the JSON schema for a single option card.
-
-    Frontend uses this to render the option selection UI.
-    """
-    return {
-        "type": "object",
-        "properties": {
-            "id": {"type": "string", "description": "Unique option identifier (option_a, option_b, ...)"},
-            "label": {"type": "string", "description": "Short title for the option card"},
-            "description": {"type": "string", "description": "Detailed description"},
-            "pros": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Advantages of this option",
-            },
-            "cons": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Disadvantages of this option",
-            },
-            "action": {
-                "type": "object",
-                "properties": {
-                    "tool": {"type": "string"},
-                    "params": {"type": "object"},
-                },
-                "description": "Tool to call if this option is selected",
-            },
-        },
-        "required": ["id", "label", "description", "pros", "cons", "action"],
     }
 
 
