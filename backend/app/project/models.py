@@ -31,7 +31,7 @@ class ProjectVersion(Base):
     __tablename__ = "project_versions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
     version = Column(Integer, default=1)
     snapshot = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
@@ -43,7 +43,7 @@ class ProjectConfig(Base):
     __tablename__ = "project_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
     total_words = Column(Integer, default=100000)
     template_type = Column(String(50), default="four_act")
     target_audience = Column(String(100), default="")

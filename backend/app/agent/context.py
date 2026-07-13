@@ -195,22 +195,18 @@ class ContextBuilder:
         acts = acts_result.scalars().all()
 
         chapters_result = await self.db.execute(
-            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order)
+            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order).limit(200)
         )
         all_chapters = chapters_result.scalars().all()
-        if len(all_chapters) > 200:
-            logger.warning("Project %s has %d chapters, loading all at once may cause performance issues", project_id, len(all_chapters))
         chapters_by_act: dict[uuid.UUID, list] = {}
         for ch in all_chapters:
             chapters_by_act.setdefault(ch.act_id, []).append(ch)
 
         chapter_ids = [ch.id for ch in all_chapters]
         scenes_result = await self.db.execute(
-            select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order)
+            select(Scene).where(Scene.chapter_id.in_(chapter_ids)).order_by(Scene.sort_order).limit(1000)
         )
         all_scenes = scenes_result.scalars().all()
-        if len(all_scenes) > 1000:
-            logger.warning("Project %s has %d scenes, loading all at once may cause performance issues", project_id, len(all_scenes))
         scenes_by_chapter: dict[uuid.UUID, list] = {}
         for sc in all_scenes:
             scenes_by_chapter.setdefault(sc.chapter_id, []).append(sc)
@@ -513,29 +509,30 @@ class ContextBuilder:
             lines.append(f"- {t.name}{prop}")
         return "\n".join(lines)
 
-    async def _adjacent_chapters_text(self, project_id: uuid.UUID, sort_order: int, act_id: uuid.UUID | None) -> str:
-        r = await self.db.execute(
-            select(Chapter)
-            .where(Chapter.project_id == project_id)
-            .order_by(Chapter.sort_order)
-        )
-        all_chapters = r.scalars().all()
-        if len(all_chapters) <= 1:
-            return "（只有一个章节，暂无相邻章节）"
+async def _adjacent_chapters_text(self, project_id: uuid.UUID, sort_order: int, act_id: uuid.UUID | None) -> str:
+    r = await self.db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.sort_order)
+        .limit(200)
+    )
+    all_chapters = r.scalars().all()
+    if len(all_chapters) <= 1:
+        return "（只有一个章节，暂无相邻章节）"
 
-        idx = next((i for i, ch in enumerate(all_chapters) if ch.sort_order == sort_order), 0)
-        start = max(0, idx - 2)
-        end = min(len(all_chapters), idx + 3)
+    idx = next((i for i, ch in enumerate(all_chapters) if ch.sort_order == sort_order), 0)
+    start = max(0, idx - 2)
+    end = min(len(all_chapters), idx + 3)
 
-        lines = []
-        for i in range(start, end):
-            ch = all_chapters[i]
-            marker = " ← 当前章节" if ch.sort_order == sort_order else ""
-            goal_preview = ""
-            if ch.goal:
-                goal_preview = f" | 目标：{ch.goal[:40]}..." if len(ch.goal) > 40 else f" | 目标：{ch.goal}"
-            lines.append(f"{ch.sort_order}. {ch.title}{goal_preview}{marker}")
-        return "\n".join(lines)
+    lines = []
+    for i in range(start, end):
+        ch = all_chapters[i]
+        marker = " ← 当前章节" if ch.sort_order == sort_order else ""
+        goal_preview = ""
+        if ch.goal:
+            goal_preview = f" | 目标：{ch.goal[:40]}..." if len(ch.goal) > 40 else f" | 目标：{ch.goal}"
+        lines.append(f"{ch.sort_order}. {ch.title}{goal_preview}{marker}")
+    return "\n".join(lines)
 
     def _position_desc(self, sort_order: int, total_chapters: int = 0) -> str:
         if sort_order <= 1:
@@ -584,5 +581,4 @@ class ContextBuilder:
             )
         except Exception as e:
             logger.warning("RAG context retrieval failed: %s", e, exc_info=True)
-            await self.db.rollback()
             return ""

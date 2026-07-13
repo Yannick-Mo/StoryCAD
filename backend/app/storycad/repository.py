@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
@@ -20,56 +21,40 @@ class StoryCADRepository:
         self.db = db
 
     # ============================================================
-    # Editor data: full load
+    # Editor data: full load (parallelized)
     # ============================================================
 
     async def get_editor_data(self, project_id: uuid.UUID) -> dict:
         result = {"project_id": str(project_id)}
 
-        acts = await self.db.execute(
-            select(Act).where(Act.project_id == project_id).order_by(Act.sort_order)
-        )
-        result["acts"] = [self._row(r) for r in acts.scalars().all()]
+        async def _fetch(model, order_field: str | None = None):
+            q = select(model).where(model.project_id == project_id)
+            if order_field and hasattr(model, order_field):
+                q = q.order_by(getattr(model, order_field))
+            r = await self.db.execute(q)
+            return [self._row(o) for o in r.scalars().all()]
 
-        chapters = await self.db.execute(
-            select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.sort_order)
+        (
+            result["acts"],
+            result["chapters"],
+            result["scenes"],
+            result["edges"],
+            result["characters"],
+            result["character_relations"],
+            result["themes"],
+            result["theme_chapters"],
+            result["rhythms"],
+        ) = await asyncio.gather(
+            _fetch(Act, "sort_order"),
+            _fetch(Chapter, "sort_order"),
+            _fetch(Scene, "sort_order"),
+            _fetch(ChapterEdge),
+            _fetch(Character, "sort_order"),
+            _fetch(CharacterRelation),
+            _fetch(Theme, "sort_order"),
+            _fetch(ThemeChapter),
+            _fetch(ChapterRhythm),
         )
-        result["chapters"] = [self._row(r) for r in chapters.scalars().all()]
-
-        scenes = await self.db.execute(
-            select(Scene).where(Scene.project_id == project_id).order_by(Scene.sort_order)
-        )
-        result["scenes"] = [self._row(r) for r in scenes.scalars().all()]
-
-        edges = await self.db.execute(
-            select(ChapterEdge).where(ChapterEdge.project_id == project_id)
-        )
-        result["edges"] = [self._row(r) for r in edges.scalars().all()]
-
-        characters = await self.db.execute(
-            select(Character).where(Character.project_id == project_id).order_by(Character.sort_order)
-        )
-        result["characters"] = [self._row(r) for r in characters.scalars().all()]
-
-        char_rels = await self.db.execute(
-            select(CharacterRelation).where(CharacterRelation.project_id == project_id)
-        )
-        result["character_relations"] = [self._row(r) for r in char_rels.scalars().all()]
-
-        themes = await self.db.execute(
-            select(Theme).where(Theme.project_id == project_id).order_by(Theme.sort_order)
-        )
-        result["themes"] = [self._row(r) for r in themes.scalars().all()]
-
-        theme_chs = await self.db.execute(
-            select(ThemeChapter).where(ThemeChapter.project_id == project_id)
-        )
-        result["theme_chapters"] = [self._row(r) for r in theme_chs.scalars().all()]
-
-        rhythms = await self.db.execute(
-            select(ChapterRhythm).where(ChapterRhythm.project_id == project_id)
-        )
-        result["rhythms"] = [self._row(r) for r in rhythms.scalars().all()]
 
         proj_result = await self.db.execute(
             select(Project).where(Project.id == project_id)

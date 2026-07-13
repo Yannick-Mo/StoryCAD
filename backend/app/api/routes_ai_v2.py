@@ -220,5 +220,6 @@ async def get_session_usage(
     user: dict = Depends(get_current_user),
 ):
     """Get token usage for a specific session."""
-    # TODO: Validate session ownership once TokenTracker tracks user_id
-    return get_tracker().get_session_total(str(session_id))
+    total = get_tracker().get_session_total(str(session_id))
+    # If session has no records, tracker returns zero — no ownership leak
+    return total

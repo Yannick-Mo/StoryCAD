@@ -1,3 +1,4 @@
+import asyncio
 from typing import AsyncGenerator, Optional
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,18 +11,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 _redis_instance: Redis | None = None
-_revoked_tokens: set[str] = set()
-_BLACKLIST_THRESHOLD = 10000
+_redis_lock = asyncio.Lock()
+_revoked_tokens: dict[str, float] = {}
+_BLACKLIST_MAX = 20000
+_BLACKLIST_TTL = 86400  # 24h
 
 
 def blacklist_token(token: str) -> None:
-    _revoked_tokens.add(token)
-    if len(_revoked_tokens) > _BLACKLIST_THRESHOLD:
-        logger.warning("In-memory token blacklist has %d entries, consider configuring Redis", len(_revoked_tokens))
+    _revoked_tokens[token] = __import__("time").time()
+    if len(_revoked_tokens) > _BLACKLIST_MAX:
+        cutoff = __import__("time").time() - _BLACKLIST_TTL
+        for t in list(_revoked_tokens.keys()):
+            if _revoked_tokens[t] < cutoff:
+                del _revoked_tokens[t]
 
 
 def is_token_revoked(token: str) -> bool:
-    return token in _revoked_tokens
+    entry = _revoked_tokens.get(token)
+    if entry is None:
+        return False
+    if __import__("time").time() - entry > _BLACKLIST_TTL:
+        del _revoked_tokens[token]
+        return False
+    return True
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -34,19 +46,22 @@ async def get_redis() -> Redis | None:
     global _redis_instance
     if _redis_instance is not None:
         return _redis_instance
-    try:
-        _redis_instance = Redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-        )
-        await _redis_instance.ping()
-        logger.info("Connected to Redis at %s", settings.redis_url)
-    except Exception as exc:
-        logger.warning("Redis unavailable (using in-memory fallback): %s", exc)
-        _redis_instance = None
+    async with _redis_lock:
+        if _redis_instance is not None:
+            return _redis_instance
+        try:
+            _redis_instance = Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+            )
+            await _redis_instance.ping()
+            logger.info("Connected to Redis at %s", settings.redis_url)
+        except Exception as exc:
+            logger.warning("Redis unavailable (using in-memory fallback): %s", exc)
+            _redis_instance = None
     return _redis_instance
 
 

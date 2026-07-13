@@ -38,7 +38,7 @@ class ProjectRepository:
         for key, value in kwargs.items():
             setattr(project, key, value)
         try:
-            await self.commit()
+            await self.db.commit()
         except Exception:
             await self.db.rollback()
             raise
@@ -80,11 +80,12 @@ class ProjectRepository:
         await self.db.refresh(pv)
         return pv
 
-    async def get_versions(self, project_id: uuid.UUID) -> list[ProjectVersion]:
+    async def get_versions(self, project_id: uuid.UUID, limit: int = 50) -> list[ProjectVersion]:
         result = await self.db.execute(
             select(ProjectVersion)
             .where(ProjectVersion.project_id == project_id)
             .order_by(desc(ProjectVersion.version))
+            .limit(limit)
         )
         return result.scalars().all()
 

@@ -126,7 +126,7 @@ class ThemeChapter(StoryBase):
     __tablename__ = "theme_chapters"
     theme_id = Column(UUID(as_uuid=True), ForeignKey("themes.id", ondelete="CASCADE"), primary_key=True)
     chapter_id = Column(UUID(as_uuid=True), ForeignKey("chapters.id", ondelete="CASCADE"), primary_key=True)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
 
 # ============================================================

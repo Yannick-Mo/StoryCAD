@@ -1,8 +1,11 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Lock
 
 from .registry import get as _get_model
+
+_MAX_RECORDS = 100000
+_RECORD_TTL = timedelta(hours=24)
 
 
 @dataclass
@@ -20,6 +23,13 @@ class TokenTracker:
     def __init__(self):
         self._records: list[UsageRecord] = []
         self._lock = Lock()
+
+    def _evict_old(self):
+        cutoff = datetime.now() - _RECORD_TTL
+        before = len(self._records)
+        self._records = [r for r in self._records if r.timestamp > cutoff]
+        if len(self._records) > _MAX_RECORDS:
+            self._records = self._records[-_MAX_RECORDS:]
 
     def track(
         self,
@@ -48,6 +58,8 @@ class TokenTracker:
         )
         with self._lock:
             self._records.append(record)
+            if len(self._records) > _MAX_RECORDS:
+                self._evict_old()
         return record
 
     def get_session_total(self, session_id: str) -> dict:
