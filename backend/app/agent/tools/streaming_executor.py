@@ -173,8 +173,8 @@ class StreamingToolExecutor:
         # Serialise SAFE tool access — AsyncSession is not coroutine-safe
         self._safe_lock = asyncio.Lock()
 
-        # Pending async tasks (tool_use_id -> Task)
-        self._pending: dict[str, asyncio.Task] = {}
+        # Pending async tasks (tool_use_id -> (tool_name, Task))
+        self._pending: dict[str, tuple[str, asyncio.Task]] = {}
 
         # Completed results: list of (tool_use_id, result_dict)
         self._completed: list[tuple[str, dict]] = []
@@ -229,11 +229,10 @@ class StreamingToolExecutor:
         concurrency = tool._effective_concurrency
 
         if concurrency == ConcurrencyMode.SAFE:
-            # Execute immediately in background
             task = asyncio.create_task(
                 self._execute_tool(tool_name, args, tool_use_id)
             )
-            self._pending[tool_use_id or tool_name] = task
+            self._pending[tool_use_id or tool_name] = (tool_name, task)
         elif concurrency == ConcurrencyMode.EXCLUSIVE:
             self._queued_exclusive.append((tool_name, args, tool_use_id))
         elif concurrency == ConcurrencyMode.BARRIER:
@@ -254,16 +253,16 @@ class StreamingToolExecutor:
         """
         results: list[dict] = []
         done_ids: list[str] = []
-        for tid, task in list(self._pending.items()):
+        for tid, (tool_name, task) in list(self._pending.items()):
             if task.done():
                 done_ids.append(tid)
                 try:
                     result = task.result()
                     results.append(result)
                 except asyncio.CancelledError:
-                    results.append({"tool": tid, "success": False, "error": "Cancelled"})
+                    results.append({"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid})
                 except Exception as exc:
-                    results.append({"tool": tid, "success": False, "error": str(exc)})
+                    results.append({"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid})
 
         for tid in done_ids:
             del self._pending[tid]
@@ -291,16 +290,16 @@ class StreamingToolExecutor:
             return []
 
         if self._pending:
-            tasks = list(self._pending.values())
+            tasks = [task for _, task in self._pending.values()]
             await asyncio.gather(*tasks, return_exceptions=True)
-            for tid, task in list(self._pending.items()):
+            for tid, (tool_name, task) in list(self._pending.items()):
                 try:
                     result = task.result()
                     self._completed.append((tid, result))
                 except asyncio.CancelledError:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
+                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
                 except Exception as exc:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": str(exc), "_tool_use_id": tid}))
+                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}))
             self._pending.clear()
 
         return [r for _, r in self._completed]
@@ -346,16 +345,16 @@ class StreamingToolExecutor:
 
         # 1. Await all pending SAFE tools
         if self._pending:
-            tasks = list(self._pending.values())
+            tasks = [task for _, task in self._pending.values()]
             await asyncio.gather(*tasks, return_exceptions=True)
-            for tid, task in list(self._pending.items()):
+            for tid, (tool_name, task) in list(self._pending.items()):
                 try:
                     result = task.result()
                     self._completed.append((tid, result))
                 except asyncio.CancelledError:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
+                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
                 except Exception as exc:
-                    self._completed.append((tid, {"tool": tid, "success": False, "error": str(exc), "_tool_use_id": tid}))
+                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}))
             self._pending.clear()
 
         # 2. Execute EXCLUSIVE tools serially
@@ -385,7 +384,7 @@ class StreamingToolExecutor:
         cancels mid-stream.
         """
         self._discarded = True
-        for task in self._pending.values():
+        for _, task in self._pending.values():
             task.cancel()
         self._pending.clear()
         self._queued_exclusive.clear()

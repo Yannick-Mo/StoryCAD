@@ -24,9 +24,11 @@ class ConsistencyCheckTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
+            import uuid
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             checker = ConsistencyChecker(db)
-            report = await checker.check_all(kwargs["project_id"])
+            report = await checker.check_all(pid)
             return ToolResult(success=True, data=report.model_dump(mode="json"))
         except Exception as e:
             await db.rollback()
@@ -52,11 +54,12 @@ class RhythmAnalyzeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
+            import uuid
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             from app.agent.rhythm.analyzer import RhythmAnalyzer
-            project_id = kwargs["project_id"]
             analyzer = RhythmAnalyzer(db)
-            result = await analyzer.analyze(project_id)
+            result = await analyzer.analyze(pid)
             return ToolResult(success=True, data=result)
         except Exception as e:
             await db.rollback()

@@ -49,7 +49,7 @@ class ReadProjectTool(BaseTool):
 class ReadChapterTool(BaseTool):
     meta = ToolMeta(
         name="read_chapter",
-        description="获取章节及其场景列表",
+        description="获取章节及其场景列表（章节ID可在 list_chapters 返回或结构概览 [ch:xxx] 中找到）",
         concurrency=ConcurrencyMode.SAFE,
         search_hint="read chapter scenes list",
     )
@@ -86,12 +86,12 @@ class ReadChapterTool(BaseTool):
 class ReadSceneTool(BaseTool):
     meta = ToolMeta(
         name="read_scene",
-        description="获取场景内容，包括 SceneContent",
+        description="获取场景内容，包括 SceneContent（场景ID可在 list_scenes 返回或结构概览 [sc:xxx] 中找到）",
         concurrency=ConcurrencyMode.SAFE,
         search_hint="read scene content detail",
     )
     name = "read_scene"
-    description = "获取场景内容，包括 SceneContent"
+    description = "获取场景内容，包括 SceneContent（场景ID可在 list_scenes 返回或结构概览 [sc:xxx] 中找到）"
     parameters = {
         "type": "object",
         "properties": {
@@ -304,7 +304,7 @@ class SetChapterGoalTool(BaseTool):
 class UpdateChapterTool(BaseTool):
     meta = ToolMeta(
         name="update_chapter",
-        description="更新章节信息（标题、状态、目标）",
+        description="更新章节信息（标题、状态、目标）。章节ID可在 list_chapters 或结构概览 [ch:xxx] 中找到",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         search_hint="update chapter modify edit",
     )

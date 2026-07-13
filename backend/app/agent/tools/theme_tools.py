@@ -103,12 +103,13 @@ class DeleteThemeTool(BaseTool):
         name="delete_theme",
         description="删除指定主题",
         concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete theme remove",
     )
     name = "delete_theme"
     description = "删除指定主题"
     is_write_operation = True
-    is_destructive = True
     parameters = {
         "type": "object",
         "properties": {

@@ -104,6 +104,8 @@ class DeleteCharacterTool(BaseTool):
         name="delete_character",
         description="删除指定角色（同时删除该角色的所有关系连线）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete character remove",
     )
     name = "delete_character"
@@ -152,6 +154,8 @@ class DeleteRelationTool(BaseTool):
         name="delete_relation",
         description="删除角色关系连线",
         concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete relation character relationship remove",
     )
     name = "delete_relation"
@@ -246,9 +250,9 @@ class UpdateRelationTool(BaseTool):
         "type": "object",
         "properties": {
             "project_id": {"type": "string", "description": "项目ID"},
-            "relation_id": {"type": "string", "description": "关系ID（留空则创建新关系）"},
-            "character_id": {"type": "string", "description": "源角色ID"},
-            "target_id": {"type": "string", "description": "目标角色ID"},
+            "relation_id": {"type": "string", "description": "已有关系的ID。留空或省略则创建新关系；填写则更新已有关系"},
+            "character_id": {"type": "string", "description": "源角色ID（创建新关系时必需，更新已有关系时可选）"},
+            "target_id": {"type": "string", "description": "目标角色ID（创建新关系时必需，更新已有关系时可选）"},
             "rel_type": {"type": "string", "description": "关系类型"},
             "label": {"type": "string", "description": "关系标签"},
             "description": {"type": "string", "description": "关系描述"},
@@ -282,9 +286,14 @@ class UpdateRelationTool(BaseTool):
                 return ToolResult(success=True, data=updated)
             else:
                 if "character_id" not in kwargs or "target_id" not in kwargs:
+                    missing = []
+                    if "character_id" not in kwargs:
+                        missing.append("character_id（源角色ID）")
+                    if "target_id" not in kwargs:
+                        missing.append("target_id（目标角色ID）")
                     return ToolResult(
                         success=False,
-                        error="character_id and target_id are required when creating a new relation (no relation_id provided)",
+                        error=f"创建新关系时必须提供：{', '.join(missing)}。已有的关系ID为：{relation_id or '无'}",
                     )
                 char_id = uuid.UUID(kwargs["character_id"])
                 tgt_id = uuid.UUID(kwargs["target_id"])

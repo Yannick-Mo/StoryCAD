@@ -125,6 +125,7 @@ class DeleteSceneTool(BaseTool):
         description="删除指定场景（Scene），同时删除场景正文内容",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete scene remove destroy",
     )
     name = "delete_scene"
@@ -170,6 +171,7 @@ class DeleteChapterTool(BaseTool):
         description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文（数据库级联删除）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete chapter remove cascade",
     )
     name = "delete_chapter"
@@ -220,6 +222,7 @@ class DeleteActTool(BaseTool):
         description="删除指定幕（Act），同时删除该幕下的所有章节和场景（数据库级联删除）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete act remove cascade",
     )
     name = "delete_act"
@@ -340,6 +343,8 @@ class CreateProjectFromMaterialTool(BaseTool):
         description="根据用户提供的创作素材，自动生成完整项目（包括幕、章、场景、角色、关系、世界观设定）。"
                     "返回新创建的项目ID。素材至少10个字",
         concurrency=ConcurrencyMode.EXCLUSIVE,
+        is_destructive=True,
+        needs_confirmation=True,
         timeout=120,
         search_hint="create project from material generate",
     )
@@ -619,6 +624,7 @@ class DeleteEdgeTool(BaseTool):
         description="删除指定章节连线",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
+        needs_confirmation=True,
         search_hint="delete edge remove connection",
     )
     name = "delete_edge"

@@ -633,9 +633,11 @@ async def autonomous_loop(
                     args = step.get("params", {})
                     tool_use_id = step.get("tool_use_id", "")
                     try:
-                        result = await StreamingToolExecutor(filtered_tools, db).execute_tool(
-                            tool_name, args, tool_use_id,
-                        )
+                        result = await StreamingToolExecutor(
+                            filtered_tools, db,
+                            project_id=state.project_id,
+                            user_id=state.user_id,
+                        ).execute_tool(tool_name, args, tool_use_id)
                     except Exception as exc:
                         result = {"tool": tool_name, "success": False, "error": str(exc)}
                     yield _event_tool_done(result)

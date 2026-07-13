@@ -92,8 +92,8 @@ class SuperAgent:
         ]
         for tr in visible_results:
             if skip_keys:
-                key = f"{tr.get('tool', '')}|{tr.get('success')}"
-                if key in skip_keys:
+                tid = tr.get("_tool_use_id", "")
+                if tid and tid in skip_keys:
                     continue
             yield {"type": "tool_done", "data": json.dumps(tr, ensure_ascii=False)}
 
@@ -326,8 +326,9 @@ class SuperAgent:
                         "type": "tool_done",
                         "data": json.dumps(event["_tool_done"], ensure_ascii=False),
                     }
-                    key = f"{event['_tool_done'].get('tool', '')}|{event['_tool_done'].get('success')}"
-                    _streaming_tool_results.add(key)
+                    _tool_use_id = event["_tool_done"].get("_tool_use_id", "")
+                    if _tool_use_id:
+                        _streaming_tool_results.add(_tool_use_id)
                 elif "pending_plan" in event:
                     if final_values is None:
                         final_values = {}

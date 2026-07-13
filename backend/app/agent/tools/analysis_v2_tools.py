@@ -226,9 +226,10 @@ class SuggestNextTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             builder = ContextBuilder(db)
-            full_ctx = await builder.build_full(uuid.UUID(kwargs["project_id"]))
+            full_ctx = await builder.build_full(pid)
 
             acts = full_ctx.get("acts", []) if isinstance(full_ctx, dict) else []
             total_chapters = sum(len(_safe_get(a, "chapters", default=[])) for a in acts)
@@ -310,9 +311,10 @@ class ProjectHealthTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            await verify_project_owner(db, kwargs["project_id"], kwargs.get("user_id"))
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
             builder = ContextBuilder(db)
-            full_ctx = await builder.build_full(uuid.UUID(kwargs["project_id"]))
+            full_ctx = await builder.build_full(pid)
 
             acts = full_ctx.get("acts", []) if isinstance(full_ctx, dict) else []
             chars = full_ctx.get("characters", []) if isinstance(full_ctx, dict) else []
