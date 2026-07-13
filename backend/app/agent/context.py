@@ -7,21 +7,12 @@ import uuid
 from collections import OrderedDict
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
-
-class _UUIDEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, uuid.UUID):
-            return str(o)
-        return super().default(o)
-
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge.rag import RAGEngine
-from app.knowledge.skill_engine import SkillEngine as _SkillEngine
+from app.knowledge.skill_engine import _shared_engine as _shared_skill_engine
 from app.project.models import Project, ProjectConfig
 from app.storycad.models import (
     Act,
@@ -34,6 +25,15 @@ from app.storycad.models import (
     Theme,
 )
 from app.utils import row_to_dict
+
+logger = logging.getLogger(__name__)
+
+
+class _UUIDEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, uuid.UUID):
+            return str(o)
+        return super().default(o)
 
 _CONTEXT_CACHE_TTL = 300
 _CONTEXT_CACHE_MAX_SIZE = 100
@@ -89,14 +89,11 @@ class ContextBuilder:
     def __init__(self, db: AsyncSession, redis_client: Redis | None = None):
         self.db = db
         self._redis = redis_client
-        self._skill_engine: _SkillEngine | None = None
         self._rag_engine: RAGEngine | None = None
 
     @property
-    def skill_engine(self) -> _SkillEngine:
-        if self._skill_engine is None:
-            self._skill_engine = _SkillEngine()
-        return self._skill_engine
+    def skill_engine(self):
+        return _shared_skill_engine
 
     @property
     def rag_engine(self) -> RAGEngine:

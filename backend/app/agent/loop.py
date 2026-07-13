@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import time
 from typing import AsyncGenerator
@@ -47,10 +46,8 @@ from app.agent.tools.base import BaseTool
 from app.agent.tools.streaming_executor import StreamingToolExecutor
 from app.llm.client import LLMClient
 from app.llm.types import Message
-from app.knowledge.skill_engine import SkillEngine
-_skill_engine = SkillEngine()
-
-logger = logging.getLogger(__name__)
+from loguru import logger
+from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -962,6 +959,9 @@ async def autonomous_loop(
                     errors=state.errors + [str(e)],
                     transition="error_recovery_retry",
                 )
+                delay = decision.get("delay_seconds", 0)
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 await hook_registry.run("post_turn", state=state, llm_client=llm,
                                          turn_start=turn_start)
                 continue
@@ -1194,23 +1194,16 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
     if decision.action == RecoveryAction.GIVE_UP:
         return {"give_up": True, "message": decision.message}
 
-    # Delegate to RecoveryExecutor for all non-GIVE_UP actions
-    executor = RecoveryExecutor(fallback_models=get_fallback_models())
-    state_dict = state.to_dict()
-    # apply() is async — but we're in a sync helper called from the
-    # exception handler.  We build a sync-compatible result instead.
-    # Recovery actions that modify state (non-async parts) are handled
-    # inline; the delay is handled at the retry level.
-
     retry_state = state.replace(
         retry_count=state.retry_count + 1,
     )
+    base_result = {"give_up": False, "state": retry_state, "delay_seconds": decision.delay_seconds}
 
     if decision.action == RecoveryAction.RETRY:
-        return {"give_up": False, "state": retry_state.replace(transition="recovery_retry")}
+        return {**base_result, "state": retry_state.replace(transition="recovery_retry")}
 
     if decision.action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:
-        return {"give_up": False, "state": retry_state.replace(
+        return {**base_result, "state": retry_state.replace(
             errors=state.errors + [f"[SELF-CORRECTION] {error}"],
             transition="recovery_error_context",
         )}
@@ -1218,13 +1211,13 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
     if decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
         from app.agent.context_compressor import compress_history
         compressed = compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
-        return {"give_up": False, "state": retry_state.replace(
+        return {**base_result, "state": retry_state.replace(
             messages=compressed,
             transition="recovery_compressed",
         )}
 
     if decision.action == RecoveryAction.RETRY_ESCALATED_TOKENS:
-        return {"give_up": False, "state": retry_state.replace(
+        return {**base_result, "state": retry_state.replace(
             transition="recovery_escalated",
         )}
 
@@ -1233,11 +1226,8 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
         idx = state.recovery_state.get("model_index", 0)
         if idx < len(fallbacks):
             new_model = fallbacks[idx]
-            # Do NOT mutate llm.model — use state._model_override instead.
-            # The LLM call sites in the loop pass state._model_override as
-            # the model parameter, so setting it in state is sufficient.
             logger.info("Switching to fallback model: {}", new_model)
-            return {"give_up": False, "state": retry_state.replace(
+            return {**base_result, "state": retry_state.replace(
                 _model_override=new_model,
                 recovery_state={
                     **state.recovery_state,

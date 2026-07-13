@@ -18,9 +18,7 @@ from app.llm.client import LLMClient
 from app.llm.types import Message
 from app.agent.tools import get_tool_registry as _get_registry
 from app.agent.tools import get_tool_descriptions as _build_tool_descriptions
-from app.knowledge.skill_engine import SkillEngine
-
-_skill_engine = SkillEngine()
+from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 _CHAT_STREAM_TIMEOUT = 120  # 2 min (was 60s — too tight for writing tools)
 
@@ -65,7 +63,9 @@ class SuperAgent:
     async def _get_tool_registry(self) -> dict:
         """Lazily load and cache the tool registry for write detection."""
         if self._tool_registry_cache is None:
-            self._tool_registry_cache = _get_registry(self.db, llm_client=self._llm_client)
+            self._tool_registry_cache = await asyncio.to_thread(
+                _get_registry, self.db, llm_client=self._llm_client
+            )
         return self._tool_registry_cache
 
     @staticmethod
@@ -275,20 +275,11 @@ class SuperAgent:
         yield {"type": "conv_id", "data": conversation_id}
 
         # 7. Attachment injection
-        prev_tool_results = (
-            saved_pending_plan.get("_prev_tool_results", [])
-            if isinstance(saved_pending_plan, dict)
-            else []
-        )
-        prev_errors: list[str] = []
-        if isinstance(saved_pending_plan, dict):
-            prev_errors = saved_pending_plan.get("_prev_errors", []) or []
-
         attachment_state_for_injector = {
             "project_id": project_id,
             "conversation_id": conversation_id,
             "cowriter_session": saved_session or {},
-            "errors": prev_errors,
+            "errors": [],
             "active_skills": active_skills,
             "pending_plan": saved_pending_plan,
             "plan_confirmed": saved_plan_confirmed,
@@ -297,7 +288,7 @@ class SuperAgent:
         }
         turn = len([m for m in history if m.role == "user"]) + 1
         attachments = await self.attachment_injector.collect(
-            attachment_state_for_injector, prev_tool_results, turn,
+            attachment_state_for_injector, [], turn,
         )
         if attachments:
             messages = list(initial_state["messages"])
@@ -307,7 +298,6 @@ class SuperAgent:
 
         # 8. Autonomous loop dispatch (always)
         assistant_content = ""
-        _done_sent = False
         token_buffer: list[str] = []
         final_values: dict | None = None
         _streaming_tool_results: set[str] = set()
@@ -401,8 +391,6 @@ class SuperAgent:
                     assistant_content = content
                     yield {"type": "token", "data": content}
 
-        if not _done_sent:
-            _done_sent = True
         yield {"type": "done", "data": ""}
 
         if assistant_content:

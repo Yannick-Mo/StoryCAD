@@ -182,34 +182,6 @@ class SkillEngine:
 
     # ── File-path conditional activation ────────────────────────────
 
-    def match_skill_paths(
-        self, file_paths: list[str]
-    ) -> list[str]:
-        """Return skill names whose ``paths`` patterns match any of *file_paths*.
-
-        Uses ``fnmatch`` with case-insensitive matching on POSIX-style paths.
-        Paths are matched against each skill's ``paths`` list (glob patterns).
-        """
-        matched: set[str] = set()
-        for name in self.list_all_skills():
-            data = asyncio.run_coroutine_threadsafe(
-                self._load_yaml(name), asyncio.get_event_loop()
-            ).result()
-            if data is None:
-                continue
-            patterns = data.get("paths", []) or []
-            if not patterns:
-                continue
-            for fpath in file_paths:
-                norm_path = fpath.replace("\\", "/")
-                for pat in patterns:
-                    if fnmatch.fnmatch(norm_path, pat):
-                        matched.add(name)
-                        break
-                if name in matched:
-                    break
-        return sorted(matched)
-
     async def match_skill_paths_async(
         self, file_paths: list[str]
     ) -> list[str]:
@@ -248,3 +220,6 @@ class SkillEngine:
             if await self._load_yaml(name) is not None:
                 count += 1
         return count
+
+
+_shared_engine = SkillEngine()

@@ -11,9 +11,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.base import BaseTool, ToolMeta, ToolResult, ConcurrencyMode
-from app.knowledge.skill_engine import SkillEngine
-
-_skill_engine = SkillEngine()
+from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 
 class InvokeSkillTool(BaseTool):

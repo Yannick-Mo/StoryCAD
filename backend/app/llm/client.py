@@ -468,6 +468,7 @@ class LLMClient:
 
             # Accumulators for streaming tool calls
             tool_call_builders: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
+            tool_call_emitted: set[int] = set()  # track which tool indices have been emitted
 
             try:
                 async for chunk in self._stream_chat(url, headers, body):
@@ -501,11 +502,19 @@ class LLMClient:
                                 if fn.get("arguments"):
                                     builder["function"]["arguments"] += fn["arguments"]
 
-                        # If this delta contains a complete tool call (has all parts),
-                        # emit it now. We check for non-empty name AND arguments OR finish_reason.
-                        # This handles models that stream tool calls incrementally.
-                        # We emit each tool call as it completes based on finish_reason.
-                        pass
+                        # Emit tool calls incrementally as they arrive (name + args present)
+                        for idx in sorted(tool_call_builders.keys()):
+                            if idx in tool_call_emitted:
+                                continue
+                            builder = tool_call_builders[idx]
+                            if builder["function"]["name"] and builder["function"]["arguments"]:
+                                tool_call_emitted.add(idx)
+                                yield StreamChunk(
+                                    tool_call=ToolCall(
+                                        id=builder["id"],
+                                        function=dict(builder["function"]),
+                                    ),
+                                )
 
                     # When finish_reason signals the end of a tool call stream,
                     # emit all completed tool call chunks
@@ -521,6 +530,7 @@ class LLMClient:
                                     ),
                                 )
                         tool_call_builders.clear()
+                        tool_call_emitted.clear()
 
                         usage = None
                         if chunk.get("usage"):
