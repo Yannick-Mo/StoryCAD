@@ -24,8 +24,11 @@ class ConsistencyCheckTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
+            pid = self._require_param(kwargs, "project_id")
+            if pid is None:
+                return self._missing_param("project_id")
             import uuid
-            pid = uuid.UUID(kwargs["project_id"])
+            pid = uuid.UUID(pid)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             checker = ConsistencyChecker(db)
             report = await checker.check_all(pid)
@@ -54,8 +57,11 @@ class RhythmAnalyzeTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
+            pid = self._require_param(kwargs, "project_id")
+            if pid is None:
+                return self._missing_param("project_id")
             import uuid
-            pid = uuid.UUID(kwargs["project_id"])
+            pid = uuid.UUID(pid)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             from app.agent.rhythm.analyzer import RhythmAnalyzer
             analyzer = RhythmAnalyzer(db)

@@ -156,6 +156,50 @@ class BaseTool(ABC):
         return ""
 
     # ------------------------------------------------------------------
+    # Parameter validation helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _require_param(kwargs: dict, key: str, hint: str = "") -> str | None:
+        """Get a required param from kwargs, returning None if missing.
+
+        The caller should check for None and return a clear ToolResult error.
+        """
+        val = kwargs.get(key)
+        if val is None:
+            return None
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return None
+        return val
+
+    @staticmethod
+    def _missing_param(key: str) -> ToolResult:
+        """Return a ToolResult for a missing required parameter."""
+        hints = {
+            "chapter_id": "请先调用 list_chapters 获取可用的 chapter_id",
+            "scene_id": "请先调用 list_scenes 获取可用的 scene_id",
+            "character_id": "请先调用 list_characters 获取可用的 character_id",
+            "act_id": "请先获取幕ID，项目结构概览中可查看",
+            "keyword": "请提供搜索关键词",
+            "project_id": "项目ID缺失，请检查上下文",
+            "edge_id": "请先调用 list_edges 获取可用的 edge_id",
+            "relation_id": "请先调用 list_relations 获取可用的 relation_id",
+            "theme_id": "请先获取主题ID",
+            "source_id": "请提供源章节ID，先调用 list_chapters",
+            "target_id": "请提供目标章节ID，先调用 list_chapters",
+            "content": "请提供正文内容",
+            "name": "请提供名称",
+            "title": "请提供标题",
+        }
+        hint = hints.get(key, f"请检查工具参数说明")
+        return ToolResult(
+            success=False,
+            error=f"缺少必要参数: {key}。{hint}",
+        )
+
+    # ------------------------------------------------------------------
     # Core abstract method
     # ------------------------------------------------------------------
 

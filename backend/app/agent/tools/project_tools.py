@@ -30,7 +30,10 @@ class ReadProjectTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            pid = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             proj_repo = ProjectRepository(db)
             project = await proj_repo.get(pid)
@@ -58,14 +61,17 @@ class ReadChapterTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "chapter_id": {"type": "string", "description": "章节ID"},
+            "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 返回结果或结构概览中的 [ch:xxx]"},
         },
         "required": ["chapter_id"],
     }
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            ch_id = uuid.UUID(kwargs["chapter_id"])
+            ch_raw = self._require_param(kwargs, "chapter_id")
+            if ch_raw is None:
+                return self._missing_param("chapter_id")
+            ch_id = uuid.UUID(ch_raw)
             result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
             chapter = result.scalar_one_or_none()
             if not chapter:
@@ -102,7 +108,10 @@ class ReadSceneTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            sc_id = uuid.UUID(kwargs["scene_id"])
+            sc_raw = self._require_param(kwargs, "scene_id")
+            if sc_raw is None:
+                return self._missing_param("scene_id")
+            sc_id = uuid.UUID(sc_raw)
             result = await db.execute(select(Scene).where(Scene.id == sc_id))
             scene = result.scalar_one_or_none()
             if not scene:

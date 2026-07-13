@@ -582,9 +582,7 @@ async def autonomous_loop(
 
         # ── Re-filter tools (skills may have changed) ──────────────
         filtered_tools = get_filtered_tools(tools, mode=state.mode)
-        filtered_tool_desc = "\n".join(
-            f"- {t.name}: {t.description}" for t in filtered_tools.values()
-        ) or tool_descriptions
+        filtered_tool_desc = get_tool_descriptions(filtered_tools) or tool_descriptions
         tool_schemas = _build_tool_schemas(filtered_tools)
 
         # ── Token budget check ─────────────────────────────────────

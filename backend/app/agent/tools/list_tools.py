@@ -269,10 +269,16 @@ class SearchNodesTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            pid = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            pid = uuid.UUID(pid_raw)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
 
-            keyword = kwargs["keyword"].strip()
+            keyword = self._require_param(kwargs, "keyword")
+            if keyword is None:
+                return self._missing_param("keyword")
+            keyword = keyword.strip()
             if not keyword:
                 return ToolResult(success=False, error="关键词不能为空")
 

@@ -454,6 +454,10 @@ class StreamingToolExecutor:
             return {"tool": name, "success": False, "error": f"Timed out after {timeout}s", "_tool_use_id": tool_use_id}
         except asyncio.CancelledError:
             raise
+        except KeyError as ke:
+            return {"tool": name, "success": False,
+                    "error": f"缺少必要参数: {ke}。请检查工具描述中的 required 参数并全部提供",
+                    "_tool_use_id": tool_use_id}
         except Exception as exc:
             logger.exception("Tool '%s' execution failed", name)
             return {"tool": name, "success": False, "error": str(exc), "_tool_use_id": tool_use_id}

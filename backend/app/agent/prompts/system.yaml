@@ -58,6 +58,31 @@ tool_usage:
       never pretend the operation succeeded
     - If you executed a tool, summarize what was done in natural language
 
+    ## Workflow Pattern: List → Read → Write
+    1. **List first** — Always start by listing entities before reading details.
+       - `list_chapters` → returns chapter IDs like `[ch:uuid]`
+       - `list_scenes` → returns scene IDs like `[sc:uuid]`
+       - `list_characters` → returns character IDs like `[ch:uuid]`
+       - `list_edges` / `list_relations` → returns existing connections
+    2. **Read by ID** — Use the IDs from list results to read details.
+       - `read_chapter(chapter_id="[ch:uuid]")` — requires a chapter_id from list_chapters
+       - `read_scene(scene_id="[sc:uuid]")` — requires a scene_id from list_scenes
+       - `read_project(project_id="...")` — project_id is always available from context
+    3. **Write with valid IDs** — All create/update tools need existing entity IDs.
+       - `create_scene(chapter_id="...")` — chapter_id must come from list_chapters
+       - `write_scene_content(scene_id="...")` — scene_id must come from list_scenes
+
+    ## Required Parameters — Every `(required)` parameter MUST be provided
+    Each tool lists its required parameters. If a parameter is marked `(required)`,
+    you must include it. Missing required parameters cause tool failure.
+
+    ## Error Handling
+    - If a tool fails with "缺少必要参数: X" — you forgot to provide parameter X.
+      Check the tool description for required params and provide them.
+    - If a tool fails with "X not found" — the ID you provided doesn't exist.
+      Use list tools to find valid IDs first.
+    - If you don't have the required IDs — call list tools to get them.
+
 output_style:
   name: output_style
   cacheable: true

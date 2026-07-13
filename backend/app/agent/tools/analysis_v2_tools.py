@@ -32,9 +32,15 @@ class AnalyzeChapterTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            project_id = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            ch_raw = self._require_param(kwargs, "chapter_id")
+            if ch_raw is None:
+                return self._missing_param("chapter_id")
+            project_id = uuid.UUID(pid_raw)
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
-            chapter_id = uuid.UUID(kwargs["chapter_id"])
+            chapter_id = uuid.UUID(ch_raw)
 
             ch_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
             chapter = ch_result.scalar_one_or_none()
@@ -129,9 +135,15 @@ class AnalyzeCharacterArcTool(BaseTool):
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            project_id = uuid.UUID(kwargs["project_id"])
+            pid_raw = self._require_param(kwargs, "project_id")
+            if pid_raw is None:
+                return self._missing_param("project_id")
+            ch_raw = self._require_param(kwargs, "character_id")
+            if ch_raw is None:
+                return self._missing_param("character_id")
+            project_id = uuid.UUID(pid_raw)
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
-            char_id = uuid.UUID(kwargs["character_id"])
+            char_id = uuid.UUID(ch_raw)
 
             result = await db.execute(select(Character).where(Character.id == char_id))
             char = result.scalar_one_or_none()

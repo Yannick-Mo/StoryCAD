@@ -13,7 +13,7 @@ READ_ONLY_TOOLS: set[str] = {
     "check_consistency", "analyze_rhythm", "suggest_next",
     "list_characters", "list_chapters", "list_scenes",
     "list_relations", "list_edges", "search_nodes",
-    "web_search",
+    "web_search", "web_fetch",
     "invoke_skill",
 }
 
