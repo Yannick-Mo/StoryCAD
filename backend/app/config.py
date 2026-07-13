@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/storyforge"
     redis_url: str = "redis://redis:6379/0"
     jwt_secret_key: str = ""
@@ -26,8 +28,26 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_proxy: str = ""
 
-    class Config:
-        env_file = ".env"
+    # ── Web Search ────────────────────────────────────────────────────
+    # SearXNG instance URL (Docker service name)
+    searxng_url: str = "http://searxng:8080"
+    # Search result size limits
+    search_max_results: int = 10
+    search_min_snippet_len: int = 20
+    # SerpAPI key (optional upgrade)
+    serpapi_api_key: str = ""
+    # Fallback to DuckDuckGo if SearXNG unavailable
+    search_enable_ddg_fallback: bool = True
+
+    # ── Web Fetch ─────────────────────────────────────────────────────
+    # Max content size in chars fetched from a URL
+    web_fetch_max_chars: int = 50000
+    # Max URL fetch timeout in seconds
+    web_fetch_timeout: int = 15
+    # Cache TTL in seconds
+    web_fetch_cache_ttl: int = 900  # 15 minutes
+    # Max cache entries
+    web_fetch_cache_max: int = 64
 
 
 settings = Settings()

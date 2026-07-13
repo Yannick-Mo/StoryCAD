@@ -164,7 +164,7 @@ def build_confirmation_plan(
 
 def _is_read_by_name(name: str) -> bool:
     """Heuristic for read-only tools when registry is unavailable."""
-    read_prefixes = ("read_", "list_", "search_", "analyze_", "check_", "suggest_", "web_search")
+    read_prefixes = ("read_", "list_", "search_", "analyze_", "check_", "suggest_", "web_search", "web_fetch")
     return name.startswith(read_prefixes) or name in ("project_health",)
 
 

@@ -95,6 +95,35 @@ services:
       retries: 3
       start_period: 20s
 
+  searxng:
+    image: searxng/searxng:latest
+    expose:
+      - "8080"
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    restart: unless-stopped
+    networks:
+      - storycad
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     build:
       context: ./frontend
@@ -132,6 +161,7 @@ services:
 
 volumes:
   pgdata:
+  searxng-data:
 
 networks:
   storycad:

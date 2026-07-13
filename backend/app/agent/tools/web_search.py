@@ -1,88 +1,105 @@
-"""Web search tool using DuckDuckGo (free) or SerpAPI (optional upgrade)."""
-
 from __future__ import annotations
 
-import html
+import html as html_mod
 import logging
-import os
 import re
 import time
 from collections import OrderedDict
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-
-class WebSearchError(Exception):
-    pass
-
-
-_SERPAPI_KEY: str | None = None
-_CACHE: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
-_CACHE_MAX = 32
-_CACHE_TTL = 300  # 5 minutes
-
-_CJK_RE = re.compile(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]', re.UNICODE)
+# ── Cache ──────────────────────────────────────────────────────────────────────
+_cache: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
 
 
-def _get_serpapi_key() -> str | None:
-    global _SERPAPI_KEY
-    if _SERPAPI_KEY is None:
-        _SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY")
-    return _SERPAPI_KEY
+def _cache_get(key: str) -> list[dict] | None:
+    if key not in _cache:
+        return None
+    ts, data = _cache[key]
+    if time.monotonic() - ts > settings.web_fetch_cache_ttl:
+        del _cache[key]
+        return None
+    _cache.move_to_end(key)
+    return data
+
+
+def _cache_set(key: str, data: list[dict]):
+    _cache[key] = (time.monotonic(), data)
+    while len(_cache) > settings.web_fetch_cache_max:
+        _cache.popitem(last=False)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]", re.UNICODE)
 
 
 def _extract_cjk_chars(text: str) -> set[str]:
-    """Extract individual CJK characters from text for overlap scoring."""
     return set(_CJK_RE.findall(text))
 
 
 def _compute_relevance(query: str, snippet: str) -> float:
-    """Compute relevance score between query and snippet, CJK-aware."""
     query_lower = query.lower().strip()
     snippet_lower = snippet.lower().strip()
-
     cjk_query = _extract_cjk_chars(query_lower)
     cjk_snippet = _extract_cjk_chars(snippet_lower)
-
     if cjk_query:
-        # CJK: character-level overlap
         if not cjk_snippet:
             return 0.0
-        overlap = len(cjk_query & cjk_snippet)
-        return overlap / len(cjk_query)
-
-    # Non-CJK: word-level overlap
+        return len(cjk_query & cjk_snippet) / len(cjk_query)
     query_words = set(query_lower.split())
     if not query_words:
         return 0.0
     snippet_words = set(snippet_lower.split())
-    overlap = len(query_words & snippet_words)
-    return overlap / len(query_words)
+    return len(query_words & snippet_words) / len(query_words)
 
 
-def _clean_results(raw: list[dict], query: str, max_results: int = 5) -> list[dict]:
-    """Deduplicate, filter, and rank search results."""
+def _domain_match(url: str, domains: list[str]) -> bool:
+    host = urlparse(url).hostname or ""
+    for d in domains:
+        d = d.strip().lower()
+        if d.startswith("."):
+            if host.endswith(d) or host == d[1:]:
+                return True
+        elif host == d:
+            return True
+    return False
+
+
+def _filter_results(
+    raw: list[dict],
+    query: str,
+    max_results: int,
+    allowed_domains: list[str] | None,
+    blocked_domains: list[str] | None,
+) -> list[dict]:
     seen_urls: set[str] = set()
     clean: list[dict] = []
 
     for r in raw:
-        url = (r.get("link") or r.get("url") or "").strip()
-        snippet = (r.get("snippet") or r.get("description") or "").strip()
+        url = (r.get("url") or r.get("link") or "").strip()
+        snippet = (r.get("content") or r.get("snippet") or r.get("description") or "").strip()
 
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
 
-        if len(snippet) < 10:
+        if allowed_domains and not _domain_match(url, allowed_domains):
+            continue
+        if blocked_domains and _domain_match(url, blocked_domains):
+            continue
+
+        if len(snippet) < settings.search_min_snippet_len:
             continue
 
         relevance = _compute_relevance(query, snippet)
-
         clean.append({
             "title": (r.get("title") or "").strip(),
             "url": url,
@@ -94,143 +111,87 @@ def _clean_results(raw: list[dict], query: str, max_results: int = 5) -> list[di
     return clean[:max_results]
 
 
-def _cache_get(key: str) -> list[dict] | None:
-    if key not in _CACHE:
-        return None
-    ts, data = _CACHE[key]
-    if time.monotonic() - ts > _CACHE_TTL:
-        del _CACHE[key]
-        return None
-    _CACHE.move_to_end(key)
-    return data
+# ── SearXNG backend ────────────────────────────────────────────────────────────
 
 
-def _cache_set(key: str, data: list[dict]):
-    _CACHE[key] = (time.monotonic(), data)
-    while len(_CACHE) > _CACHE_MAX:
-        _CACHE.popitem(last=False)
-
-
-async def _search_serpapi(query: str, max_results: int = 5) -> list[dict]:
-    """Search via SerpAPI."""
-    key = _get_serpapi_key()
-    cache_key = f"serpapi:{query}:{max_results}"
+async def _search_searxng(
+    query: str,
+    max_results: int,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+) -> list[dict]:
+    cache_key = f"sxng:{query}:{max_results}:{allowed_domains}:{blocked_domains}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            "https://serpapi.com/search",
-            params={
-                "q": query,
-                "api_key": key,
-                "num": max_results + 3,
-                "engine": "google",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    url = f"{settings.searxng_url.rstrip('/')}/search"
+    params = {"q": query, "format": "json", "language": "zh-CN,en-US"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
 
-    raw = []
-    for result in data.get("organic_results", []):
-        raw.append({
-            "title": result.get("title", ""),
-            "link": result.get("link", ""),
-            "snippet": result.get("snippet", ""),
-        })
-    results = _clean_results(raw, query, max_results)
-    _cache_set(cache_key, results)
-    return results
+        raw = data.get("results", [])
+        results = _filter_results(raw, query, max_results, allowed_domains, blocked_domains)
+        if results:
+            _cache_set(cache_key, results)
+            return results
+
+        logger.info("SearXNG returned no results for query=%s, trying DDG fallback", query)
+    except Exception as e:
+        logger.warning("SearXNG search failed for query=%s: %s", query, e)
+
+    return []
+
+
+# ── DuckDuckGo fallback backend ────────────────────────────────────────────────
 
 
 def _parse_ddg_lite_html(text: str) -> list[dict]:
-    """Parse DuckDuckGo lite HTML into raw result dicts."""
     results = []
-    # Match result rows with flexible class matching
     row_pattern = re.compile(
         r'<tr[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>(.*?)</tr>',
         re.DOTALL | re.IGNORECASE,
     )
     for row_match in row_pattern.finditer(text):
         row = row_match.group(1)
-
         title_match = re.search(
             r'<a[^>]*class="[^"]*result-link[^"]*"[^>]*>(.*?)</a>',
             row, re.DOTALL | re.IGNORECASE,
         )
         if not title_match:
             continue
-
-        title = html.unescape(re.sub(r'<[^>]+>', '', title_match.group(1)).strip())
+        title = html_mod.unescape(re.sub(r"<[^>]+>", "", title_match.group(1)).strip())
         if not title:
             continue
-
         snippet = ""
         snippet_match = re.search(
             r'<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>(.*?)</td>',
             row, re.DOTALL | re.IGNORECASE,
         )
         if snippet_match:
-            snippet = html.unescape(re.sub(r'<[^>]+>', '', snippet_match.group(1)).strip())
-
+            snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip())
         url = ""
         url_match = re.search(r'href="(https?://[^"]+)"', row)
         if url_match:
-            url = html.unescape(url_match.group(1))
-
-        results.append({
-            "title": title,
-            "link": url,
-            "snippet": snippet,
-        })
-
+            url = html_mod.unescape(url_match.group(1))
+        results.append({"title": title, "url": url, "snippet": snippet})
     return results
 
 
-async def _search_ddg_api(query: str, max_results: int = 5) -> list[dict]:
-    """Fallback: search via DuckDuckGo Instant Answer API."""
-    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-        resp = await client.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-            headers={"User-Agent": "Mozilla/5.0 (compatible; StoryCAD/1.0)"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    raw = []
-
-    abstract = data.get("AbstractText", "")
-    abstract_src = data.get("AbstractSource", "")
-    abstract_url = data.get("AbstractURL", "")
-    if abstract and abstract_url:
-        raw.append({"title": abstract_src, "link": abstract_url, "snippet": abstract})
-
-    for topic in data.get("RelatedTopics", []):
-        if "Topics" in topic:
-            for sub in topic["Topics"]:
-                text = sub.get("Text", "")
-                url = sub.get("FirstURL", "") or sub.get("URL", "")
-                if text and url:
-                    raw.append({"title": sub.get("Result", "") or text[:60], "link": url, "snippet": text})
-        else:
-            text = topic.get("Text", "")
-            url = topic.get("FirstURL", "") or topic.get("URL", "")
-            if text and url:
-                raw.append({"title": topic.get("Result", "") or text[:60], "link": url, "snippet": text})
-
-    return _clean_results(raw, query, max_results)
-
-
-async def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
-    """Search via DuckDuckGo. Tries lite HTML first, falls back to Instant Answer API."""
-    cache_key = f"ddg:{query}:{max_results}"
+async def _search_duckduckgo(
+    query: str,
+    max_results: int,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+) -> list[dict]:
+    cache_key = f"ddg:{query}:{max_results}:{allowed_domains}:{blocked_domains}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    # Try lite endpoint first
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             resp = await client.post(
@@ -242,21 +203,35 @@ async def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
                 },
             )
             resp.raise_for_status()
-
         raw = _parse_ddg_lite_html(resp.text)
         if raw:
-            results = _clean_results(raw, query, max_results)
+            results = _filter_results(raw, query, max_results, allowed_domains, blocked_domains)
             _cache_set(cache_key, results)
             return results
-
-        logger.info("DDG lite returned no results, falling back to API for query=%s", query)
     except Exception as e:
-        logger.warning("DDG lite failed, falling back to API: %s", e)
+        logger.warning("DDG fallback failed for query=%s: %s", query, e)
 
-    # Fallback to Instant Answer API
-    results = await _search_ddg_api(query, max_results)
-    _cache_set(cache_key, results)
+    return []
+
+
+# ── Orchestrator ───────────────────────────────────────────────────────────────
+
+
+async def _search(
+    query: str,
+    max_results: int,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+) -> list[dict]:
+    results = await _search_searxng(query, max_results, allowed_domains, blocked_domains)
+    if results:
+        return results
+    if settings.search_enable_ddg_fallback:
+        results = await _search_duckduckgo(query, max_results, allowed_domains, blocked_domains)
     return results
+
+
+# ── Tool class ─────────────────────────────────────────────────────────────────
 
 
 class WebSearchTool(BaseTool):
@@ -278,8 +253,18 @@ class WebSearchTool(BaseTool):
             },
             "max_results": {
                 "type": "integer",
-                "description": "返回结果数量 (1-10)",
+                "description": "返回结果数量 (1-10)，默认5",
                 "default": 5,
+            },
+            "allowed_domains": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "仅返回这些域名下的结果（如 [\"python.org\", \".wikipedia.org\"]）",
+            },
+            "blocked_domains": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "排除这些域名的结果",
             },
         },
         "required": ["query"],
@@ -290,13 +275,17 @@ class WebSearchTool(BaseTool):
         if not query:
             return ToolResult(success=False, error="Query is required")
 
-        max_results = max(1, min(kwargs.get("max_results", 5), 10))
+        max_results = max(1, min(kwargs.get("max_results", 5), settings.search_max_results))
+        allowed = kwargs.get("allowed_domains")
+        blocked = kwargs.get("blocked_domains")
 
         try:
-            if _get_serpapi_key():
-                results = await _search_serpapi(query, max_results)
-            else:
-                results = await _search_duckduckgo(query, max_results)
+            results = await _search(query, max_results, allowed, blocked)
+            if not results:
+                return ToolResult(
+                    success=False,
+                    error="未找到相关结果，请尝试更换关键词或减少过滤条件",
+                )
             return ToolResult(success=True, data=results)
         except Exception as e:
             logger.exception("web_search failed for query=%s", query)

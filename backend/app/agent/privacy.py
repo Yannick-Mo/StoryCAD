@@ -72,6 +72,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     # Knowledge / Web
     "search_knowledge": "搜索知识库",
     "web_search": "联网搜索",
+    "web_fetch": "读取网页",
     # Theme
     "create_theme": "创建主题",
     "update_theme": "修改主题",

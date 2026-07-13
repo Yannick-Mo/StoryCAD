@@ -1,0 +1,75 @@
+# SearXNG configuration for StoryCAD
+# See https://docs.searxng.org/admin/settings/settings.yml.html
+
+use_default_settings: true
+general:
+  instance_name: "StoryCAD Search"
+  privacypolicy_url: false
+  contact_url: false
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "storycad-searxng-change-in-production--please--replace--me"
+  limiter: false
+  image_proxy: false
+  # Bind to all interfaces inside Docker
+  bind_address: "0.0.0.0"
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+  default_locale: zh-Hans-CN
+
+# Pre-configure the most reliable search engines
+engines:
+  # Google (needs to be enabled explicitly)
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  # Bing
+  - name: bing
+    engine: bing
+    shortcut: bi
+    disabled: false
+
+  # DuckDuckGo
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  # Brave
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+
+  # Wikipedia
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+
+  # DuckDuckGo definitions (for instant answers)
+  - name: duckduckgo definitions
+    engine: duckduckgo_definitions
+    shortcut: ddd
+    disabled: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  useragent_suffix: ""
+  # If StoryCAD has a proxy configured, SearXNG will respect HTTP_PROXY/HTTPS_PROXY env vars
+  # proxies:
+  #   all://:
+  #     - http://proxy:port
