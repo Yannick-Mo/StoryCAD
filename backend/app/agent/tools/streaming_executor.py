@@ -163,9 +163,12 @@ class StreamingToolExecutor:
         (they see the final state).
     """
 
-    def __init__(self, tools: dict[str, BaseTool], db: Any = None) -> None:
+    def __init__(self, tools: dict[str, BaseTool], db: Any = None,
+                 project_id: str = "", user_id: str = "") -> None:
         self._tools = tools
         self._db = db
+        self._project_id = project_id
+        self._user_id = user_id
 
         # Serialise SAFE tool access — AsyncSession is not coroutine-safe
         self._safe_lock = asyncio.Lock()
@@ -420,6 +423,14 @@ class StreamingToolExecutor:
         if not tool:
             return {"tool": name, "success": False, "error": "Tool not found", "_tool_use_id": tool_use_id}
 
+        # Inject project_id and user_id into tool args if missing (LLM often
+        # omits them on chained tool calls).
+        merged = dict(args)
+        if self._project_id and "project_id" not in merged:
+            merged["project_id"] = self._project_id
+        if self._user_id and "user_id" not in merged:
+            merged["user_id"] = self._user_id
+
         timeout = tool._effective_timeout if tool._effective_timeout else 30
 
         try:
@@ -429,12 +440,12 @@ class StreamingToolExecutor:
             if tool._effective_concurrency == ConcurrencyMode.SAFE:
                 async with self._safe_lock:
                     result: ToolResult = await asyncio.wait_for(
-                        tool.run(db=self._db, **args),
+                        tool.run(db=self._db, **merged),
                         timeout=timeout,
                     )
             else:
                 result: ToolResult = await asyncio.wait_for(
-                    tool.run(db=self._db, **args),
+                    tool.run(db=self._db, **merged),
                     timeout=timeout,
                 )
             d = _summarise_tool_output(name, result, tool)

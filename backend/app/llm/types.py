@@ -13,18 +13,21 @@ class Message:
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    reasoning_content: str | None = None
 
     def __repr__(self) -> str:
         return (
             f"Message(role={self.role!r}, content={self.content!r}, "
             f"tool_calls={self.tool_calls!r}, tool_call_id={self.tool_call_id!r}, "
-            f"name={self.name!r})"
+            f"name={self.name!r}, reasoning_content={self.reasoning_content!r})"
         )
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}
         if self.content is not None:
             d["content"] = self.content
+        if self.reasoning_content:
+            d["reasoning_content"] = self.reasoning_content
         if self.tool_calls:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
         if self.tool_call_id:
@@ -75,11 +78,13 @@ class StreamChunk:
 
     At most one of *content* or *tool_call* is non-None per chunk.
     *finish_reason* and *usage* signal the end of the stream.
+    *reasoning_content* carries DeepSeek thinking-mode content (set on finish_reason).
     """
     content: str | None = None
     tool_call: ToolCall | None = None
     finish_reason: str | None = None
     usage: Usage | None = None
+    reasoning_content: str | None = None
 
 
 @dataclass

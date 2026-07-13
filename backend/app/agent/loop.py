@@ -858,12 +858,17 @@ async def autonomous_loop(
         yield _event_step("思考中...")
 
         # ── Step 3: LLM streaming + tool execution ─────────────────
-        streaming_executor = StreamingToolExecutor(filtered_tools, db)
+        streaming_executor = StreamingToolExecutor(
+            filtered_tools, db,
+            project_id=state.project_id,
+            user_id=state.user_id,
+        )
         tool_blocks: list[tuple[str, dict, str]] = []
         # Preserve the original ToolCall objects so the assistant message
         # carries a valid tool_calls field (required by OpenAI/DeepSeek API).
         tool_call_objects: list = []
         assistant_text_parts: list[str] = []
+        assistant_reasoning_parts: list[str] = []
         tool_use_count = 0
 
         # Resolve model override (set by recovery model switch)
@@ -903,6 +908,9 @@ async def autonomous_loop(
                         tool_blocks.append((name.strip(), args, tool_use_id))
                         tool_call_objects.append(tc)
                         streaming_executor.add_tool(tc, tool_use_id=tool_use_id)
+
+                if chunk.reasoning_content:
+                    assistant_reasoning_parts.append(chunk.reasoning_content)
 
                 for result in streaming_executor.get_completed_results():
                     yield _event_tool_done(result)
@@ -979,10 +987,15 @@ async def autonomous_loop(
                 safe_result_map[r.get("_tool_use_id", "")] = r
         state = state.replace(tool_results=new_tool_results)
 
-        # ── Step 5: Build assistant message (WITH tool_calls for API spec) ──
+        # ── Step 5: Build assistant message (WITH tool_calls & reasoning for API spec) ──
         assistant_text = "".join(assistant_text_parts)
+        reasoning_text = "".join(assistant_reasoning_parts) or None
         if assistant_text.strip() or tool_call_objects:
-            assistant_msg = Message(role="assistant", content=assistant_text or None)
+            assistant_msg = Message(
+                role="assistant",
+                content=assistant_text or None,
+                reasoning_content=reasoning_text,
+            )
             if tool_call_objects:
                 assistant_msg.tool_calls = list(tool_call_objects)
             state = state.replace(

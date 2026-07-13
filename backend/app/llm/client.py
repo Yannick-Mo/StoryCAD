@@ -469,6 +469,7 @@ class LLMClient:
             # Accumulators for streaming tool calls
             tool_call_builders: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
             tool_call_emitted: set[int] = set()  # track which tool indices have been emitted
+            reasoning_parts: list[str] = []
 
             try:
                 async for chunk in self._stream_chat(url, headers, body):
@@ -517,12 +518,15 @@ class LLMClient:
                                 )
 
                     # When finish_reason signals the end of a tool call stream,
-                    # emit all completed tool call chunks
+                    # emit any tool calls that were NOT already emitted
+                    # incrementally during streaming.
                     if finish_reason:
-                        # Emit any accumulated tool calls now
                         for idx in sorted(tool_call_builders.keys()):
+                            if idx in tool_call_emitted:
+                                continue
                             builder = tool_call_builders[idx]
                             if builder["function"]["name"]:
+                                tool_call_emitted.add(idx)
                                 yield StreamChunk(
                                     tool_call=ToolCall(
                                         id=builder["id"],
@@ -540,10 +544,16 @@ class LLMClient:
                                 completion_tokens=ud.get("completion_tokens", 0),
                                 total_tokens=ud.get("total_tokens", 0),
                             )
+                        reasoning_text = "".join(reasoning_parts) or None
                         yield StreamChunk(
                             finish_reason=finish_reason,
                             usage=usage,
+                            reasoning_content=reasoning_text,
                         )
+
+                    # Capture reasoning_content for DeepSeek thinking mode
+                    if delta.get("reasoning_content"):
+                        reasoning_parts.append(delta["reasoning_content"])
 
                     # Yield content chunks immediately
                     if delta.get("content"):
