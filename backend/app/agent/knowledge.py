@@ -81,7 +81,29 @@ description、genre、logline。**这是所有创作的前提。**
 ### 第 5 步：连接剧情
 `create_edge` — 创建章节间的连线，表示情节因果关系。
 
-## 5. 工具业务参考（创作场景中的用途）
+### 连线规则（必须遵守）
+| 规则 | 说明 |
+|------|------|
+| **不能自连接** | source_id 和 target_id 不能相同 |
+| **不能形成环** | 连线必须形成有向无环图（DAG），不能出现 A→B→C→A 的循环 |
+| **timeline 唯一性** | 每个章节最多只能有一个出向 timeline 连线和一个人向 timeline 连线 |
+| **无重复边** | 同一对 source→target 之间只能有一条连线 |
+| **章节必须存在** | source 和 target 都必须是项目中已存在的章节 |
+
+### 连线类型说明
+| 类型 | 含义 | 使用场景 |
+|------|------|---------|
+| `timeline` | 时间线/顺序 | 表示章节在时间上的先后顺序。**每个章节只能有一个入向和一个出向**，多个 timeline 连线形成完整的故事时间线 |
+| `causal` | 因果关系 | 前一章的事件直接导致后一章的结果 |
+| `foreshadow` | 伏笔/呼应 | 前一章埋下伏笔，后一章回收呼应 |
+| `character` | 角色弧线 | 角色故事线在不同章节间的延续 |
+| `theme` | 主题关联 | 共享主题探索的章节之间的关联 |
+
+### 连线最佳实践
+- **timeline 连线**形成故事的主时间线骨架，每个章节在时间线上最多只有一个前驱和一个后继
+- **非 timeline 连线**（causal/foreshadow/character/theme）可以任意创建，不受唯一性限制
+- 连线方向始终从**因到果**、从**前到后**、从**伏笔到回收**
+- 创建连线前先用 `list_edges` 查看现有连线，避免重复
 
 | 工具 | 用途 | 何时使用 | 所需ID |
 |------|------|---------|--------|
@@ -92,7 +114,7 @@ description、genre、logline。**这是所有创作的前提。**
 | write_scene_content | 写入场景正文 | 实际写小说内容 | project_id, scene_id |
 | create_character | 创建角色 | 添加新人物 | project_id |
 | update_character | 修改角色 | 调整人设 | character_id |
-| create_edge | 连接章节 | 表示剧情流向 | project_id, source_id, target_id |
+| create_edge | 连接章节 | 表示剧情流向。注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向 | project_id, source_id, target_id |
 | read_project / read_chapter / read_scene | 读取数据 | 不确定状态时「先读后写」 | 对应 ID |
 
 ## 6. 核心原则

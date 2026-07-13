@@ -396,15 +396,89 @@ class CreateProjectFromMaterialTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
+# ── Edge validation helpers ──────────────────────────────────────────────
+
+
+async def _would_create_cycle(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    target_id: uuid.UUID,
+    exclude_edge_id: uuid.UUID | None = None,
+) -> bool:
+    """Check if adding an edge source_id -> target_id would create a cycle.
+
+    Uses DFS from target_id to see if we can reach source_id through
+    existing edges (excluding exclude_edge_id if provided).
+    """
+    if source_id == target_id:
+        return True
+
+    query = select(ChapterEdge).where(ChapterEdge.project_id == project_id)
+    if exclude_edge_id:
+        query = query.where(ChapterEdge.id != exclude_edge_id)
+    result = await db.execute(query)
+    all_edges = result.scalars().all()
+
+    adj: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for e in all_edges:
+        adj.setdefault(e.source_id, []).append(e.target_id)
+
+    adj.setdefault(source_id, []).append(target_id)
+
+    visited = set()
+    stack = [target_id]
+    while stack:
+        nid = stack.pop()
+        if nid == source_id:
+            return True
+        if nid in visited:
+            continue
+        visited.add(nid)
+        for nxt in adj.get(nid, []):
+            stack.append(nxt)
+    return False
+
+
+async def _check_timeline_uniqueness(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    target_id: uuid.UUID,
+    exclude_edge_id: uuid.UUID | None = None,
+) -> str | None:
+    """Check timeline uniqueness rules.
+
+    Returns an error message if violated, None if OK.
+    """
+    query = select(ChapterEdge).where(
+        ChapterEdge.project_id == project_id,
+        ChapterEdge.edge_type == "timeline",
+    )
+    if exclude_edge_id:
+        query = query.where(ChapterEdge.id != exclude_edge_id)
+    result = await db.execute(query)
+    existing = result.scalars().all()
+
+    for e in existing:
+        if e.source_id == source_id:
+            return f"章节 {source_id} 已有一个出向 timeline 连线，每个章节只能有一个出向 timeline 连线"
+        if e.target_id == target_id:
+            return f"章节 {target_id} 已有一个入向 timeline 连线，每个章节只能有一个入向 timeline 连线"
+    return None
+
+
 class CreateEdgeTool(BaseTool):
     meta = ToolMeta(
         name="create_edge",
-        description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系",
+        description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"
+                    "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         search_hint="create edge connection link",
     )
     name = "create_edge"
-    description = "在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系"
+    description = "在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"\
+                  "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向"
     is_write_operation = True
     parameters = {
         "type": "object",
@@ -412,8 +486,12 @@ class CreateEdgeTool(BaseTool):
             "project_id": {"type": "string", "description": "项目ID"},
             "source_id": {"type": "string", "description": "源章节ID"},
             "target_id": {"type": "string", "description": "目标章节ID"},
-            "edge_type": {"type": "string", "description": "连线类型，例如'timeline'、'cause_effect'、'flashback'、'parallel'"},
-            "label": {"type": "string", "description": "连线标签"},
+            "edge_type": {
+                "type": "string",
+                "description": "连线类型：timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
+                "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+            },
+            "label": {"type": "string", "description": "连线标签，例如'因→果'、'伏笔→回收'"},
             "source_handle": {"type": "string", "description": "源端手柄位置，例如's-r'（右）、's-l'（左）"},
             "target_handle": {"type": "string", "description": "目标端手柄位置，如't-l'（左）、't-r'（右）"},
         },
@@ -427,13 +505,18 @@ class CreateEdgeTool(BaseTool):
 
             src_id = uuid.UUID(kwargs["source_id"])
             tgt_id = uuid.UUID(kwargs["target_id"])
+            edge_type = kwargs.get("edge_type", "timeline")
+
+            # ── Validation ──
+            if src_id == tgt_id:
+                return ToolResult(success=False, error="不能创建自连接连线，源章节和目标章节不能相同")
 
             source_ch = await db.get(Chapter, src_id)
             if not source_ch or source_ch.project_id != project_id:
-                return ToolResult(success=False, error=f"Source chapter {src_id} not found in project")
+                return ToolResult(success=False, error=f"源章节 {src_id} 不存在于该项目中")
             target_ch = await db.get(Chapter, tgt_id)
             if not target_ch or target_ch.project_id != project_id:
-                return ToolResult(success=False, error=f"Target chapter {tgt_id} not found in project")
+                return ToolResult(success=False, error=f"目标章节 {tgt_id} 不存在于该项目中")
 
             existing = await db.execute(
                 select(ChapterEdge).where(
@@ -443,14 +526,22 @@ class CreateEdgeTool(BaseTool):
                 )
             )
             if existing.scalar_one_or_none():
-                return ToolResult(success=False, error="An edge already exists between these two chapters")
+                return ToolResult(success=False, error="这两个章节之间已存在连线")
+
+            if await _would_create_cycle(db, project_id, src_id, tgt_id):
+                return ToolResult(success=False, error="创建该连线会导致章节间形成循环依赖，请检查连线方向")
+
+            if edge_type == "timeline":
+                err = await _check_timeline_uniqueness(db, project_id, src_id, tgt_id)
+                if err:
+                    return ToolResult(success=False, error=err)
 
             repo = StoryCADRepository(db)
             created = await repo.create_entity(ChapterEdge, {
                 "project_id": str(project_id),
                 "source_id": str(src_id),
                 "target_id": str(tgt_id),
-                "edge_type": kwargs.get("edge_type", "timeline"),
+                "edge_type": edge_type,
                 "label": kwargs.get("label", ""),
                 "source_handle": kwargs.get("source_handle", "s-r"),
                 "target_handle": kwargs.get("target_handle", "t-l"),
@@ -465,19 +556,23 @@ class CreateEdgeTool(BaseTool):
 class UpdateEdgeTool(BaseTool):
     meta = ToolMeta(
         name="update_edge",
-        description="更新章节连线的类型、标签或手柄位置",
+        description="更新章节连线的类型、标签或手柄位置。注意：改为 timeline 类型时会校验唯一性",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         search_hint="update edge modify connection",
     )
     name = "update_edge"
-    description = "更新章节连线的类型、标签或手柄位置"
+    description = "更新章节连线的类型、标签或手柄位置。注意：改为 timeline 类型时会校验唯一性"
     is_write_operation = True
     parameters = {
         "type": "object",
         "properties": {
             "project_id": {"type": "string", "description": "项目ID"},
             "edge_id": {"type": "string", "description": "连线ID"},
-            "edge_type": {"type": "string", "description": "连线类型"},
+            "edge_type": {
+                "type": "string",
+                "description": "连线类型：timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
+                "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+            },
             "label": {"type": "string", "description": "连线标签"},
             "source_handle": {"type": "string", "description": "源端手柄位置"},
             "target_handle": {"type": "string", "description": "目标端手柄位置"},
@@ -493,7 +588,16 @@ class UpdateEdgeTool(BaseTool):
             edge_id = uuid.UUID(kwargs["edge_id"])
             edge = await db.get(ChapterEdge, edge_id)
             if not edge or edge.project_id != project_id:
-                return ToolResult(success=False, error="Edge not found")
+                return ToolResult(success=False, error="连线不存在")
+
+            new_type = kwargs.get("edge_type")
+            if new_type is not None and new_type != edge.edge_type:
+                if new_type == "timeline":
+                    err = await _check_timeline_uniqueness(
+                        db, project_id, edge.source_id, edge.target_id, exclude_edge_id=edge_id
+                    )
+                    if err:
+                        return ToolResult(success=False, error=err)
 
             for field in ("edge_type", "label", "source_handle", "target_handle"):
                 if field in kwargs:
