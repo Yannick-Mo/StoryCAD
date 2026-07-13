@@ -713,16 +713,29 @@ async def autonomous_loop(
             system_content += f"\n全局设定: {settings_preview}"
         system_content += f"\nProject ID: {proj_id}"
 
-        # --- Structure summary ---
+        # --- Structure summary with IDs ---
         acts_data = state.project_context.get("acts", [])
         if acts_data:
             structure_lines = ["\n项目结构："]
             for act in acts_data:
-                ch_count = len(act.get("chapters", []))
-                sc_count = sum(len(ch.get("scenes", [])) for ch in act.get("chapters", []))
-                structure_lines.append(
-                    f"- {act.get('name', '')} ({ch_count}章, {sc_count}场)"
-                )
+                chapters = act.get("chapters", [])
+                sc_count = sum(len(ch.get("scenes", [])) for ch in chapters)
+                structure_lines.append(f"- {act.get('name', '')}  ({len(chapters)}章, {sc_count}场)")
+                for ch in chapters[:6]:
+                    ch_id = ch.get("id", "?")
+                    ch_title = ch.get("title", "?")
+                    goal = ch.get("goal_preview", "")
+                    ch_sc_count = len(ch.get("scenes", []))
+                    goal_str = f": {goal[:60]}" if goal else ""
+                    structure_lines.append(f"  - {ch_title} [ch:{ch_id[:8]}]{goal_str} ({ch_sc_count}场)")
+                    for sc in ch.get("scenes", [])[:3]:
+                        sc_id = sc.get("id", "?")
+                        sc_title = sc.get("title", "?")
+                        structure_lines.append(f"    · {sc_title} [sc:{sc_id[:8]}]")
+                    if ch_sc_count > 3:
+                        structure_lines.append(f"    ... {ch_sc_count - 3} 场景略")
+                if len(chapters) > 6:
+                    structure_lines.append(f"   ... 还有 {len(chapters) - 6} 章略")
             system_content += "\n".join(structure_lines)
 
         # --- Characters ---
@@ -1020,7 +1033,7 @@ async def autonomous_loop(
                 streaming_executor.clear_queued()
                 for tool_name, args, tool_use_id in tool_blocks:
                     if tool_name in intercept.blocked_tools:
-                        logger.warning("Tool '%s' blocked in chat mode", tool_name)
+                        logger.warning("Tool '{}' blocked in chat mode", tool_name)
                         result = {
                             "tool": tool_name,
                             "success": False,
