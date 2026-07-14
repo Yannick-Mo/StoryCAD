@@ -21,11 +21,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Tool names whose writes always need confirmation
-_DESTRUCTIVE_TOOLS: set[str] = {
-    "delete_scene", "delete_chapter", "delete_act", "delete_edge",
-    "create_project_from_material",
-}
+# ── Destructive / confirmation gating ──────────────────────────────────────────────
+#
+# Destructive-tool gating is driven by ToolMeta.needs_confirmation and
+# ToolMeta.is_destructive, NOT by a hardcoded name list.  The sets below
+# are kept only for the cowriter explore-phase gate (which is name-based
+# and phase-dependent, not destructive).
+#
+# To mark a tool as needing confirmation, set ``meta.needs_confirmation = True``
+# in the tool class.  The interceptor checks this flag regardless of the
+# hardcoded sets.
 
 # Tool names that write to project data (needs confirmation in cowriter mode
 # when the session phase is "explore")
@@ -137,7 +142,7 @@ def build_confirmation_plan(
     for tool_name, args, tool_use_id in pending_tools:
         tool = tools_registry.get(tool_name) if tools_registry else None
         desc = (
-            tool.description[:100] if tool and hasattr(tool, "description")
+            tool._effective_description[:100] if tool and tool.meta
             else tool_name
         )
         steps.append({
@@ -175,24 +180,19 @@ def _needs_confirmation(
 ) -> bool:
     """Determine if a tool call needs user confirmation.
 
-    Rules:
-    1. Destructive tools (delete_*) ALWAYS need confirmation.
-    2. In cowriter 'explore' phase, write tools need confirmation
+    Rules (checked in order, first match wins):
+    1. ToolMeta.needs_confirmation=True (canonical marker, checked via registry).
+    2. Cowriter 'explore' phase — write tools need confirmation
        (the LLM should only be reading/analyzing in explore phase).
-    3. Tools with ToolMeta.needs_confirmation=True always need confirmation.
     """
-    # Rule 1: Destructive tools
-    if tool_name in _DESTRUCTIVE_TOOLS:
-        return True
-
-    # Rule 3: Explicit meta flag
+    # Rule 1: Meta-driven gating (canonical)
     if tools_registry:
         tool = tools_registry.get(tool_name)
         if tool and hasattr(tool, "meta") and tool.meta is not None:
             if getattr(tool.meta, "needs_confirmation", False):
                 return True
 
-    # Rule 2: Cowriter explore phase — confirm writes
+    # Rule 2: Cowriter explore phase — confirm all writes
     phase = cowriter_session.get("phase", "")
     if phase == "explore" and tool_name in _WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE:
         return True

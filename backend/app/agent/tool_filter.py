@@ -42,6 +42,36 @@ COWRITER_TOOLS: set[str] = {
     "call_goal_agent", "call_outline_agent",
 }
 
+# All known tool names — used for startup consistency check.
+ALL_REGISTERED_TOOLS: set[str] = READ_ONLY_TOOLS | COWRITER_TOOLS
+
+
+def verify_tool_registry(registry: dict[str, BaseTool]) -> list[str]:
+    """Cross-check the tool registry against the filter sets.
+
+    Returns a list of issues (empty = all good).  Call this at startup
+    to catch drift between ``tool_filter.py`` string sets and actual
+    tool class ``.name`` attributes.
+    """
+    issues: list[str] = []
+    registry_names = set(registry.keys())
+
+    # Tools in the registry but missing from ALL_REGISTERED_TOOLS
+    unlisted = registry_names - ALL_REGISTERED_TOOLS
+    if unlisted:
+        issues.append(
+            f"Tools in registry but NOT in tool_filter.py: {sorted(unlisted)}"
+        )
+
+    # Tools in the filter sets but not in the registry
+    missing = ALL_REGISTERED_TOOLS - registry_names
+    if missing:
+        issues.append(
+            f"Tools in tool_filter.py but NOT in registry: {sorted(missing)}"
+        )
+
+    return issues
+
 
 def get_available_tools(
     all_tools: dict[str, BaseTool],

@@ -488,7 +488,7 @@ class ContextBuilder:
             block = "\n".join(parts)
             total += len(block) + 1
             if total > total_chars_limit:
-                lines.append(f"  ... 还有 {len(chars) - len(lines)} 个角色已省略")
+                lines.append(f"  （还有 {len(chars) - len(lines)} 个角色略）")
                 break
             lines.append(block)
         return "\n".join(lines)

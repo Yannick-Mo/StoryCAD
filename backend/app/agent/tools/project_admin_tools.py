@@ -19,22 +19,16 @@ from app.utils import row_to_dict
 class CreateActTool(BaseTool):
     meta = ToolMeta(
         name="create_act",
-        description="在项目中创建新幕（Act），必须指定项目ID",
+        description="在项目中创建新幕（Act）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="create act new",
-    )
-    name = "create_act"
-    description = "在项目中创建新幕（Act），必须指定项目ID"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "name": {"type": "string", "description": "幕名称，例如'第一幕'、'第二幕'"},
-            "color": {"type": "string", "description": "颜色代码，例如'#8b5cf6'"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "幕名称，例如'第一幕'、'第二幕'"},
+                "color": {"type": "string", "description": "颜色代码，例如'#8b5cf6'"},
+            },
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -65,24 +59,19 @@ class CreateActTool(BaseTool):
 class CreateChapterTool(BaseTool):
     meta = ToolMeta(
         name="create_chapter",
-        description="在指定幕（Act）中创建新章节（Chapter），必须指定项目ID和幕ID",
+        description="在指定幕（Act）中创建新章节（Chapter），需提供幕ID",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="create chapter new",
-    )
-    name = "create_chapter"
-    description = "在指定幕（Act）中创建新章节（Chapter），必须指定项目ID和幕ID"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "act_id": {"type": "string", "description": "所属幕ID"},
-            "title": {"type": "string", "description": "章节标题"},
-            "goal": {"type": "string", "description": "章节写作目标"},
-            "status": {"type": "string", "description": "状态：draft/revising/final"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "act_id": {"type": "string", "description": "所属幕ID，来自 read_full_project 结构概览"},
+                "title": {"type": "string", "description": "章节标题"},
+                "goal": {"type": "string", "description": "章节写作目标"},
+                "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
+            },
+            "required": ["act_id"],
         },
-        "required": ["project_id", "act_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -94,7 +83,7 @@ class CreateChapterTool(BaseTool):
                 select(Act).where(Act.id == act_id, Act.project_id == project_id)
             )
             if not act_result.scalar_one_or_none():
-                return ToolResult(success=False, error=f"Act {act_id} not found in project {project_id}")
+                return self._not_found("Act in project")
 
             result = await db.execute(
                 select(func.coalesce(func.max(Chapter.sort_order), -1))
@@ -122,23 +111,18 @@ class CreateChapterTool(BaseTool):
 class DeleteSceneTool(BaseTool):
     meta = ToolMeta(
         name="delete_scene",
-        description="删除指定场景（Scene），同时删除场景正文内容",
+        description="删除指定场景（Scene），同时删除场景正文内容。scene_id 来自 list_scenes",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
-        search_hint="delete scene remove destroy",
-    )
-    name = "delete_scene"
-    description = "删除指定场景（Scene），同时删除场景正文内容"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "scene_id": {"type": "string", "description": "场景ID"},
-            "project_id": {"type": "string", "description": "项目ID（用于权限验证）"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+            },
+            "required": ["scene_id"],
         },
-        "required": ["scene_id", "project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -148,9 +132,9 @@ class DeleteSceneTool(BaseTool):
 
             scene = await db.get(Scene, scene_id)
             if not scene:
-                return ToolResult(success=False, error="Scene not found")
+                return self._not_found("Scene")
             if scene.project_id != project_id:
-                return ToolResult(success=False, error="Scene does not belong to this project")
+                return self._permission_denied("场景")
 
             await db.execute(
                 SceneContent.__table__.delete().where(SceneContent.scene_id == scene_id)
@@ -168,23 +152,18 @@ class DeleteSceneTool(BaseTool):
 class DeleteChapterTool(BaseTool):
     meta = ToolMeta(
         name="delete_chapter",
-        description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文（数据库级联删除）",
+        description="删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文。chapter_id 来自 list_chapters",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
-        search_hint="delete chapter remove cascade",
-    )
-    name = "delete_chapter"
-    description = "删除指定章节（Chapter），同时删除该章节下的所有场景和场景正文（数据库级联删除）"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "chapter_id": {"type": "string", "description": "章节ID"},
-            "project_id": {"type": "string", "description": "项目ID（用于权限验证）"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["chapter_id", "project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -194,9 +173,9 @@ class DeleteChapterTool(BaseTool):
 
             chapter = await db.get(Chapter, chapter_id)
             if not chapter:
-                return ToolResult(success=False, error="Chapter not found")
+                return self._not_found("Chapter")
             if chapter.project_id != project_id:
-                return ToolResult(success=False, error="Chapter does not belong to this project")
+                return self._permission_denied("章节")
 
             scene_ids = await db.execute(
                 select(Scene.id).where(Scene.chapter_id == chapter_id)
@@ -219,23 +198,18 @@ class DeleteChapterTool(BaseTool):
 class DeleteActTool(BaseTool):
     meta = ToolMeta(
         name="delete_act",
-        description="删除指定幕（Act），同时删除该幕下的所有章节和场景（数据库级联删除）",
+        description="删除指定幕（Act），同时删除该幕下的所有章节和场景。act_id 来自 read_full_project",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
-        search_hint="delete act remove cascade",
-    )
-    name = "delete_act"
-    description = "删除指定幕（Act），同时删除该幕下的所有章节和场景（数据库级联删除）"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "act_id": {"type": "string", "description": "幕ID"},
-            "project_id": {"type": "string", "description": "项目ID（用于权限验证）"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "act_id": {"type": "string", "description": "幕ID，来自 read_full_project 结构概览"},
+            },
+            "required": ["act_id"],
         },
-        "required": ["act_id", "project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -245,9 +219,9 @@ class DeleteActTool(BaseTool):
 
             act = await db.get(Act, act_id)
             if not act:
-                return ToolResult(success=False, error="Act not found")
+                return self._not_found("Act")
             if act.project_id != project_id:
-                return ToolResult(success=False, error="Act does not belong to this project")
+                return self._permission_denied("幕")
 
             chapter_ids = await db.execute(
                 select(Chapter.id).where(Chapter.act_id == act_id)
@@ -275,27 +249,21 @@ class DeleteActTool(BaseTool):
 class UpdateProjectTool(BaseTool):
     meta = ToolMeta(
         name="update_project",
-        description="更新项目全局设定，包括标题、描述、体裁、全局世界观设定、目标字数等。只传入需要修改的字段即可",
+        description="更新项目全局设定，包括标题、描述、体裁、世界观设定、目标字数等。只传入需要修改的字段即可",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="update project settings config",
-    )
-    name = "update_project"
-    description = "更新项目全局设定，包括标题、描述、体裁、全局世界观设定、目标字数等。只传入需要修改的字段即可"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "title": {"type": "string", "description": "项目标题"},
-            "description": {"type": "string", "description": "项目描述"},
-            "genre": {"type": "string", "description": "故事体裁，例如'奇幻'、'科幻'、'悬疑'"},
-            "global_settings": {"type": "string", "description": "世界观设定、背景设定等全局设定文本"},
-            "target_audience": {"type": "string", "description": "目标读者群体"},
-            "total_words": {"type": "integer", "description": "目标总字数"},
-            "template_type": {"type": "string", "description": "模板类型，例如'four_act'、'three_act'"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "项目标题"},
+                "description": {"type": "string", "description": "项目描述"},
+                "genre": {"type": "string", "description": "故事体裁，例如'奇幻'、'科幻'、'悬疑'"},
+                "global_settings": {"type": "string", "description": "世界观设定、背景设定等全局设定文本"},
+                "target_audience": {"type": "string", "description": "目标读者群体"},
+                "total_words": {"type": "integer", "description": "目标总字数"},
+                "template_type": {"type": "string", "description": "模板类型，例如'four_act'、'three_act'"},
+            },
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -304,7 +272,7 @@ class UpdateProjectTool(BaseTool):
 
             project = await db.get(Project, project_id)
             if not project:
-                return ToolResult(success=False, error="Project not found")
+                return self._not_found("Project")
 
             for field in ("title", "description", "genre", "global_settings"):
                 if field in kwargs:
@@ -346,20 +314,15 @@ class CreateProjectFromMaterialTool(BaseTool):
         is_destructive=True,
         needs_confirmation=True,
         timeout=120,
-        search_hint="create project from material generate",
-    )
-    name = "create_project_from_material"
-    description = "根据用户提供的创作素材，自动生成完整项目（包括幕、章、场景、角色、关系、世界观设定）。"\
-                  "返回新创建的项目ID。素材至少10个字"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "material": {"type": "string", "description": "用户的创作素材，描述想要创作的故事内容，至少10个字"},
-            "project_title": {"type": "string", "description": "项目标题"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "material": {"type": "string", "description": "用户的创作素材，描述想要创作的故事内容，至少10个字"},
+                "project_title": {"type": "string", "description": "项目标题"},
+            },
+            "required": ["material", "project_title"],
         },
-        "required": ["material", "project_title"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -479,29 +442,23 @@ class CreateEdgeTool(BaseTool):
         description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"
                     "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="create edge connection link",
-    )
-    name = "create_edge"
-    description = "在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"\
-                  "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "source_id": {"type": "string", "description": "源章节ID"},
-            "target_id": {"type": "string", "description": "目标章节ID"},
-            "edge_type": {
-                "type": "string",
-                "description": "连线类型：timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
-                "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+        parameters={
+            "type": "object",
+            "properties": {
+                "source_id": {"type": "string", "description": "源章节ID，来自 list_chapters 或 read_full_project"},
+                "target_id": {"type": "string", "description": "目标章节ID，来自 list_chapters 或 read_full_project"},
+                "edge_type": {
+                    "type": "string",
+                    "description": "timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
+                    "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+                },
+                "label": {"type": "string", "description": "连线标签，例如'因→果'、'伏笔→回收'"},
+                "source_handle": {"type": "string", "description": "源端手柄位置，例如's-r'（右）、's-l'（左）"},
+                "target_handle": {"type": "string", "description": "目标端手柄位置，如't-l'（左）、't-r'（右）"},
             },
-            "label": {"type": "string", "description": "连线标签，例如'因→果'、'伏笔→回收'"},
-            "source_handle": {"type": "string", "description": "源端手柄位置，例如's-r'（右）、's-l'（左）"},
-            "target_handle": {"type": "string", "description": "目标端手柄位置，如't-l'（左）、't-r'（右）"},
+            "required": ["source_id", "target_id"],
         },
-        "required": ["project_id", "source_id", "target_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -518,10 +475,10 @@ class CreateEdgeTool(BaseTool):
 
             source_ch = await db.get(Chapter, src_id)
             if not source_ch or source_ch.project_id != project_id:
-                return ToolResult(success=False, error=f"源章节 {src_id} 不存在于该项目中")
+                return self._not_found("Chapter in project", f"源章节ID: {src_id}")
             target_ch = await db.get(Chapter, tgt_id)
             if not target_ch or target_ch.project_id != project_id:
-                return ToolResult(success=False, error=f"目标章节 {tgt_id} 不存在于该项目中")
+                return self._not_found("Chapter in project", f"目标章节ID: {tgt_id}")
 
             existing = await db.execute(
                 select(ChapterEdge).where(
@@ -534,7 +491,11 @@ class CreateEdgeTool(BaseTool):
                 return ToolResult(success=False, error="这两个章节之间已存在连线")
 
             if await _would_create_cycle(db, project_id, src_id, tgt_id):
-                return ToolResult(success=False, error="创建该连线会导致章节间形成循环依赖，请检查连线方向")
+                return ToolResult(
+                    success=False,
+                    error="创建该连线会导致章节间形成循环依赖，请检查连线方向",
+                    correction_hint="请尝试反转连线方向（交换 source_id 和 target_id），或检查章节间是否有其他路径形成了环路",
+                )
 
             if edge_type == "timeline":
                 err = await _check_timeline_uniqueness(db, project_id, src_id, tgt_id)
@@ -563,27 +524,22 @@ class UpdateEdgeTool(BaseTool):
         name="update_edge",
         description="更新章节连线的类型、标签或手柄位置。注意：改为 timeline 类型时会校验唯一性",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="update edge modify connection",
-    )
-    name = "update_edge"
-    description = "更新章节连线的类型、标签或手柄位置。注意：改为 timeline 类型时会校验唯一性"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "edge_id": {"type": "string", "description": "连线ID"},
-            "edge_type": {
-                "type": "string",
-                "description": "连线类型：timeline（时间线/顺序，每个章节只能有一个入向和一个出向）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
-                "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+        parameters={
+            "type": "object",
+            "properties": {
+                "edge_id": {"type": "string", "description": "连线ID，来自 list_edges 返回结果"},
+                "edge_type": {
+                    "type": "string",
+                    "description": "timeline（时间线/顺序）、causal（因果关系）、foreshadow（伏笔/呼应）、character（角色弧线延续）、theme（主题关联）",
+                    "enum": ["timeline", "causal", "foreshadow", "character", "theme"],
+                },
+                "label": {"type": "string", "description": "连线标签"},
+                "source_handle": {"type": "string", "description": "源端手柄位置"},
+                "target_handle": {"type": "string", "description": "目标端手柄位置"},
             },
-            "label": {"type": "string", "description": "连线标签"},
-            "source_handle": {"type": "string", "description": "源端手柄位置"},
-            "target_handle": {"type": "string", "description": "目标端手柄位置"},
+            "required": ["edge_id"],
         },
-        "required": ["project_id", "edge_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -593,7 +549,7 @@ class UpdateEdgeTool(BaseTool):
             edge_id = uuid.UUID(kwargs["edge_id"])
             edge = await db.get(ChapterEdge, edge_id)
             if not edge or edge.project_id != project_id:
-                return ToolResult(success=False, error="连线不存在")
+                return self._not_found("Edge in project")
 
             new_type = kwargs.get("edge_type")
             if new_type is not None and new_type != edge.edge_type:
@@ -621,23 +577,18 @@ class UpdateEdgeTool(BaseTool):
 class DeleteEdgeTool(BaseTool):
     meta = ToolMeta(
         name="delete_edge",
-        description="删除指定章节连线",
+        description="删除指定章节连线。edge_id 来自 list_edges",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
-        search_hint="delete edge remove connection",
-    )
-    name = "delete_edge"
-    description = "删除指定章节连线"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "edge_id": {"type": "string", "description": "连线ID"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "edge_id": {"type": "string", "description": "连线ID，来自 list_edges 返回结果"},
+            },
+            "required": ["edge_id"],
         },
-        "required": ["project_id", "edge_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -646,7 +597,7 @@ class DeleteEdgeTool(BaseTool):
             edge_id = uuid.UUID(kwargs["edge_id"])
             edge = await db.get(ChapterEdge, edge_id)
             if not edge or edge.project_id != project_id:
-                return ToolResult(success=False, error="Edge not found")
+                return self._not_found("Edge in project")
             await db.delete(edge)
             await db.commit()
             return ToolResult(success=True, data={"deleted_edge_id": kwargs["edge_id"]})

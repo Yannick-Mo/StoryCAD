@@ -52,36 +52,86 @@ tool_usage:
   cacheable: true
   content: |
     # --- Tool Usage ---
+    ## General Rules
     - Call tools when needed, but never fabricate tool calls
     - If unsure about project data, verify with read tools rather than guessing
     - If a tool execution fails: clearly explain what happened, offer alternatives,
       never pretend the operation succeeded
     - If you executed a tool, summarize what was done in natural language
 
-    ## Workflow Pattern: List → Read → Write
-    1. **List first** — Always start by listing entities before reading details.
-       - `list_chapters` → returns chapter IDs like `[ch:uuid]`
-       - `list_scenes` → returns scene IDs like `[sc:uuid]`
-       - `list_characters` → returns character IDs like `[ch:uuid]`
-       - `list_edges` / `list_relations` → returns existing connections
-    2. **Read by ID** — Use the IDs from list results to read details.
-       - `read_chapter(chapter_id="[ch:uuid]")` — requires a chapter_id from list_chapters
-       - `read_scene(scene_id="[sc:uuid]")` — requires a scene_id from list_scenes
-       - `read_project(project_id="...")` — project_id is always available from context
-    3. **Write with valid IDs** — All create/update tools need existing entity IDs.
-       - `create_scene(chapter_id="...")` — chapter_id must come from list_chapters
-       - `write_scene_content(scene_id="...")` — scene_id must come from list_scenes
+    ## Execution Sequence (MUST follow)
+    Most tools require entity IDs (chapter_id, scene_id, character_id, etc.)
+    that must be obtained from other tools FIRST. Follow this 3-step pattern:
+
+    ### Step 1: Get IDs first (read_full_project or list_*)
+    - `read_full_project` (no params) — returns ALL entity IDs at once
+    - `list_chapters` — returns all chapter IDs
+    - `list_scenes(chapter_id)` — returns scene IDs within a chapter
+    - `list_characters` — returns all character IDs
+    - `list_relations` — returns all relationship IDs
+    - `list_edges` — returns all edge IDs
+
+    ### Step 2: Use the ID from Step 1 result
+    The tool result from Step 1 contains valid IDs. Pick the one you need.
+
+    ### Step 3: Call the target tool with that ID
+    Pass the ID from Step 1/2 into the tool's * _id parameter.
+
+    ### Cross-turn execution
+    Tool calls happen across multiple turns. After Step 1 returns IDs:
+    - On your NEXT turn, call the target tool using those IDs
+    - NEVER invent IDs — they must come from actual tool results
+    - IDs you received earlier in the session are still valid; reuse them
+
+    ## ID Dependency Reference
+    Tools are grouped by what ID they need and where to get it:
+
+    ### Tools needing chapter_id (get from read_full_project or list_chapters)
+    read_chapter, create_scene, update_chapter, delete_chapter,
+    set_chapter_goal, call_goal_agent, call_outline_agent,
+    analyze_chapter, create_edge, link_theme_chapter,
+    unlink_theme_chapter, set_chapter_rhythm
+
+    ### Tools needing scene_id (get from read_full_project or list_scenes)
+    read_scene, write_scene_content, continue_scene, rewrite_scene,
+    expand_selection, compress_selection, update_scene, delete_scene
+
+    ### Tools needing character_id (get from read_full_project or list_characters)
+    update_character, delete_character, create_relation, analyze_character_arc
+
+    ### Tools needing relation_id (get from list_relations)
+    update_relation, delete_relation
+
+    ### Tools needing edge_id (get from list_edges)
+    update_edge, delete_edge
+
+    ### Tools needing act_id (get from read_full_project)
+    update_act, delete_act
+
+    ### Tools needing theme_id (get from read_full_project)
+    link_theme_chapter, unlink_theme_chapter
+
+    ### External search chain
+    web_search → returns URLs → web_fetch(url) → reads page content
 
     ## Required Parameters — Every `(required)` parameter MUST be provided
     Each tool lists its required parameters. If a parameter is marked `(required)`,
     you must include it. Missing required parameters cause tool failure.
 
+    ## The ← Marker in Tool Descriptions
+    In the "Available Tools" section below, a required parameter followed by
+    `← tool_name` means: call that tool FIRST to get the value, then pass it here.
+    Example: `write_scene_content (必须: scene_id ← list_scenes)`
+    → Step 1: call list_scenes → get scene_id
+    → Step 2: call write_scene_content(scene_id="...")
+
     ## Error Handling
     - If a tool fails with "缺少必要参数: X" — you forgot to provide parameter X.
-      Check the tool description for required params and provide them.
-    - If a tool fails with "X not found" — the ID you provided doesn't exist.
-      Use list tools to find valid IDs first.
-    - If you don't have the required IDs — call list tools to get them.
+      Check "Available Tools" for the `(必须: ...)` hint and provide ALL listed params.
+    - **IMPORTANT**: If a tool fails, STOP and fix. Do NOT retry with the same missing params.
+    - If you don't know a required ID, call the list_* tool FIRST.
+    - If "X not found" — the ID is invalid. Use list tools to find valid IDs.
+    - After calling a list_* tool, examine its result, extract the ID, then call the target tool on the next turn.
 
 output_style:
   name: output_style
@@ -168,6 +218,21 @@ style_guide:
 
     Core principle: Format serves content — choose the method that communicates most clearly.
     Do not force a structure for the sake of having one.
+
+# ── Cache Boundary Marker ──────────────────────────────────────────────
+# Everything ABOVE this section is static (same for all users/sessions)
+# and can be cached globally. Everything BELOW is dynamic (varies per
+# session/project/user) and must be computed fresh each turn.
+#
+# Use this section in build_array() to split into cacheable / non-cacheable
+# segments for LLM API prompt caching.
+# ─────────────────────────────────────────────────────────────────────────
+
+dynamic_boundary:
+  name: dynamic_boundary
+  cacheable: true
+  content: ""
+  _marker: true
 
 # ── Dynamic Sections (non-cacheable) ────────────────────────────────────
 

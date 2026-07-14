@@ -159,6 +159,43 @@ class SystemPromptBuilder:
 
         return sep.join(parts)
 
+    def build_array(
+        self,
+        sections: list[str],
+        **context: Any,
+    ) -> list[str]:
+        """Build system prompt as an ordered array of section strings.
+
+        Sections marked ``_marker: true`` (e.g. ``dynamic_boundary``) act as
+        cache-split points — callers can use these to apply different cache
+        scopes to static vs dynamic portions.
+
+        Returns a list where each element is one section's rendered content
+        (empty-string sections from markers are excluded).
+        """
+        parts: list[str] = []
+        for name in sections:
+            section_def = self._sections.get(name)
+            if not section_def:
+                logger.debug("build_array: section '%s' not found — skipping", name)
+                continue
+
+            if section_def.get("_marker", False):
+                # Marker sections are cache-split signals — emit empty string
+                # so callers can detect the boundary position in the array.
+                parts.append("")
+                continue
+
+            if section_def.get("cacheable", False):
+                chunk = self.get_static_section(name)
+            else:
+                chunk = self.render_dynamic_section(name, **context)
+
+            if chunk:
+                parts.append(chunk)
+
+        return parts
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------

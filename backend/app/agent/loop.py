@@ -644,11 +644,13 @@ async def autonomous_loop(
                     # Build tool result message
                     if result.get("success"):
                         data = result.get("data", "")
-                        if isinstance(data, (dict, list)):
-                            data = json.dumps(data, ensure_ascii=False)
-                        content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                        content = f"[工具执行结果: {tool_name}]\n{data}"
                     else:
-                        content = f"[工具执行失败: {tool_name}]\n{result.get('error', 'unknown')[:500]}"
+                        err_text = result.get('error', 'unknown')
+                        hint = result.get('correction_hint', '')
+                        content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                        if hint:
+                            content += f"\n修正提示: {hint}"
 
                     new_tr = list(state.tool_results) + [result]
                     state = state.replace(
@@ -691,29 +693,40 @@ async def autonomous_loop(
         # Project context
         proj = state.project_context.get("project", {})
 
-        # Assemble system message
-        system_content = base_system
-        if cowriter_persona:
-            system_content += "\n\n" + cowriter_persona
+        # ── Build system prompt as array of named sections ──────────
+        # Static sections (identity, tool_usage, output_style, etc.) are
+        # rendered once outside the loop.  Everything below is per-turn
+        # dynamic content assembled into an ordered list.
+        sections: list[str] = []
 
-        # --- Project context ---
+        # 1. Mode declaration (top priority)
+        if state.mode == "chat":
+            sections.append("# ——— 当前模式：对话模式（只读，不可写入）———")
+        else:
+            sections.append("# ——— 当前模式：协作模式（可读写）———")
+
+        # 2. Cowriter persona (static per-session)
+        if cowriter_persona:
+            sections.append(cowriter_persona)
+
+        # 3. Project context
         proj_title = proj.get("title", "未命名")
         proj_genre = proj.get("genre", "")
         proj_id = state.project_id or proj.get("id", "unknown")
         proj_logline = proj.get("logline", "")
         proj_global_settings = proj.get("global_settings", "")
 
-        system_content += f"\n\n# --- 当前项目 ---\n项目: {proj_title}"
+        ctx_parts = [f"# --- 当前项目 ---\n项目: {proj_title}"]
         if proj_genre:
-            system_content += f"\n类型: {proj_genre}"
+            ctx_parts.append(f"类型: {proj_genre}")
         if proj_logline:
-            system_content += f"\n一句话梗概: {proj_logline}"
+            ctx_parts.append(f"一句话梗概: {proj_logline}")
         if proj_global_settings:
-            settings_preview = proj_global_settings[:500]
-            system_content += f"\n全局设定: {settings_preview}"
-        system_content += f"\nProject ID: {proj_id}"
+            ctx_parts.append(f"全局设定: {proj_global_settings[:500]}")
+        ctx_parts.append(f"Project ID: {proj_id}")
+        sections.append("\n".join(ctx_parts))
 
-        # --- Structure summary with IDs ---
+        # 4. Structure summary with IDs
         acts_data = state.project_context.get("acts", [])
         if acts_data:
             structure_lines = ["\n项目结构："]
@@ -727,18 +740,18 @@ async def autonomous_loop(
                     goal = ch.get("goal_preview", "")
                     ch_sc_count = len(ch.get("scenes", []))
                     goal_str = f": {goal[:60]}" if goal else ""
-                    structure_lines.append(f"  - {ch_title} [ch:{ch_id[:8]}]{goal_str} ({ch_sc_count}场)")
+                    structure_lines.append(f"  - {ch_title} [ch:{ch_id}]{goal_str} ({ch_sc_count}场)")
                     for sc in ch.get("scenes", [])[:3]:
                         sc_id = sc.get("id", "?")
                         sc_title = sc.get("title", "?")
-                        structure_lines.append(f"    · {sc_title} [sc:{sc_id[:8]}]")
+                        structure_lines.append(f"    · {sc_title} [sc:{sc_id}]")
                     if ch_sc_count > 3:
-                        structure_lines.append(f"    ... {ch_sc_count - 3} 场景略")
+                        structure_lines.append(f"    （还有 {ch_sc_count - 3} 场景略）")
                 if len(chapters) > 6:
-                    structure_lines.append(f"   ... 还有 {len(chapters) - 6} 章略")
-            system_content += "\n".join(structure_lines)
+                    structure_lines.append(f"   （还有 {len(chapters) - 6} 章略）")
+            sections.append("\n".join(structure_lines))
 
-        # --- Characters ---
+        # 5. Characters
         characters_data = state.project_context.get("characters", [])
         if characters_data:
             char_lines = ["\n角色列表："]
@@ -754,13 +767,12 @@ async def autonomous_loop(
                     line += f": {c_personality[:120]}"
                 char_lines.append(line)
             if len(characters_data) > 20:
-                char_lines.append(f"  ... 以及另外 {len(characters_data) - 20} 个角色")
-            system_content += "\n".join(char_lines)
+                char_lines.append(f"  （还有 {len(characters_data) - 20} 个角色略）")
+            sections.append("\n".join(char_lines))
 
-        # --- Relations ---
+        # 6. Relations
         relations_data = state.project_context.get("relations", [])
         if relations_data:
-            # Build name lookup
             char_name_by_id = {}
             for c in characters_data:
                 cid = c.get("id")
@@ -775,10 +787,10 @@ async def autonomous_loop(
                 rel_label = r.get("label") or r.get("rel_type") or "关联"
                 rel_lines.append(f"- {src_name} → {rel_label} → {tgt_name}")
             if len(relations_data) > 15:
-                rel_lines.append(f"  ... 以及另外 {len(relations_data) - 15} 条关系")
-            system_content += "\n".join(rel_lines)
+                rel_lines.append(f"  （还有 {len(relations_data) - 15} 条关系略）")
+            sections.append("\n".join(rel_lines))
 
-        # --- Chapter edges ---
+        # 7. Chapter edges
         edges_data = state.project_context.get("edges", [])
         if edges_data:
             edge_lines = ["\n章节连线："]
@@ -786,9 +798,9 @@ async def autonomous_loop(
                 e_type = e.get("edge_type", "")
                 e_label = e.get("label", "")
                 edge_lines.append(f"- [{e_type}] {e_label}")
-            system_content += "\n".join(edge_lines)
+            sections.append("\n".join(edge_lines))
 
-        # --- Themes ---
+        # 8. Themes
         themes_data = state.project_context.get("themes", [])
         if themes_data:
             theme_lines = ["\n主题："]
@@ -799,14 +811,14 @@ async def autonomous_loop(
                     theme_lines.append(f"- {t_name}: {t_prop[:150]}")
                 else:
                     theme_lines.append(f"- {t_name}")
-            system_content += "\n".join(theme_lines)
+            sections.append("\n".join(theme_lines))
 
-        # --- Recent scenes hint ---
+        # 9. Recent scenes hint
         recent_hint = state.project_context.get("_recent_scenes_hint")
         if recent_hint:
-            system_content += recent_hint
+            sections.append(recent_hint)
 
-        # --- Available skills ---
+        # 10. Available skills
         available_skills = state.project_context.get("available_skills", [])
         if available_skills:
             skill_lines = ["\n# --- 可用写作技能（AI 可主动调用） ---"]
@@ -822,9 +834,9 @@ async def autonomous_loop(
             skill_lines.append("")
             skill_lines.append("你可以通过调用 invoke_skill 工具来启用某个技能。启用后其专属提示词将生效，在创作模式下还会解锁专属工具。")
             skill_lines.append("用户也可在消息中以 /技能名称 的形式直接调用。")
-            system_content += "\n".join(skill_lines)
+            sections.append("\n".join(skill_lines))
 
-        # --- Active skill prompts ---
+        # 11. Active skill prompts
         active_skills = state.active_skills or []
         if active_skills and state.project_id:
             try:
@@ -833,34 +845,31 @@ async def autonomous_loop(
                     prompt_lines = ["\n# --- 当前已激活技能写作指导 ---"]
                     for key, val in merged_prompts.items():
                         prompt_lines.append(f"\n## {key}\n{val.strip()}")
-                    system_content += "\n".join(prompt_lines)
+                    sections.append("\n".join(prompt_lines))
             except Exception:
                 logger.warning("Failed to load active skill prompts", exc_info=True)
 
-        # Inject dynamic sections from AttachmentInjector
+        # 12. Dynamic sections from AttachmentInjector
         for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
             text = dynamic_sections.get(section_name)
             if text:
-                system_content += "\n\n" + text
+                sections.append(text)
 
-        # Token budget warning (if near limit)
+        # 13. Token budget warning
         if state.budget_warn_level:
-            system_content += "\n\n" + budget_check["message"]
+            sections.append(budget_check["message"])
 
-        # Tool list
-        system_content += f"\n\n# --- 可用工具 ---\n{filtered_tool_desc}"
+        # 14. Compact tool list
+        sections.append(f"# --- 可用工具 ---\n{filtered_tool_desc}")
 
-        # APP_GUIDE — inject the data model reference and workflow guide
-        # so the AI understands entity dependencies during tool-calling.
+        # 15. APP_GUIDE
         from app.agent.knowledge import APP_GUIDE
-        system_content += f"\n\n# --- 应用参考 ---\n{APP_GUIDE}"
+        sections.append(f"# --- 应用参考 ---\n{APP_GUIDE}")
 
-        # Mode declaration (highest priority — prepend)
-        if state.mode == "chat":
-            mode_decl = "# ——— 当前模式：对话模式（只读，不可写入）———"
-        else:
-            mode_decl = "# ——— 当前模式：协作模式（可读写）———"
-        system_content = mode_decl + "\n\n" + system_content
+        # ── Assemble final system message ──────────────────────────
+        # Static prefix (base_system) + per-turn dynamic sections,
+        # joined into a single system message for the LLM.
+        system_content = base_system + "\n\n" + "\n\n".join(sections)
 
         # Build final messages — strip orphaned tool messages that would
         # violate the OpenAI/DeepSeek API requirement (tool must follow
@@ -1081,11 +1090,13 @@ async def autonomous_loop(
 
                     if result.get("success"):
                         data = result.get("data", "")
-                        if isinstance(data, (dict, list)):
-                            data = json.dumps(data, ensure_ascii=False)
-                        content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                        content = f"[工具执行结果: {tool_name}]\n{data}"
                     else:
-                        content = f"[工具执行失败: {tool_name}]\n{result.get('error', 'unknown')[:500]}"
+                        err_text = result.get('error', 'unknown')
+                        hint = result.get('correction_hint', '')
+                        content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                        if hint:
+                            content += f"\n修正提示: {hint}"
 
                     state = state.replace(
                         messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
@@ -1098,11 +1109,13 @@ async def autonomous_loop(
                         state = _invalidate_after_write(state, tool_name, existing, filtered_tools)
                         if existing.get("success"):
                             data = existing.get("data", "")
-                            if isinstance(data, (dict, list)):
-                                data = json.dumps(data, ensure_ascii=False)
-                            content = f"[工具执行结果: {tool_name}]\n{str(data)[:3000]}"
+                            content = f"[工具执行结果: {tool_name}]\n{data}"
                         else:
-                            content = f"[工具执行失败: {tool_name}]\n{existing.get('error', 'unknown')[:500]}"
+                            err_text = existing.get('error', 'unknown')
+                            hint = existing.get('correction_hint', '')
+                            content = f"[工具执行失败: {tool_name}]\n错误: {err_text[:1000]}"
+                            if hint:
+                                content += f"\n修正提示: {hint}"
                         state = state.replace(
                             messages=state.messages + [Message(role="tool", content=content, tool_call_id=tool_use_id)],
                         )
@@ -1121,6 +1134,32 @@ async def autonomous_loop(
         if state.transition in ("mode_blocked", "plan_generated_for_confirmation"):
             break
 
+        # ── Step 7a: Detect tool-parameter failure cascade ──────────
+        # If 3+ tools failed with "参数缺失" in this turn, inject a
+        # system reminder that breaks the retry loop. This is critical
+        # for DeepSeek flash models which tend to ignore error feedback.
+        missing_param_failures = 0
+        for r in new_tool_results:
+            err = r.get("error")
+            if err is None:
+                continue
+            if not isinstance(err, str):
+                err = str(err)
+            if "参数缺失" in err or "未提供" in err:
+                missing_param_failures += 1
+        if missing_param_failures >= 3:
+            reminder = (
+                "⚠️ 本轮有 {} 个工具因为缺少必要参数而调用失败。\n"
+                "请停止逐一尝试每个工具！先调用 list_* 系列工具（list_chapters、"
+                "list_scenes、list_characters）获取有效的 ID，然后再用这些 ID "
+                "调用需要它们的工具。\n"
+                "工具列表中每个工具后标注了 (必须: ...) —— 这表示该参数必须提供。"
+            ).format(missing_param_failures)
+            state = state.replace(
+                messages=state.messages + [Message(role="system", content=reminder)],
+                transition="param_missing_warning",
+            )
+
         # Tools executed — continue for chained operations
         logger.info("Tools executed, continuing loop for chained operations")
         state = state.replace(
@@ -1130,7 +1169,9 @@ async def autonomous_loop(
 
         if not assistant_text.strip():
             state = state.replace(tool_only_turns=state.tool_only_turns + 1)
-            if state.tool_only_turns > 3:
+            # Allow up to 6 consecutive tool-only turns for complex chains
+            # (e.g. read → worldview → act → chapter → scene → write)
+            if state.tool_only_turns > 6:
                 logger.warning("Tool-only loop detected — breaking")
                 yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
                 break

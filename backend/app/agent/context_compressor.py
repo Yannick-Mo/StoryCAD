@@ -42,8 +42,11 @@ REACTIVE_TAIL_COUNT = 3
 # Tools whose results are safe to clear (read-only / structural).
 # Content-read tools (read_scene, read_full_project, list_characters)
 # are EXCLUDED — they carry creative text the LLM needs across turns.
+# list_chapters and list_scenes are EXCLUDED — their results contain
+# UUIDs that downstream tools (read_chapter, read_scene, analyze_*,
+# create_*) need for parameter passing.
 _COMPACTABLE_TOOLS: set[str] = {
-    "list_chapters", "list_scenes", "read_chapter",
+    "read_chapter",
     "list_relations", "list_edges", "search_nodes",
     "analyze_chapter", "project_health", "check_consistency",
     "analyze_rhythm", "suggest_next",

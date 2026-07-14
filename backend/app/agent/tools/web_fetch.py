@@ -174,28 +174,25 @@ async def _fetch_url(url: str) -> tuple[str | None, str | None]:
 class WebFetchTool(BaseTool):
     meta = ToolMeta(
         name="web_fetch",
-        description="抓取指定 URL 的正文内容并转为纯文本/ Markdown。适用于阅读文章、文档、教程等在线内容。",
+        description="抓取指定 URL 的正文内容并转为纯文本/ Markdown。适用于阅读文章、文档、教程等在线内容。URL通常来自 web_search 的返回结果",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="web fetch url content extract",
         max_result_chars=settings.web_fetch_max_chars,
         timeout=settings.web_fetch_timeout,
-    )
-    name = "web_fetch"
-    description = "抓取指定 URL 的正文内容并转为纯文本/ Markdown。适用于阅读文章、文档、教程等在线内容。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "要抓取的完整 URL（必须以 http:// 或 https:// 开头）",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "要抓取的完整 URL（必须以 http:// 或 https:// 开头，通常来自 web_search 返回结果）",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "阅读说明：希望从页面中获取什么样的信息（可选）",
+                },
             },
-            "prompt": {
-                "type": "string",
-                "description": "阅读说明：希望从页面中获取什么样的信息（可选）",
-            },
+            "required": ["url"],
         },
-        "required": ["url"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         url = kwargs.get("url", "").strip()

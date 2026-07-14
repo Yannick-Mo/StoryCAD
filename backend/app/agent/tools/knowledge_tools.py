@@ -10,20 +10,16 @@ class SearchKnowledgeTool(BaseTool):
         name="search_knowledge",
         description="搜索写作知识库，获取与当前创作相关的技巧和参考",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="search knowledge base reference",
-    )
-    name = "search_knowledge"
-    description = "搜索写作知识库，获取与当前创作相关的技巧和参考"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID（可选）"},
-            "genre": {"type": "string", "description": "体裁"},
-            "query": {"type": "string", "description": "搜索关键词"},
-            "limit": {"type": "integer", "description": "返回结果数量"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词或写作问题（如'如何写打斗场景'、'悬疑伏笔技巧'）"},
+                "genre": {"type": "string", "description": "体裁（可选，如'悬疑'、'科幻'，用于过滤知识库）"},
+                "limit": {"type": "integer", "description": "返回结果数量"},
+            },
+            "required": ["query"],
         },
-        "required": ["query"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:

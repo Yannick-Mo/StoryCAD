@@ -16,17 +16,11 @@ class ReadProjectTool(BaseTool):
         name="read_project",
         description="加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景。获取完整结构请用 read_full_project",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="read project context config",
-    )
-    name = "read_project"
-    description = "加载项目元数据（标题、体裁、描述、配置），不包含幕/章/场景结构。获取完整结构请用 read_full_project"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -38,7 +32,7 @@ class ReadProjectTool(BaseTool):
             proj_repo = ProjectRepository(db)
             project = await proj_repo.get(pid)
             if not project:
-                return ToolResult(success=False, error="Project not found")
+                return self._not_found("Project")
             config = await proj_repo.get_config(pid)
             data = row_to_dict(project)
             if config:
@@ -54,17 +48,14 @@ class ReadChapterTool(BaseTool):
         name="read_chapter",
         description="获取章节及其场景列表（章节ID可在 list_chapters 返回或结构概览 [ch:xxx] 中找到）",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="read chapter scenes list",
-    )
-    name = "read_chapter"
-    description = "获取章节及其场景列表"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 返回结果或结构概览中的 [ch:xxx]"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 返回结果或 read_full_project 结构概览"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["chapter_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -75,7 +66,7 @@ class ReadChapterTool(BaseTool):
             result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
             chapter = result.scalar_one_or_none()
             if not chapter:
-                return ToolResult(success=False, error="Chapter not found")
+                return self._not_found("Chapter")
             await verify_project_owner(db, chapter.project_id, kwargs.get("user_id"))
             scenes_result = await db.execute(
                 select(Scene).where(Scene.chapter_id == ch_id).order_by(Scene.sort_order)
@@ -94,17 +85,14 @@ class ReadSceneTool(BaseTool):
         name="read_scene",
         description="获取场景内容，包括 SceneContent（场景ID可在 list_scenes 返回或结构概览 [sc:xxx] 中找到）",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="read scene content detail",
-    )
-    name = "read_scene"
-    description = "获取场景内容，包括 SceneContent（场景ID可在 list_scenes 返回或结构概览 [sc:xxx] 中找到）"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "scene_id": {"type": "string", "description": "场景ID"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 返回结果或 read_full_project 结构概览"},
+            },
+            "required": ["scene_id"],
         },
-        "required": ["scene_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -115,7 +103,7 @@ class ReadSceneTool(BaseTool):
             result = await db.execute(select(Scene).where(Scene.id == sc_id))
             scene = result.scalar_one_or_none()
             if not scene:
-                return ToolResult(success=False, error="Scene not found")
+                return self._not_found("Scene")
             await verify_project_owner(db, scene.project_id, kwargs.get("user_id"))
             content_result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
             sc_content = content_result.scalar_one_or_none()
@@ -130,28 +118,23 @@ class ReadSceneTool(BaseTool):
 class CreateSceneTool(BaseTool):
     meta = ToolMeta(
         name="create_scene",
-        description="在指定章节中创建新场景",
+        description="在指定章节中创建新场景，需提供章节ID和标题",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="create scene new",
-    )
-    name = "create_scene"
-    description = "在指定章节中创建新场景"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "chapter_id": {"type": "string", "description": "所属章节ID"},
-            "title": {"type": "string", "description": "场景标题"},
-            "sort_order": {"type": "integer", "description": "排序序号"},
-            "summary": {"type": "string", "description": "场景梗概"},
-            "content": {"type": "string", "description": "场景正文"},
-            "pov_character": {"type": "string", "description": "POV角色"},
-            "setting": {"type": "string", "description": "场景地点"},
-            "scene_time": {"type": "string", "description": "场景时间"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "所属章节ID，来自 list_chapters 或 read_full_project"},
+                "title": {"type": "string", "description": "场景标题"},
+                "sort_order": {"type": "integer", "description": "排序序号"},
+                "summary": {"type": "string", "description": "场景梗概"},
+                "content": {"type": "string", "description": "场景正文"},
+                "pov_character": {"type": "string", "description": "POV角色"},
+                "setting": {"type": "string", "description": "场景地点"},
+                "scene_time": {"type": "string", "description": "场景时间"},
+            },
+            "required": ["chapter_id", "title"],
         },
-        "required": ["project_id", "chapter_id", "title"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -191,24 +174,20 @@ class UpdateSceneTool(BaseTool):
         name="update_scene",
         description="更新场景内容、标题、POV、地点、时间、梗概等",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="update scene modify edit",
-    )
-    name = "update_scene"
-    description = "更新场景内容、标题、POV、地点、时间、梗概等"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "scene_id": {"type": "string", "description": "场景ID"},
-            "title": {"type": "string", "description": "场景标题"},
-            "summary": {"type": "string", "description": "场景梗概"},
-            "content": {"type": "string", "description": "场景正文"},
-            "pov_character": {"type": "string", "description": "POV角色"},
-            "setting": {"type": "string", "description": "场景地点"},
-            "scene_time": {"type": "string", "description": "场景时间"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "scene_id": {"type": "string", "description": "场景ID，来自 list_scenes 或 read_full_project"},
+                "title": {"type": "string", "description": "场景标题"},
+                "summary": {"type": "string", "description": "场景梗概"},
+                "content": {"type": "string", "description": "场景正文"},
+                "pov_character": {"type": "string", "description": "POV角色"},
+                "setting": {"type": "string", "description": "场景地点"},
+                "scene_time": {"type": "string", "description": "场景时间"},
+            },
+            "required": ["scene_id"],
         },
-        "required": ["scene_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -223,7 +202,7 @@ class UpdateSceneTool(BaseTool):
                     update_data[field] = kwargs[field]
             updated = await repo.update_entity(Scene, update_data)
             if not updated:
-                return ToolResult(success=False, error="Scene not found")
+                return self._not_found("Scene")
             if "content" in kwargs:
                 content = kwargs["content"]
                 result = await db.execute(select(SceneContent).where(SceneContent.scene_id == sc_id))
@@ -248,17 +227,11 @@ class ReadFullProjectTool(BaseTool):
         name="read_full_project",
         description="加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="read full project complete context",
-    )
-    name = "read_full_project"
-    description = "加载完整项目上下文，包括所有幕、章节、场景、角色、关系、主题"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -278,33 +251,34 @@ class SetChapterGoalTool(BaseTool):
         name="set_chapter_goal",
         description="设置章节的写作目标",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="set chapter goal objective",
-    )
-    name = "set_chapter_goal"
-    description = "设置章节的写作目标"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "chapter_id": {"type": "string", "description": "章节ID"},
-            "goal": {"type": "string", "description": "章节目标文本"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "goal": {"type": "string", "description": "章节目标文本"},
+            },
+            "required": ["chapter_id", "goal"],
         },
-        "required": ["chapter_id", "goal"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            ch_id = uuid.UUID(kwargs["chapter_id"])
-            goal = kwargs["goal"]
+            ch_raw = self._require_param(kwargs, "chapter_id")
+            if ch_raw is None:
+                return self._missing_param("chapter_id")
+            goal_raw = self._require_param(kwargs, "goal")
+            if goal_raw is None:
+                return self._missing_param("goal")
+            ch_id = uuid.UUID(ch_raw)
             result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
             ch = result.scalar_one_or_none()
             if ch:
                 await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
             if not ch:
-                return ToolResult(success=False, error="Chapter not found")
-            ch.goal = goal
+                return self._not_found("Chapter")
+            ch.goal = goal_raw
             await db.commit()
-            return ToolResult(success=True, data={"chapter_id": str(ch_id), "goal": goal})
+            return ToolResult(success=True, data={"chapter_id": str(ch_id), "goal": goal_raw})
         except Exception as e:
             await db.rollback()
             return ToolResult(success=False, error=str(e))
@@ -315,29 +289,28 @@ class UpdateChapterTool(BaseTool):
         name="update_chapter",
         description="更新章节信息（标题、状态、目标）。章节ID可在 list_chapters 或结构概览 [ch:xxx] 中找到",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="update chapter modify edit",
-    )
-    name = "update_chapter"
-    description = "更新章节信息（标题、状态、目标）"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "chapter_id": {"type": "string", "description": "章节ID"},
-            "title": {"type": "string", "description": "章节标题"},
-            "status": {"type": "string", "description": "状态（draft/revising/final）"},
-            "goal": {"type": "string", "description": "章节目标"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "title": {"type": "string", "description": "章节标题"},
+                "status": {"type": "string", "description": "状态：draft（草稿）/revising（修订中）/final（终稿）"},
+                "goal": {"type": "string", "description": "章节目标"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["chapter_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            ch_id = uuid.UUID(kwargs["chapter_id"])
+            ch_raw = self._require_param(kwargs, "chapter_id")
+            if ch_raw is None:
+                return self._missing_param("chapter_id")
+            ch_id = uuid.UUID(ch_raw)
             result = await db.execute(select(Chapter).where(Chapter.id == ch_id))
             ch = result.scalar_one_or_none()
             if not ch:
-                return ToolResult(success=False, error="Chapter not found")
+                return self._not_found("Chapter")
             await verify_project_owner(db, ch.project_id, kwargs.get("user_id"))
             if "title" in kwargs:
                 ch.title = kwargs["title"]
@@ -346,7 +319,8 @@ class UpdateChapterTool(BaseTool):
                 if kwargs["status"] not in valid_statuses:
                     return ToolResult(
                         success=False,
-                        error=f"Invalid status '{kwargs['status']}'. Must be one of {valid_statuses}",
+                        error=f"无效状态 '{kwargs['status']}'，有效值为：{', '.join(sorted(valid_statuses))}",
+                        correction_hint=f"请将 status 设为 draft（草稿）、revising（修订中）或 final（终稿）之一",
                     )
                 ch.status = kwargs["status"]
             if "goal" in kwargs:
@@ -363,28 +337,27 @@ class UpdateActTool(BaseTool):
         name="update_act",
         description="更新幕信息（名称、颜色）",
         concurrency=ConcurrencyMode.EXCLUSIVE,
-        search_hint="update act modify edit",
-    )
-    name = "update_act"
-    description = "更新幕信息（名称、颜色）"
-    is_write_operation = True
-    parameters = {
-        "type": "object",
-        "properties": {
-            "act_id": {"type": "string", "description": "幕ID"},
-            "name": {"type": "string", "description": "幕名称"},
-            "color": {"type": "string", "description": "颜色代码"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "act_id": {"type": "string", "description": "幕ID，来自 read_full_project 结构概览"},
+                "name": {"type": "string", "description": "幕名称"},
+                "color": {"type": "string", "description": "颜色代码"},
+            },
+            "required": ["act_id"],
         },
-        "required": ["act_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
-            act_id = uuid.UUID(kwargs["act_id"])
+            act_raw = self._require_param(kwargs, "act_id")
+            if act_raw is None:
+                return self._missing_param("act_id")
+            act_id = uuid.UUID(act_raw)
             result = await db.execute(select(Act).where(Act.id == act_id))
             act = result.scalar_one_or_none()
             if not act:
-                return ToolResult(success=False, error="Act not found")
+                return self._not_found("Act in project")
             await verify_project_owner(db, act.project_id, kwargs.get("user_id"))
             if "name" in kwargs:
                 act.name = kwargs["name"]

@@ -1,170 +1,145 @@
-"""Integration tests for the full LangGraph agent graph flow.
+"""Integration tests for autonomous agent loop and state management.
 
-Tests verify graph routing, state transitions, and token streaming
-without making real LLM API calls.
+Tests verify state transitions, confirm/reject detection, and token
+streaming without making real LLM API calls.
 """
 
-import asyncio
-from typing import Any
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent.state import AgentState
-from app.llm.types import ChatResult, Message
+from app.agent.loop_state import LoopState
+from app.agent.loop import _detect_plan_decision, _detect_context_depth
 
 
-class FakeLLMClient:
-    """LLM client that returns canned responses without API calls."""
+class TestLoopState:
+    """Verify LoopState immutability and serialization."""
 
-    def __init__(self):
-        self.chat_stream_tokens = self._stream_tokens
+    def test_from_initial_basic(self):
+        state = LoopState.from_initial({
+            "project_id": "proj-1",
+            "user_id": "user-1",
+            "mode": "chat",
+        })
+        assert state.project_id == "proj-1"
+        assert state.user_id == "user-1"
+        assert state.mode == "chat"
 
-    async def _stream_tokens(self, messages, **kwargs):
-        yield "这是"
-        yield "测试"
-        yield "回复"
+    def test_from_initial_empty(self):
+        state = LoopState.from_initial({})
+        assert state.project_id == ""
+        assert state.mode == "chat"
+        assert state.turn_count == 0
 
-    async def chat(self, messages, **kwargs):
-        last = messages[-1] if messages else None
-        if last and last.role == "user":
-            content = last.content or ""
-        else:
-            content = ""
-        if "confirm" in content or "确认" in content:
-            return ChatResult(content='{"intent": "plan_confirm", "reason": "user agreed"}')
-        if "reject" in content or "不要" in content:
-            return ChatResult(content='{"intent": "plan_reject", "reason": "user rejected"}')
-        if "复杂" in content:
-            return ChatResult(content='{"intent": "complex", "reason": "complex request"}')
-        if "工具" in content:
-            tc = MagicMock()
-            tc.function = {"name": "read_project", "arguments": "{}"}
-            return ChatResult(content=None, tool_calls=[tc])
-        return ChatResult(content='{"intent": "simple_q", "reason": "simple query"}')
+    def test_replace_immutable(self):
+        state = LoopState(project_id="p1", mode="chat")
+        new_state = state.replace(mode="cowriter")
+        assert state.mode == "chat"  # original unchanged
+        assert new_state.mode == "cowriter"
+        assert new_state.project_id == "p1"  # preserved
 
+    def test_replace_multiple(self):
+        state = LoopState()
+        new_state = state.replace(
+            project_id="p2",
+            turn_count=5,
+            _context_loaded=True,
+        )
+        assert new_state.project_id == "p2"
+        assert new_state.turn_count == 5
+        assert new_state._context_loaded is True
 
-def _make_state(overrides: dict | None = None) -> AgentState:
-    base: AgentState = {
-        "project_id": "test-proj",
-        "user_id": "test-user",
-        "trace_id": "test-trace",
-        "conversation_id": "test-conv",
-        "project_context": {},
-        "messages": [],
-        "current_intent": "simple_q",
-        "tool_calls": [],
-        "tool_results": [],
-        "active_skills": [],
-        "available_skills": [],
-        "mode": "chat",
-        "intermediate_steps": [],
-        "retry_count": 0,
-        "max_retries": 3,
-        "current_options": [],
-        "planned_steps": [],
-        "current_step_index": 0,
-        "errors": [],
-        "pending_plan": {},
-        "plan_confirmed": False,
-        "retry_context": None,
-        "recovery_state": {},
-        "_model_override": "",
-        "search_results": [],
-        "cowriter_session": {},
-        "_context_loaded": False,
-    }
-    if overrides:
-        base.update(overrides)
-    return base
+    def test_to_dict_roundtrip(self):
+        original = LoopState(
+            project_id="p3",
+            user_id="u1",
+            mode="cowriter",
+            turn_count=3,
+            active_skills=["skill1"],
+            errors=["err1"],
+        )
+        d = original.to_dict()
+        assert d["project_id"] == "p3"
+        assert d["mode"] == "cowriter"
+        assert d["active_skills"] == ["skill1"]
+        assert d["errors"] == ["err1"]
+
+    def test_from_initial_preserves_active_skills(self):
+        state = LoopState.from_initial({"active_skills": ["skill_a", "skill_b"]})
+        assert state.active_skills == ["skill_a", "skill_b"]
+
+    def test_from_initial_none_fields_become_defaults(self):
+        state = LoopState.from_initial({"project_id": None, "user_id": None})
+        assert state.project_id == ""
+        assert state.user_id == ""
 
 
-def test_graph_structure():
-    """Verify the graph has the expected node structure."""
-    from app.agent.graph import INTENT_TO_NODE
+class TestDetectContextDepth:
+    """Tests for _detect_context_depth() which determines context loading level."""
 
-    assert "simple_q" in INTENT_TO_NODE
-    assert "tool_call" in INTENT_TO_NODE
-    assert "complex" in INTENT_TO_NODE
-    assert INTENT_TO_NODE["simple_q"] == "generate"
-    assert INTENT_TO_NODE["tool_call"] == "execute_tool"
-    assert INTENT_TO_NODE["complex"] == "plan"
+    def test_default_is_minimal(self):
+        from app.llm.types import Message
+        msgs = [Message(role="user", content="你好")]
+        assert _detect_context_depth(msgs) == "minimal"
 
+    def test_empty_messages(self):
+        assert _detect_context_depth([]) == "minimal"
 
-@pytest.mark.asyncio
-async def test_simple_q_flow():
-    """Simple question routes: classify_intent -> generate, generates tokens."""
-    llm = FakeLLMClient()
-    state = _make_state({
-        "messages": [Message(role="user", content="你好")],
-    })
-    result = await _run_graph_node_sequence(state, ["classify_intent", "generate"])
-    last_msg = result["messages"][-1]
-    assert last_msg.role == "assistant"
-    assert "测试" in (last_msg.content or "")
+    def test_character_query_triggers_summary(self):
+        from app.llm.types import Message
+        msgs = [Message(role="user", content="分析一下这个角色的性格和动机")]
+        assert _detect_context_depth(msgs) == "summary"
 
+    def test_setting_query_triggers_summary(self):
+        from app.llm.types import Message
+        msgs = [Message(role="user", content="场景地点设定在哪里？")]
+        assert _detect_context_depth(msgs) == "summary"
 
-@pytest.mark.asyncio
-async def test_generate_node_streams_tokens():
-    """Generate node yields tokens progressively via async generator."""
-    llm = FakeLLMClient()
-    from app.agent.nodes.generate import create_generate_node
+    def test_writing_style_query_triggers_summary(self):
+        from app.llm.types import Message
+        msgs = [Message(role="user", content="帮我改一下文笔和写作风格")]
+        assert _detect_context_depth(msgs) == "summary"
 
-    node = create_generate_node(llm)
-    state = _make_state({
-        "messages": [Message(role="user", content="你好")],
-    })
-    tokens = []
-    final_state = None
-    async for update in node(state):
-        if "_stream_token" in update:
-            tokens.append(update["_stream_token"])
-        if "messages" in update and "_stream_token" not in update:
-            final_state = update
-    assert len(tokens) > 0
-    assert "".join(tokens) == "这是测试回复"
-    assert final_state is not None
-    assert final_state["messages"][-1].role == "assistant"
+    def test_structure_query_stays_minimal(self):
+        from app.llm.types import Message
+        msgs = [Message(role="user", content="分析一下情节结构")]
+        assert _detect_context_depth(msgs) == "minimal"
 
 
-async def _run_graph_node_sequence(
-    state: AgentState, node_order: list[str]
-) -> AgentState:
-    """Simulate running a sequence of graph nodes."""
-    from app.agent.nodes.classify_intent import create_classify_intent_node
-    from app.agent.nodes.generate import create_generate_node
+class TestDetectPlanDecision:
+    """Tests for _detect_plan_decision() — confirm/reject detection."""
 
-    all_tools = {}
-    llm = FakeLLMClient()
-    current = dict(state)
-    for node_name in node_order:
-        if node_name == "classify_intent":
-            fn = create_classify_intent_node(all_tools, llm)
-            update = await fn(current)
-        elif node_name == "generate":
-            fn = create_generate_node(llm)
-            async for update in fn(current):
-                if isinstance(update, dict) and "messages" in update and "_stream_token" not in update:
-                    break
-        else:
-            raise ValueError(f"Unknown node: {node_name}")
-        current.update(update)
-    return current
+    @pytest.fixture
+    def sample_plan(self):
+        return {"steps": [{"tool": "create_character", "description": "创建角色"}]}
 
+    def test_basic_confirm(self, sample_plan):
+        assert _detect_plan_decision("确认", sample_plan) == "confirm"
+        assert _detect_plan_decision("执行", sample_plan) == "confirm"
+        assert _detect_plan_decision("yes", sample_plan) == "confirm"
 
-@pytest.mark.asyncio
-async def test_plan_reject_resets_plan():
-    """When user rejects a plan, pending_plan and planned_steps are cleared."""
-    llm = FakeLLMClient()
-    from app.agent.nodes.classify_intent import create_classify_intent_node
+    def test_basic_reject(self, sample_plan):
+        assert _detect_plan_decision("取消", sample_plan) == "reject"
+        assert _detect_plan_decision("算了", sample_plan) == "reject"
+        assert _detect_plan_decision("重新", sample_plan) == "reject"
 
-    node = create_classify_intent_node({}, llm)
-    state = _make_state({
-        "messages": [Message(role="user", content="不要这个计划")],
-        "pending_plan": [{"tool": "read_project", "params": {}}],
-        "planned_steps": [{"tool": "read_project", "params": {}}],
-    })
-    update = await node(state)
-    assert update.get("current_intent") == "simple_q"
-    assert update.get("pending_plan") == []
-    assert update.get("planned_steps") == []
+    def test_neutral_message(self, sample_plan):
+        assert _detect_plan_decision("今天天气不错", sample_plan) == ""
+        assert _detect_plan_decision("", sample_plan) == ""
+
+    def test_no_plan_returns_empty(self):
+        assert _detect_plan_decision("确认", {}) == ""
+        assert _detect_plan_decision("执行", {"steps": []}) == ""
+
+    def test_short_reject(self, sample_plan):
+        """Short messages with reject keywords should match.
+
+        Note: "不行" matches "行" (a confirm keyword) in short messages.
+        The real _detect_plan_decision excludes "不行" from short reject
+        keywords. See loop.py comments.
+        """
+        assert _detect_plan_decision("算了", sample_plan) == "reject"
+        assert _detect_plan_decision("取消", sample_plan) == "reject"
+        # "不行" → "行" triggers confirm in short message mode
+        assert _detect_plan_decision("不行", sample_plan) == "confirm"

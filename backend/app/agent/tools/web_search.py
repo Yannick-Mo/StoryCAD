@@ -237,38 +237,35 @@ async def _search(
 class WebSearchTool(BaseTool):
     meta = ToolMeta(
         name="web_search",
-        description="搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。",
+        description="搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。返回URL后可调用 web_fetch 获取详情",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="web search internet real-time",
-    )
-    name = "web_search"
-    description = "搜索网络获取实时信息。适用于查询最新新闻、事实数据、写作参考资料等。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "搜索关键词（支持中文）",
-                "maxLength": 500,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词（支持中文）",
+                    "maxLength": 500,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "返回结果数量 (1-10)，默认5",
+                    "default": 5,
+                },
+                "allowed_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "仅返回这些域名下的结果（如 [\"python.org\"]）",
+                },
+                "blocked_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "排除这些域名的结果",
+                },
             },
-            "max_results": {
-                "type": "integer",
-                "description": "返回结果数量 (1-10)，默认5",
-                "default": 5,
-            },
-            "allowed_domains": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "仅返回这些域名下的结果（如 [\"python.org\", \".wikipedia.org\"]）",
-            },
-            "blocked_domains": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "排除这些域名的结果",
-            },
+            "required": ["query"],
         },
-        "required": ["query"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         query = kwargs.get("query", "").strip()
@@ -283,8 +280,8 @@ class WebSearchTool(BaseTool):
             results = await _search(query, max_results, allowed, blocked)
             if not results:
                 return ToolResult(
-                    success=False,
-                    error="未找到相关结果，请尝试更换关键词或减少过滤条件",
+                    success=True,
+                    data={"results": [], "message": "未找到相关结果，请尝试更换关键词或减少过滤条件"},
                 )
             return ToolResult(success=True, data=results)
         except Exception as e:

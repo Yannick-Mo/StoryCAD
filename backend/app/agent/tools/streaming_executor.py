@@ -105,6 +105,11 @@ def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | 
 
     Uses the tool's ``max_result_chars`` when available, otherwise falls
     back to a heuristic based on tool category.
+
+    Always returns ``data`` as a **string** (never a raw dict/list), so
+    callers in ``loop.py`` can rely on it being plain text.  Dict/list
+    data is JSON-serialized first, then structure-aware truncation is
+    applied to preserve entity IDs.
     """
     if tool is not None and hasattr(tool, "_effective_max_result_chars"):
         max_chars = tool._effective_max_result_chars
@@ -116,16 +121,24 @@ def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | 
         max_chars = 8000
 
     data = result.data
+    # Normalize dict/list to JSON string first so _smart_summarise
+    # can apply structure-aware truncation (preserving first items + IDs).
+    if isinstance(data, (dict, list)):
+        data = json.dumps(data, ensure_ascii=False, default=str)
     if isinstance(data, str) and len(data) > max_chars:
         data = _smart_summarise(data, max_chars, tool_name)
     elif data is None or data == "":
         data = "(empty)"
-    return {
+    out = {
         "tool": tool_name,
         "success": result.success,
         "data": data,
         "error": result.error,
     }
+    # Forward correction_hint to the LLM tool result message
+    if result.correction_hint:
+        out["correction_hint"] = result.correction_hint
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +436,8 @@ class StreamingToolExecutor:
             return {"tool": name, "success": False, "error": "Tool not found", "_tool_use_id": tool_use_id}
 
         # Inject project_id and user_id into tool args if missing (LLM often
-        # omits them on chained tool calls).
+        # omits them on chained tool calls).  The tool descriptions in the
+        # prompt also note that project_id is auto-injected.
         merged = dict(args)
         if self._project_id and "project_id" not in merged:
             merged["project_id"] = self._project_id
@@ -451,7 +465,13 @@ class StreamingToolExecutor:
             d["_tool_use_id"] = tool_use_id
             return d
         except asyncio.TimeoutError:
-            return {"tool": name, "success": False, "error": f"Timed out after {timeout}s", "_tool_use_id": tool_use_id}
+            # A timeout may have left the DB connection in a partially-modified
+            # state — roll back to prevent InFailedSQLTransactionError.
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
+            return {"tool": name, "success": False, "error": f"工具执行超时（{timeout}秒），事务已回滚", "_tool_use_id": tool_use_id}
         except asyncio.CancelledError:
             raise
         except KeyError as ke:

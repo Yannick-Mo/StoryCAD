@@ -10,17 +10,12 @@ class ConsistencyCheckTool(BaseTool):
         name="check_consistency",
         description="检查故事一致性，返回基本的角色、情节、设定一致性报告",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="consistency check story analysis",
-    )
-    name = "check_consistency"
-    description = "检查故事一致性，返回基本的角色、情节、设定一致性报告"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        timeout=120,
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -31,10 +26,13 @@ class ConsistencyCheckTool(BaseTool):
             pid = uuid.UUID(pid)
             await verify_project_owner(db, pid, kwargs.get("user_id"))
             checker = ConsistencyChecker(db)
-            report = await checker.check_all(pid)
+            report = await checker.check_all(str(pid))
             return ToolResult(success=True, data=report.model_dump(mode="json"))
         except Exception as e:
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             return ToolResult(success=False, error=str(e))
 
 
@@ -43,17 +41,11 @@ class RhythmAnalyzeTool(BaseTool):
         name="analyze_rhythm",
         description="分析故事节奏（动作、悬疑、情感、幽默、强度），返回基本分析报告",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="rhythm analyze story pacing",
-    )
-    name = "analyze_rhythm"
-    description = "分析故事节奏（动作、悬疑、情感、幽默、强度），返回基本分析报告"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -68,5 +60,8 @@ class RhythmAnalyzeTool(BaseTool):
             result = await analyzer.analyze(pid)
             return ToolResult(success=True, data=result)
         except Exception as e:
-            await db.rollback()
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             return ToolResult(success=False, error=str(e))

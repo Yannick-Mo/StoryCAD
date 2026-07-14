@@ -15,18 +15,13 @@ class ListChaptersTool(BaseTool):
         name="list_chapters",
         description="列出项目中所有章节的结构概览，包括所属幕、场景数量",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="list chapters all project act",
-    )
-    name = "list_chapters"
-    description = "列出项目中所有章节的结构概览，包括所属幕、场景数量"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "act_id": {"type": "string", "description": "按幕筛选（可选）"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "act_id": {"type": "string", "description": "按幕筛选（可选），幕ID来自 read_full_project 结构概览"},
+            },
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -91,18 +86,13 @@ class ListScenesTool(BaseTool):
         name="list_scenes",
         description="列出项目中的场景，可按章节筛选，返回标题、POV、摘要",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="list scenes all chapter project",
-    )
-    name = "list_scenes"
-    description = "列出项目中的场景，可按章节筛选"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "chapter_id": {"type": "string", "description": "按章节筛选（可选）"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "按章节筛选（可选），章节ID来自 list_chapters 或 read_full_project"},
+            },
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -144,17 +134,11 @@ class ListRelationsTool(BaseTool):
         name="list_relations",
         description="列出项目中所有角色关系",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="list relations character all project",
-    )
-    name = "list_relations"
-    description = "列出项目中所有角色关系"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -193,17 +177,11 @@ class ListEdgesTool(BaseTool):
         name="list_edges",
         description="列出项目中所有章节连线（剧情流向）",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="list edges chapter all project",
-    )
-    name = "list_edges"
-    description = "列出项目中所有章节连线（剧情流向）"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -248,24 +226,20 @@ class SearchNodesTool(BaseTool):
         name="search_nodes",
         description="搜索项目中的节点（场景、章节、角色），支持按关键词搜索标题和摘要",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="search project nodes scenes chapters characters",
-    )
-    name = "search_nodes"
-    description = "搜索项目中的节点（场景、章节、角色），支持按关键词搜索"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "keyword": {"type": "string", "description": "搜索关键词"},
-            "node_type": {
-                "type": "string",
-                "description": "节点类型：scene/chapter/character/all（默认all）",
-                "enum": ["scene", "chapter", "character", "all"],
+        parameters={
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "搜索关键词"},
+                "node_type": {
+                    "type": "string",
+                    "description": "节点类型：scene/chapter/character/all（默认all）",
+                    "enum": ["scene", "chapter", "character", "all"],
+                },
+                "limit": {"type": "integer", "description": "每类最多返回条数（默认10）"},
             },
-            "limit": {"type": "integer", "description": "每类最多返回条数（默认10）"},
+            "required": ["keyword"],
         },
-        "required": ["project_id", "keyword"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:

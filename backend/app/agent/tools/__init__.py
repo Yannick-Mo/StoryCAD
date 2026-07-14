@@ -24,8 +24,8 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
     )
     from .character_tools import (
-        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool,
-        DeleteCharacterTool, DeleteRelationTool,
+        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool,
+        CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
     )
     from .agent_tools import GoalAgentTool, OutlineAgentTool
     from .analysis_tools import ConsistencyCheckTool, RhythmAnalyzeTool
@@ -49,8 +49,8 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
         ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
-        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool, UpdateRelationTool,
-        DeleteCharacterTool, DeleteRelationTool,
+        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool,
+        CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
         GoalAgentTool, OutlineAgentTool,
         ConsistencyCheckTool, RhythmAnalyzeTool,
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
@@ -67,11 +67,12 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:
-        if cls.name in registry:
-            raise ValueError(f"Duplicate tool name: {cls.name}")
+        tool_name = cls.meta.name if cls.meta is not None else getattr(cls, "name", "")
+        if tool_name in registry:
+            raise ValueError(f"Duplicate tool name: {tool_name}")
         inst = _safe_instantiate(cls, llm_client)
         if inst is not None:
-            registry[cls.name] = inst
+            registry[tool_name] = inst
     return registry
 
 
@@ -84,29 +85,52 @@ def get_filtered_tools(
 
 
 def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
-    """Build a human-readable description string for a tool dict.
+    """Build a compact tool reference string for the system prompt.
 
-    Includes concurrency mode when available on the tool's meta.
+    Includes tool name, description, destructive/confirmation markers, and
+    **required parameter hints** with ID source annotations so models
+    (especially DeepSeek flash variants) can see how to obtain required IDs.
     """
-    lines = []
+    import re
+    lines: list[str] = []
+    lines.append(
+        "# ⚠️ 每个工具标注了 (必须: <参数名>) 表示该参数必需提供！调用前请检查！\n"
+        "# 参数名后跟 ← tool_name 表示：先调 tool_name 获取该ID，再传入。\n"
+        "# 示例：write_scene_content (必须: scene_id ← list_scenes)\n"
+        "#   → 先调 list_scenes 获取 scene_id → 再用该 ID 调 write_scene_content\n"
+        "# 标注 [需确认] 表示需要用户批准，标注 [破坏性] 表示不可逆操作。\n"
+    )
     for t_name, t_inst in sorted(tools.items()):
         d = t_inst.to_openai_tool()
         fn = d.get("function", {})
-        params = fn.get("parameters", {})
-        required = params.get("required", [])
-        props = params.get("properties", {})
 
-        concurrency_str = ""
-        if hasattr(t_inst, "meta") and t_inst.meta is not None:
-            concurrency_str = f" [并发:{t_inst.meta.concurrency.value}]"
         destructive_str = ""
-        if hasattr(t_inst, "meta") and t_inst.meta is not None and t_inst.meta.is_destructive:
-            destructive_str = " [破坏性]"
+        if hasattr(t_inst, "meta") and t_inst.meta is not None:
+            if t_inst.meta.needs_confirmation:
+                destructive_str = " [需确认]"
+            elif t_inst.meta.is_destructive:
+                destructive_str = " [破坏性]"
 
-        lines.append(f"- {t_name}: {fn.get('description', '')}{concurrency_str}{destructive_str}")
-        for p_name, p_schema in props.items():
-            req = "(required)" if p_name in required else ""
-            lines.append(f"    {p_name}: {p_schema.get('description', '')} {req}")
+        # Build required-param hints with ID source annotations.
+        # Extract "来自 X" from parameter descriptions to show the source tool.
+        params_schema = fn.get("parameters", {})
+        properties = params_schema.get("properties", {})
+        required = params_schema.get("required", [])
+        req_parts: list[str] = []
+        for p in required:
+            prop = properties.get(p, {})
+            desc = prop.get("description", "")
+            m = re.search(r'来自\s+(\S+)', desc)
+            if m:
+                req_parts.append(f"{p} ← {m.group(1)}")
+            else:
+                req_parts.append(p)
+        if req_parts:
+            req_hint = " (必须: " + ", ".join(req_parts) + ")"
+        else:
+            req_hint = ""
+
+        lines.append(f"- {t_name}: {fn.get('description', '')}{req_hint}{destructive_str}")
     return "\n".join(lines)
 
 

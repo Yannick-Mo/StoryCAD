@@ -10,7 +10,6 @@ from app.agent.orchestrator import AgentOrchestrator
 class _CallAgentBase(BaseTool):
     """Base class for agent-calling tools. Subclasses differ only in name/description/mode."""
     mode: str = ""
-    is_write_operation = True
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -32,41 +31,35 @@ class GoalAgentTool(_CallAgentBase):
     meta = ToolMeta(
         name="call_goal_agent",
         description="调用目标设定智能体，为当前章节设定写作目标",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
         timeout=120,
-        search_hint="goal agent chapter writing",
-    )
-    name = "call_goal_agent"
-    description = "调用目标设定智能体，为当前章节设定写作目标"
-    mode = "goal"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string"},
-            "chapter_id": {"type": "string"},
-            "user_prompt": {"type": "string", "description": "对目标设定的额外指示"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "user_prompt": {"type": "string", "description": "对目标设定的额外指示"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["project_id", "chapter_id"],
-    }
+    )
+    mode = "goal"
 
 
 class OutlineAgentTool(_CallAgentBase):
     meta = ToolMeta(
         name="call_outline_agent",
         description="调用大纲智能体，为当前章节生成写作大纲",
+        concurrency=ConcurrencyMode.EXCLUSIVE,
         timeout=120,
-        search_hint="outline agent chapter generate",
-    )
-    name = "call_outline_agent"
-    description = "调用大纲智能体，为当前章节生成写作大纲"
-    mode = "outline"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string"},
-            "chapter_id": {"type": "string"},
-            "user_prompt": {"type": "string", "description": "对大纲生成的额外指示"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+                "user_prompt": {"type": "string", "description": "对大纲生成的额外指示"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["project_id", "chapter_id"],
-    }
+    )
+    mode = "outline"
 
 

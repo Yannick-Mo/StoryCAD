@@ -23,27 +23,13 @@ class InvokeSkillTool(BaseTool):
             "properties": {
                 "skill_name": {
                     "type": "string",
-                    "description": "要启用的技能名称（如'悬疑推理'、'言情'、'网络爽文'、'现实主义'）",
+                    "description": "要启用的技能名称（如'悬疑推理'、'言情'、'网络爽文'、'现实主义'），见可用技能列表",
                 },
             },
             "required": ["skill_name"],
         },
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="invoke skill activate enable writing style genre",
     )
-    name = "invoke_skill"
-    description = "启用一个写作技能，获取专属写作指导和知识库支持"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "skill_name": {
-                "type": "string",
-                "description": "技能名称",
-            },
-        },
-        "required": ["skill_name"],
-    }
-    is_write_operation = False
 
     async def run(self, db: AsyncSession | None = None, **kwargs) -> ToolResult:
         skill_name = kwargs.get("skill_name", "").strip()

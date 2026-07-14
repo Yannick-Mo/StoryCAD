@@ -17,18 +17,14 @@ class AnalyzeChapterTool(BaseTool):
         name="analyze_chapter",
         description="分析指定章节的结构、节奏、角色、语言，返回四维评分和改进建议",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="analyze chapter structure pacing",
-    )
-    name = "analyze_chapter"
-    description = "分析指定章节的结构、节奏、角色、语言，返回四维评分和改进建议"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "chapter_id": {"type": "string", "description": "章节ID"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节ID，来自 list_chapters 或 read_full_project"},
+            },
+            "required": ["chapter_id"],
         },
-        "required": ["project_id", "chapter_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -107,7 +103,8 @@ class AnalyzeChapterTool(BaseTool):
             try:
                 parsed = json.loads(result.content or "{}")
             except json.JSONDecodeError:
-                parsed = {"scores": {}, "analysis": result.content, "suggestions": []}
+                parsed = {"scores": {}, "analysis": result.content, "suggestions": [],
+                          "_parse_note": "LLM 返回了非 JSON 格式的回复，以上为原始文本，未成功解析为结构化数据"}
 
             return ToolResult(success=True, data=parsed)
         except Exception as e:
@@ -120,18 +117,14 @@ class AnalyzeCharacterArcTool(BaseTool):
         name="analyze_character_arc",
         description="分析角色的弧线发展和一致性",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="analyze character arc development",
-    )
-    name = "analyze_character_arc"
-    description = "分析角色的弧线发展和一致性"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
-            "character_id": {"type": "string", "description": "角色ID"},
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_id": {"type": "string", "description": "角色ID，来自 list_characters 返回结果"},
+            },
+            "required": ["character_id"],
         },
-        "required": ["project_id", "character_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -195,7 +188,8 @@ class AnalyzeCharacterArcTool(BaseTool):
             try:
                 parsed = json.loads(result.content or "{}")
             except json.JSONDecodeError:
-                parsed = {"analysis": result.content, "issues": []}
+                parsed = {"analysis": result.content, "issues": [],
+                          "_parse_note": "LLM 返回了非 JSON 格式的回复，以上为原始文本，未成功解析为结构化数据"}
 
             return ToolResult(success=True, data=parsed)
         except Exception as e:
@@ -224,17 +218,11 @@ class SuggestNextTool(BaseTool):
         name="suggest_next",
         description="基于当前项目进展，推荐下一步该写什么",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="suggest next step recommendation",
-    )
-    name = "suggest_next"
-    description = "基于当前项目进展，推荐下一步该写什么"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
@@ -296,7 +284,8 @@ class SuggestNextTool(BaseTool):
             try:
                 parsed = json.loads(result.content or "{}")
             except json.JSONDecodeError:
-                parsed = {"focus": result.content}
+                parsed = {"focus": result.content,
+                          "_parse_note": "LLM 返回了非 JSON 格式的回复，以上为原始文本，未成功解析为结构化数据"}
 
             return ToolResult(success=True, data={**summary, **parsed})
         except Exception as e:
@@ -309,17 +298,11 @@ class ProjectHealthTool(BaseTool):
         name="project_health",
         description="全项目健康检查：未完场景、空章节、孤立角色、未回收伏笔",
         concurrency=ConcurrencyMode.SAFE,
-        search_hint="project health check status",
-    )
-    name = "project_health"
-    description = "全项目健康检查：未完场景、空章节、孤立角色、未回收伏笔"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "project_id": {"type": "string", "description": "项目ID"},
+        parameters={
+            "type": "object",
+            "properties": {},
         },
-        "required": ["project_id"],
-    }
+    )
 
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
