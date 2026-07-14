@@ -94,11 +94,8 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
     import re
     lines: list[str] = []
     lines.append(
-        "# ⚠️ 每个工具标注了 (必须: <参数名>) 表示该参数必需提供！调用前请检查！\n"
-        "# 参数名后跟 ← tool_name 表示：先调 tool_name 获取该ID，再传入。\n"
-        "# 示例：write_scene_content (必须: scene_id ← list_scenes)\n"
-        "#   → 先调 list_scenes 获取 scene_id → 再用该 ID 调 write_scene_content\n"
-        "# 标注 [需确认] 表示需要用户批准，标注 [破坏性] 表示不可逆操作。\n"
+        "# (必须: <param>) = 必需参数。← tool_name = 先调此工具获取值再传入。\n"
+        "# [需确认] = 需用户批准  [破坏性] = 不可逆\n"
     )
     for t_name, t_inst in sorted(tools.items()):
         d = t_inst.to_openai_tool()

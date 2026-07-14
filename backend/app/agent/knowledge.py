@@ -105,18 +105,6 @@ description、genre、logline。**这是所有创作的前提。**
 - 连线方向始终从**因到果**、从**前到后**、从**伏笔到回收**
 - 创建连线前先用 `list_edges` 查看现有连线，避免重复
 
-| 工具 | 用途 | 何时使用 | 所需ID |
-|------|------|---------|--------|
-| update_project | 设世界观、题材、梗概 | 创作开始或修改全局信息 | project_id |
-| create_act | 建幕 | 构建故事大篇章 | project_id |
-| create_chapter | 在幕下建章节 | 细分结构 | project_id, act_id |
-| create_scene | 在章节下建场景 | 细分场景 | project_id, chapter_id |
-| write_scene_content | 写入场景正文 | 实际写小说内容 | project_id, scene_id |
-| create_character | 创建角色 | 添加新人物 | project_id |
-| update_character | 修改角色 | 调整人设 | character_id |
-| create_edge | 连接章节 | 表示剧情流向。注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向 | project_id, source_id, target_id |
-| read_project / read_chapter / read_scene | 读取数据 | 不确定状态时「先读后写」 | 对应 ID |
-
 ## 6. 核心原则
 
 - **先读后写**：执行写操作前先读取确认当前项目状态
