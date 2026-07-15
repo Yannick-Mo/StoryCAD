@@ -34,19 +34,24 @@ _ANALYSIS_TOOL_NAMES: set[str] = {
     "analyze_rhythm", "suggest_next",
 }
 
+# List/structural tools whose output the LLM uses for ID lookup.
+# The LLM needs ALL items (not just first N) to match user intent to IDs.
+# Per-item long text fields will be truncated to keep total size down.
+_LIST_TOOL_NAMES: set[str] = {
+    "list_chapters", "list_scenes", "list_characters",
+    "list_relations", "list_edges", "read_full_project",
+}
+
 # Generic list/structural tools — the LLM mostly needs IDs and names,
-# not the full content of each entity.  Content-read tools (read_scene,
-# read_full_project, list_characters) are EXCLUDED because they carry
-# creative text that must be preserved in full.
+# not the full content of each entity.
 _STRUCTURAL_TOOL_NAMES: set[str] = {
-    "list_chapters", "list_scenes",
+    "list_chapters", "list_scenes", "list_characters",
     "list_relations", "list_edges", "search_nodes",
 }
 
 # Tools that produce purely structural JSON.
-# Content-creative tools (list_characters) are excluded.
 _JSON_OUTPUT_TOOLS: set[str] = {
-    "list_chapters", "list_scenes",
+    "list_chapters", "list_scenes", "list_characters",
     "list_relations", "list_edges", "search_nodes",
     "project_health", "analyze_rhythm",
 }
@@ -56,48 +61,124 @@ def _smart_summarise(data: str, max_chars: int, tool_name: str) -> str:
     """Structure-aware summarization instead of blind truncation.
 
     Three strategies:
-    1. **JSON** — preserve top-level keys, truncate long arrays
-       ("完整角色列表: 15 项，已显示 3 项")
-    2. **Long text** — head + tail with middle compressed
-    3. **Short** — return as-is
+    1. **JSON list** — for list tools: keep ALL items, truncate per-item fields;
+       for other tools: keep first 3 items
+    2. **JSON dict** — truncate long string values and long arrays
+    3. **Long text** — head + tail with middle compressed
     """
     if len(data) <= max_chars:
         return data
 
-    # Strategy 1: JSON structure preservation
-    if tool_name in _JSON_OUTPUT_TOOLS or data.strip().startswith("{"):
+    if data.strip().startswith("{"):
         try:
             parsed = json.loads(data)
             if isinstance(parsed, list):
-                total = len(parsed)
-                if total > 3:
-                    kept = json.dumps(parsed[:3], ensure_ascii=False, indent=2)
-                    return f"{kept}\n... (完整列表: {total} 项，已显示前 3 项)"
-                return json.dumps(parsed, ensure_ascii=False, indent=2)[:max_chars]
+                return _summarise_json_list(parsed, max_chars, tool_name)
             if isinstance(parsed, dict):
-                # Truncate long string values
-                truncated = {}
-                for k, v in parsed.items():
-                    if isinstance(v, str) and len(v) > 500:
-                        truncated[k] = v[:200] + f"... [{len(v)} chars]"
-                    elif isinstance(v, list) and len(v) > 5:
-                        truncated[k] = v[:3] + [f"... ({len(v)} 项)"]
-                    else:
-                        truncated[k] = v
-                result = json.dumps(truncated, ensure_ascii=False, indent=2)
-                if len(result) > max_chars:
-                    result = result[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
-                return result
+                return _summarise_json_dict(parsed, max_chars, data, tool_name)
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Strategy 2: Head + tail for long text
+    # Strategy 3: Head + tail for long text
     half = max_chars // 2
     head = data[:half]
     tail = data[-half:] if len(data) > half * 2 else ""
     if tail:
         return f"{head}\n\n...[中间省略 {len(data) - max_chars} 字符]...\n\n{tail}"
     return data[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
+
+
+def _summarise_json_list(parsed: list, max_chars: int, tool_name: str) -> str:
+    """Summarise a JSON list, keeping ALL items for ID-lookup tools."""
+    total = len(parsed)
+    if total <= 3:
+        return json.dumps(parsed, ensure_ascii=False, indent=2)[:max_chars]
+
+    if tool_name in _LIST_TOOL_NAMES:
+        # Keep ALL items, truncate long fields per item
+        compressed = []
+        for item in parsed:
+            if isinstance(item, dict):
+                c = {}
+                for k, v in item.items():
+                    if isinstance(v, str) and len(v) > 120:
+                        c[k] = v[:80] + f"... [{len(v)} chars]"
+                    else:
+                        c[k] = v
+                compressed.append(c)
+            else:
+                compressed.append(item)
+        result = json.dumps(compressed, ensure_ascii=False, indent=2)
+        if len(result) > max_chars:
+            # Even with per-field truncation, too large — drop verbose fields
+            verbose_keys = {
+                "summary", "description", "notes", "setting", "content",
+                "motivation", "background", "personality", "appearance",
+                "outline", "rhythm", "beat", "goal", "style",
+            }
+            compressed = []
+            for item in parsed:
+                if isinstance(item, dict):
+                    c = {}
+                    for k, v in item.items():
+                        if k in verbose_keys and isinstance(v, str) and len(v) > 50:
+                            c[k] = v[:30] + f"... [{len(v)} chars]"
+                        else:
+                            c[k] = v
+                    compressed.append(c)
+                else:
+                    compressed.append(item)
+            result = json.dumps(compressed, ensure_ascii=False, indent=2)
+            if len(result) > max_chars:
+                result = result[:max_chars] + f"\n... [truncated, {len(data)} chars total]"
+        return result
+
+    # Non-list tool: keep first 3 items
+    kept = json.dumps(parsed[:3], ensure_ascii=False, indent=2)
+    return f"{kept}\n... (完整列表: {total} 项，已显示前 3 项)"
+
+
+def _compress_entity_list(items: list) -> list:
+    """Compress a list of entity dicts: keep ID + identity fields, truncate long text."""
+    compressed = []
+    for item in items:
+        if isinstance(item, dict):
+            c = {}
+            for kk, vv in item.items():
+                if kk in ("id", "title", "name", "sort_order", "rel_type", "label"):
+                    c[kk] = vv
+                elif isinstance(vv, str) and len(vv) > 120:
+                    c[kk] = vv[:60] + f"... [{len(vv)} chars]"
+                elif isinstance(vv, list):
+                    # Nested list (e.g. chapters inside acts) — recurse
+                    c[kk] = _compress_entity_list(vv) if vv else vv
+                else:
+                    c[kk] = vv
+            compressed.append(c)
+        else:
+            compressed.append(item)
+    return compressed
+
+
+def _summarise_json_dict(parsed: dict, max_chars: int, raw_data: str, tool_name: str = "") -> str:
+    """Summarise a JSON dict: truncate long strings and long arrays."""
+    truncated = {}
+    for k, v in parsed.items():
+        if isinstance(v, str) and len(v) > 500:
+            truncated[k] = v[:200] + f"... [{len(v)} chars]"
+        elif isinstance(v, list) and len(v) > 5:
+            if tool_name in _LIST_TOOL_NAMES:
+                # Keep all items for ID lookup; truncate per-item fields
+                compressed = _compress_entity_list(v)
+                truncated[k] = compressed
+            else:
+                truncated[k] = v[:3] + [f"... ({len(v)} 项)"]
+        else:
+            truncated[k] = v
+    result = json.dumps(truncated, ensure_ascii=False, indent=2)
+    if len(result) > max_chars:
+        result = result[:max_chars] + f"\n... [truncated, {len(raw_data)} chars total]"
+    return result
 
 
 def _summarise_tool_output(tool_name: str, result: ToolResult, tool: BaseTool | None = None) -> dict[str, Any]:

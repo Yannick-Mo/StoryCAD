@@ -118,7 +118,7 @@ class ReadSceneTool(BaseTool):
 class CreateSceneTool(BaseTool):
     meta = ToolMeta(
         name="create_scene",
-        description="在指定章节中创建新场景，需提供章节ID和标题",
+        description="在指定章节中创建新场景，需提供章节ID和标题。chapter_id 来自 list_chapters 或 read_full_project",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -172,7 +172,7 @@ class CreateSceneTool(BaseTool):
 class UpdateSceneTool(BaseTool):
     meta = ToolMeta(
         name="update_scene",
-        description="更新场景内容、标题、POV、地点、时间、梗概等",
+        description="更新场景内容、标题、POV、地点、时间、梗概等。scene_id 来自 list_scenes 或 read_full_project",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",

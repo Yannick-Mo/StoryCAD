@@ -93,7 +93,7 @@ class CreateCharacterTool(BaseTool):
 class DeleteCharacterTool(BaseTool):
     meta = ToolMeta(
         name="delete_character",
-        description="删除指定角色（同时删除该角色的所有关系连线）",
+        description="删除指定角色（同时删除该角色的所有关系连线）。character_id 来自 list_characters",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
@@ -140,7 +140,7 @@ class DeleteCharacterTool(BaseTool):
 class DeleteRelationTool(BaseTool):
     meta = ToolMeta(
         name="delete_relation",
-        description="删除角色关系连线",
+        description="删除角色关系连线。relation_id 来自 list_relations",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         is_destructive=True,
         needs_confirmation=True,
@@ -174,7 +174,7 @@ class DeleteRelationTool(BaseTool):
 class UpdateCharacterTool(BaseTool):
     meta = ToolMeta(
         name="update_character",
-        description="更新角色信息，需提供角色ID，可选更新名称、类型、性格、外貌、背景、动机",
+        description="更新角色信息，需提供角色ID，可选更新名称、类型、性格、外貌、背景、动机。character_id 来自 list_characters",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -273,7 +273,7 @@ class CreateRelationTool(BaseTool):
 class UpdateRelationTool(BaseTool):
     meta = ToolMeta(
         name="update_relation",
-        description="更新已有角色关系的类型、标签、描述或三维数值（信任/威胁/吸引力）",
+        description="更新已有角色关系的类型、标签、描述或三维数值（信任/威胁/吸引力）。relation_id 来自 list_relations",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",

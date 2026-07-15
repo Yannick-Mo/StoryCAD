@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from typing import Any
 
 from loguru import logger
@@ -17,6 +19,17 @@ KEEP_RECENT = 10
 MIN_SUMMARIZE_INTERVAL = 5
 TOKEN_ESTIMATE_SAFETY = 1.5
 
+# Tools whose output contains ID information the LLM needs for future calls.
+# Their results are preserved (compressed) during history summarization.
+_LIST_TOOLS_FOR_ID: frozenset = frozenset({
+    "list_chapters", "list_scenes", "list_characters",
+    "list_relations", "list_edges", "read_full_project",
+})
+
+# Pattern to extract tool name from tool message content like:
+# "[工具执行结果: list_chapters]\n..." or "[工具执行失败: update_chapter]\n..."
+_TOOL_MSG_PATTERN = re.compile(r'^\[工具执行(?:结果|失败): (\w+)\]')
+
 
 def _estimate_tokens(text: str) -> int:
     if not text:
@@ -27,15 +40,28 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _sanitize_for_summary(messages: list[Message]) -> list[Message]:
-    """Remove internal tool details, keep only essential info."""
+    """Remove internal tool details, keep only essential info.
+
+    For list tools (list_chapters, list_scenes, etc.), the result data
+    (IDs + names) is preserved in compressed form so the LLM can still
+    reference entity IDs even after summarization.
+    """
     sanitized: list[Message] = []
     for m in messages:
         if m.role == "tool":
-            sanitized.append(Message(
-                role="tool",
-                content=f"[Tool executed: {m.name or 'unknown'}]",
-                tool_call_id=m.tool_call_id,
-            ))
+            tool_name = _extract_tool_name(m.content or "")
+            if tool_name in _LIST_TOOLS_FOR_ID:
+                sanitized.append(Message(
+                    role="tool",
+                    content=_compress_tool_content(m.content or ""),
+                    tool_call_id=m.tool_call_id,
+                ))
+            else:
+                sanitized.append(Message(
+                    role="tool",
+                    content=f"[Tool executed: {tool_name or 'unknown'}]",
+                    tool_call_id=m.tool_call_id,
+                ))
         elif m.tool_calls:
             sanitized.append(Message(
                 role=m.role,
@@ -45,6 +71,54 @@ def _sanitize_for_summary(messages: list[Message]) -> list[Message]:
         else:
             sanitized.append(m)
     return sanitized
+
+
+def _extract_tool_name(content: str) -> str | None:
+    """Extract tool name from tool message content.
+
+    Matches:
+      [工具执行结果: list_chapters]
+      [工具执行失败: update_chapter]
+    """
+    m = _TOOL_MSG_PATTERN.match(content)
+    return m.group(1) if m else None
+
+
+def _compress_tool_content(content: str) -> str:
+    """Compress list tool result: keep only IDs + identity fields for summarization."""
+    # Content format: "[工具执行结果: tool_name]\n{json_data}"
+    header = content.split("\n", 1)[0] if "\n" in content else content
+    data_part = content.split("\n", 1)[1] if "\n" in content else ""
+    if not data_part:
+        return header
+    try:
+        parsed = json.loads(data_part)
+        compressed = _compress_entity_data(parsed)
+        return f"{header}\n{json.dumps(compressed, ensure_ascii=False)}"
+    except (json.JSONDecodeError, TypeError):
+        # Not valid JSON — truncate to first 300 chars
+        return f"{header}\n{data_part[:300]}"
+
+
+def _compress_entity_data(data: Any) -> Any:
+    """Recursively compress entity data to essential fields only."""
+    if isinstance(data, dict):
+        result = {}
+        for k, v in data.items():
+            if k in ("id", "title", "name", "sort_order", "rel_type", "label"):
+                result[k] = v
+            elif isinstance(v, str) and len(v) > 100:
+                result[k] = v[:50]
+            elif isinstance(v, (dict, list)):
+                compressed = _compress_entity_data(v)
+                if compressed:
+                    result[k] = compressed
+            else:
+                result[k] = v
+        return result
+    if isinstance(data, list):
+        return [_compress_entity_data(item) for item in data]
+    return data
 
 
 class HistoryManager:

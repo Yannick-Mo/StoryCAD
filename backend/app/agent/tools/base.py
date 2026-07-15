@@ -236,11 +236,22 @@ class BaseTool(ABC):
             "style": "必须提供重写风格说明",
             "edge_type": "必须提供连线类型（timeline/causal/foreshadow/character/theme）",
         }
+        correction_tools = {
+            "chapter_id": "list_chapters",
+            "scene_id": "list_scenes",
+            "character_id": "list_characters",
+            "act_id": "list_chapters",
+            "edge_id": "list_edges",
+            "relation_id": "list_relations",
+            "source_id": "list_chapters",
+            "target_id": "list_chapters",
+        }
         hint = hints.get(key, f"请在调用工具前检查参数说明，确保提供了 {key} 参数")
+        source_tool = correction_tools.get(key, "list_* 系列")
         return ToolResult(
             success=False,
             error=f"参数缺失: 工具需要 {key} 参数但未提供。{hint}。不要重复调用本工具——先执行获取 {key} 的步骤。",
-            correction_hint=f"下一步：调用获取 {key} 的相关工具（如 list_* 系列），拿到 {key} 后再重新调用本工具",
+            correction_hint=f"下一步：先调用 {source_tool} 获取 {key}，拿到后再重新调用本工具",
         )
 
     # ------------------------------------------------------------------

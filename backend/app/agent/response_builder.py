@@ -29,8 +29,8 @@ _PERSONA_CACHE: str | None = None
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
 # Short inline mode declarations (avoid builder dependency during module init)
-_MODE_DECLARATION_CHAT = "# ——— 当前模式：对话模式（只读，不可写入）———"
-_MODE_DECLARATION_COWRITER = "# ——— 当前模式：协作模式（可读写，提供创作建议）———"
+MODE_DECLARATION_CHAT = "# ——— 当前模式：对话模式（只读，不可写入）———"
+MODE_DECLARATION_COWRITER = "# ——— 当前模式：协作模式（可读写，提供创作建议）———"
 
 
 # ── Section model ──────────────────────────────────────────────────────
@@ -53,17 +53,17 @@ def _get_static_section(name: str) -> str:
 
 
 async def _load_persona() -> str:
-    """Lazily load & cache the persona prompt from system.yaml."""
+    """Lazily load & cache the persona prompt from persona.yaml (single source of truth)."""
     global _PERSONA_CACHE
     if _PERSONA_CACHE is not None:
         return _PERSONA_CACHE
 
-    persona_path = _PROMPT_DIR / "system.yaml"
+    persona_path = _PROMPT_DIR / "persona.yaml"
     try:
         async with aiofiles.open(persona_path, encoding="utf-8") as f:
             content = await f.read()
         data = await asyncio.to_thread(yaml.safe_load, content)
-        _PERSONA_CACHE = (data or {}).get("identity", {}).get("content", "")
+        _PERSONA_CACHE = (data or {}).get("system", "")
         if not _PERSONA_CACHE:
             _PERSONA_CACHE = "You are StoryCAD AI, a creative writing assistant."
     except asyncio.CancelledError:
@@ -251,7 +251,7 @@ async def build_system_prompt(state: dict) -> str:
 
     # Tier 0 — critical: persona, mode, project identity
     sections.append(_ContextSection(tier=0, label="persona", text=persona))
-    mode_decl = _MODE_DECLARATION_COWRITER if cowriter_active else _MODE_DECLARATION_CHAT
+    mode_decl = MODE_DECLARATION_COWRITER if cowriter_active else MODE_DECLARATION_CHAT
     sections.append(_ContextSection(tier=0, label="mode", text=mode_decl))
     project_title = f"你正在协助用户创作小说《{title}》。"
     if genre:

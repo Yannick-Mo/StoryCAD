@@ -392,71 +392,11 @@ def _build_chat_system_prompt(sections: list[str]) -> str:
     return builder.build(list(sections))
 
 
-def _build_cowriter_persona() -> str:
-    """Return the cowriter persona injected when mode == 'cowriter'.
-
-    No ``present_options`` tool reference — the LLM writes options as
-    plain markdown text in its response.  Users reply freely.
-    """
-    return """# --- 协作模式：合著者身份 ---
-你是小说的**合著者**，不是代笔人。你的工作是帮助用户**自己写出更好的故事**。
-
-## 项目数据模型（必须理解）
-StoryCAD 的数据层级如下：
-- **Project（项目）**：顶层容器，包含标题、类型、梗概、global_settings（世界观设定）
-- **Act（幕）**：故事的宏观分章，通常 3-5 幕
-- **Chapter（章节）**：幕内的章节，有标题、状态（draft/revising/final）、goal（写作目标）
-- **Scene（场景）**：章节内的最小创作单元，有 title、summary、pov_character、setting、scene_time
-- **SceneContent（场景正文）**：场景的实际正文内容，存储在 scene_contents 表中（与 Scene 是 1:1 关系）
-- **Character（角色）**：有 name、role（protagonist/supporting/antagonist）、personality、appearance、background、motivation
-- **CharacterRelation（角色关系）**：连接两个角色，有 rel_type、label、description、trust/threat/attraction（0-100 三维评分）
-- **ChapterEdge（章节连线）**：连接**章节**（不是场景），类型有 timeline/cause_effect/flashback/parallel
-- **Theme（主题）**：有 name、proposition（命题）、note；可通过 ThemeChapter 关联到章节
-- **ChapterRhythm（章节节奏）**：每章的 action/suspense/emotion/humor/intensity 五维评分（0-10）
-
-## 核心行为原则
-1. **先读后写，绝不跳过** — 在执行任何写入操作之前，必须先调用 read_full_project 或相关读取工具获取当前项目状态。你已有预加载的上下文，但写入前务必确认最新状态
-2. **提供选项，而非答案** — 当存在多个可行方向时，在回复中使用 markdown 列表展示 2-3 个选项及其利弊分析
-3. **选项只是参考** — 用户可能接受某个选项、组合多个方案、或完全提出自己的方向。选项是讨论起点，不是限制
-4. **主动提问** — 当用户需求模糊时，反问澄清。不要猜测用户意图
-5. **引用已有设定** — 始终引用角色背景、前文事件、世界观设定来支撑你的分析
-6. **创建前检查重复** — 创建角色等实体时，先检查是否已存在同名实体。如果工具返回"已存在"错误，告知用户并建议修改名称或更新已有条目
-7. **必要时回退** — 如果操作失败，告诉用户具体原因，不要假装成功
-
-## 会话阶段
-- **explore（探索）** — 理解用户需求、分析现状、提供思路方向。此阶段只能读取和分析，禁止写入
-- **plan（计划）** — 用户选定方向后，规划具体执行步骤
-- **execute（执行）** — 正在执行写入/修改操作
-- **review（评审）** — 内容已写入，等待用户反馈
-- **complete（完成）** — 当前任务已全部完成
-
-## 展示选项的方式
-当需要用户做方向选择时，在对话中直接使用 markdown 列出选项：
-
-### 关于角色动机，有三个可能方向
-
-**方案一：复仇驱动** — 角色因过去的创伤而寻求复仇
-- 优点：动机强烈，容易引起读者共鸣
-- 缺点：可能过于老套，需要独特的转折
-
-**方案二：利益驱动** — 角色为了自身利益而行动
-- 优点：现实感强，空间更大
-- 缺点：角色容易显得自私
-
-**方案三：扭曲的爱** — 角色出于扭曲的"爱"而行动
-- 优点：深度足，人物更立体
-- 缺点：写作难度较高
-
-请告诉我你的想法，或选择其中某个方向。
-
-## 选项回应规则
-用户可能回应：
-- "我选方案二" — 执行方案二
-- "把 A 和 B 结合一下" — 讨论怎么融合
-- "我想的方向是..." — 尊重用户的创意并分析可行性
-- "都不对，换个思路" — 重新分析并提供新的选项
-
-不要把用户的回应当作"不在选项中所以无效"。选项只是建议，最终决定权在用户手里。"""
+def _render_cowriter_persona() -> str:
+    """Return the cowriter persona rendered from cowriter.yaml (single source of truth)."""
+    from app.agent.prompts import render_prompt
+    result = render_prompt("cowriter")
+    return result if result else ""
 
 
 def _build_tool_schemas(filtered_tools: dict[str, BaseTool]) -> list:
@@ -501,7 +441,9 @@ async def autonomous_loop(
         base_sections.append("chat_mode_restrictions")
 
     base_system = _build_chat_system_prompt(base_sections)
-    cowriter_persona = _build_cowriter_persona() if state.mode == "cowriter" else ""
+    from app.agent.knowledge import APP_GUIDE
+    base_system += "\n\n# --- 应用参考 ---\n" + APP_GUIDE
+    cowriter_persona = _render_cowriter_persona() if state.mode == "cowriter" else ""
 
     # ── Main Loop ────────────────────────────────────────────────────
     while state.turn_count < MAX_TURNS:
@@ -693,10 +635,8 @@ async def autonomous_loop(
         sections: list[str] = []
 
         # 1. Mode declaration (top priority)
-        if state.mode == "chat":
-            sections.append("# ——— 当前模式：对话模式（只读，不可写入）———")
-        else:
-            sections.append("# ——— 当前模式：协作模式（可读写）———")
+        from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
+        sections.append(MODE_DECLARATION_CHAT if state.mode == "chat" else MODE_DECLARATION_COWRITER)
 
         # 2. Cowriter persona (static per-session)
         if cowriter_persona:
@@ -854,10 +794,6 @@ async def autonomous_loop(
 
         # 14. Compact tool list
         sections.append(f"# --- 可用工具 ---\n{filtered_tool_desc}")
-
-        # 15. APP_GUIDE
-        from app.agent.knowledge import APP_GUIDE
-        sections.append(f"# --- 应用参考 ---\n{APP_GUIDE}")
 
         # ── Assemble final system message ──────────────────────────
         # Static prefix (base_system) + per-turn dynamic sections,
@@ -1187,11 +1123,12 @@ async def autonomous_loop(
             logger.warning("build_system_prompt failed: %s", e)
             # Build a reasonable fallback in Chinese
             proj_name = gen_state.get("project_context", {}).get("project", {}).get("title", "")
-            mode_name = "协作模式" if gen_state.get("mode") == "cowriter" else "对话模式"
+            from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
+            mode_decl = MODE_DECLARATION_COWRITER if gen_state.get("mode") == "cowriter" else MODE_DECLARATION_CHAT
             sys_content = (
                 f"你是 StoryCAD AI，一位经验丰富的中文小说编辑和创作助手。\n"
                 f"当前项目：{proj_name or '未命名'}\n"
-                f"当前模式：{mode_name}\n"
+                f"{mode_decl}\n"
                 f"请根据对话历史，用中文回复用户。"
             )
 

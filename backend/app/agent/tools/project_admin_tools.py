@@ -59,7 +59,7 @@ class CreateActTool(BaseTool):
 class CreateChapterTool(BaseTool):
     meta = ToolMeta(
         name="create_chapter",
-        description="在指定幕（Act）中创建新章节（Chapter），需提供幕ID",
+        description="在指定幕（Act）中创建新章节（Chapter），需提供幕ID。act_id 来自 read_full_project 结构概览",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -440,6 +440,7 @@ class CreateEdgeTool(BaseTool):
     meta = ToolMeta(
         name="create_edge",
         description="在两个章节之间创建连线关系（ChapterEdge），用于表示时间线、因果、闪回等章节间关系。"
+                    "source_id/target_id 来自 list_chapters 或 read_full_project。"
                     "注意：不能自连接、不能形成环、timeline 类型每个章节只能有一个入向和一个出向",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={

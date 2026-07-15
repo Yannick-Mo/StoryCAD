@@ -52,6 +52,29 @@ _COMPACTABLE_TOOLS: set[str] = {
     "analyze_rhythm", "suggest_next",
 }
 
+# Tools whose results carry entity IDs that downstream tools depend on.
+# These must survive all compression layers so the LLM can chain
+# list_* → extract ID → write_* across turns without re-querying.
+_ID_SOURCE_TOOLS: set[str] = {
+    "list_chapters", "list_scenes", "list_characters",
+    "list_relations", "list_edges", "read_full_project",
+    "read_chapter", "read_scene",
+}
+
+
+def _is_id_source_msg(msg: "Message") -> bool:
+    """Return True if *msg* is a tool result from an ID-source tool."""
+    if msg.role != "tool":
+        return False
+    content = msg.content or ""
+    if not content.startswith("[工具执行结果:"):
+        return False
+    end = content.find("]")
+    if end > 0:
+        tool_name = content[7:end].strip()
+        return tool_name in _ID_SOURCE_TOOLS
+    return False
+
 
 def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_LIMIT) -> int:
     """Estimate the token count of a message list.
@@ -191,8 +214,17 @@ def compress_history(
     tail = messages[-t:]
     middle = messages[h:-t]
 
-    summary_parts: list[str] = []
+    # Extract ID-source tool messages from middle so they survive compression
+    preserved_id_msgs: list[M] = []
+    rest_middle: list[M] = []
     for msg in middle:
+        if _is_id_source_msg(msg):
+            preserved_id_msgs.append(msg)
+        else:
+            rest_middle.append(msg)
+
+    summary_parts: list[str] = []
+    for msg in rest_middle:
         role = _msg_role_label(getattr(msg, "role", "unknown"))
         content = (getattr(msg, "content", "") or "")[:200]
         if content:
@@ -210,7 +242,7 @@ def compress_history(
         ),
     )
 
-    result = list(head) + [summary] + list(tail)
+    result = list(head) + [summary] + preserved_id_msgs + list(tail)
 
     new_tokens = estimate_tokens(result, model_limit)
     logger.info(
@@ -252,10 +284,14 @@ def reactive_compress(
             head_count=h, tail_count=t,
         )
 
-    # Strategy: keep head + tail, but DROP tool messages entirely
-    # (not just summarize them).  The model may lose some context,
-    # but at least it can continue.
-    non_tool: list[M] = [m for m in messages if m.role != "tool"]
+    # Strategy: keep head + tail from non-tool messages, DROP all
+    # non-ID-source tool messages, but PRESERVE ID-source tool messages
+    # so the LLM can still look up entity IDs for downstream tool calls.
+    id_source_msgs: list[M] = [m for m in messages if _is_id_source_msg(m)]
+    non_tool: list[M] = [
+        m for m in messages
+        if m.role != "tool" or _is_id_source_msg(m)
+    ]
     if len(non_tool) <= h + t:
         # Fall back to aggressive compress if stripping tools isn't enough
         return compress_history(
@@ -285,7 +321,9 @@ def reactive_compress(
         ),
     )
 
-    result = list(head) + [summary] + list(tail)
+    # Keep a reasonable number of ID-source messages at the end
+    preserved = id_source_msgs[-3:] if len(id_source_msgs) > 3 else id_source_msgs
+    result = list(head) + [summary] + list(tail) + preserved
 
     tokens_before = estimate_tokens(messages, model_limit)
     tokens_after = estimate_tokens(result, model_limit)
