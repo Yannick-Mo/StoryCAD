@@ -59,12 +59,6 @@ engines:
     shortcut: wp
     disabled: false
 
-  # DuckDuckGo definitions (for instant answers)
-  - name: duckduckgo definitions
-    engine: duckduckgo_definitions
-    shortcut: ddd
-    disabled: false
-
 outgoing:
   request_timeout: 10.0
   max_request_timeout: 15.0

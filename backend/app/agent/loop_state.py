@@ -62,7 +62,7 @@ class LoopState:
 
     # ── Token budget ────────────────────────────────────────────────
     budget_total_estimated: int = 0
-    budget_model_limit: int = 100_000
+    budget_model_limit: int = 900_000
     budget_continuation_count: int = 0
     budget_last_delta: int = 0
     budget_warn_level: str = ""  # "" | "warning" | "critical"
@@ -131,7 +131,7 @@ class LoopState:
             _model_override=initial_state.get("_model_override", "") or "",
             # Token budget
             budget_total_estimated=int(initial_state.get("budget_total_estimated", 0) or 0),
-            budget_model_limit=int(initial_state.get("budget_model_limit", 100_000) or 100_000),
+            budget_model_limit=int(initial_state.get("budget_model_limit", 900_000) or 900_000),
             budget_continuation_count=int(initial_state.get("budget_continuation_count", 0) or 0),
             budget_last_delta=int(initial_state.get("budget_last_delta", 0) or 0),
             budget_warn_level=initial_state.get("budget_warn_level", "") or "",

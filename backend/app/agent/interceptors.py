@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE: set[str] = {
     "create_act", "create_chapter", "create_scene", "create_character",
     "update_project", "update_act", "update_chapter", "update_scene",
-    "update_character", "update_relation",
+    "update_character", "create_relation", "update_relation",
     "write_scene_content", "continue_scene", "rewrite_scene",
     "expand_selection", "compress_selection",
     "set_chapter_goal",

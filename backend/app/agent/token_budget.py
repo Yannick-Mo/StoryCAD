@@ -23,22 +23,21 @@ if TYPE_CHECKING:
 
 # When to inject a proactive "budget warning" into the system prompt.
 # The model is told to keep its response short.
-WARN_AT_RATIO = 0.75
+WARN_AT_RATIO = 0.80
 
-# When to inject a **strong** budget warning that the model MUST keep
-# its response extremely brief or risk truncation.
-CRITICAL_AT_RATIO = 0.90
+# When to inject a **strong** budget warning.
+CRITICAL_AT_RATIO = 0.95
 
 # Token buffer between our estimated budget and the model's true
 # context limit.  The model also needs room for the new response and
 # any tool results produced during the turn.
-SAFETY_BUFFER_TOKENS = 8_000
+SAFETY_BUFFER_TOKENS = 50_000
 
 # Maximum tokens we budget for the model's response.
-MAX_RESPONSE_TOKENS = 4_096
+MAX_RESPONSE_TOKENS = 8_192
 
 # Maximum tokens we budget for tool results produced this turn.
-MAX_TOOL_RESULT_TOKENS = 6_000
+MAX_TOOL_RESULT_TOKENS = 100_000
 
 # How many bytes of a tool result constitute "large" (triggers summary).
 LARGE_TOOL_RESULT_BYTES = 2_000
@@ -53,7 +52,7 @@ class TurnBudget:
     """Per-turn token budget state, embedded in ``LoopState``."""
 
     total_estimated_tokens: int = 0
-    model_limit: int = 100_000
+    model_limit: int = 900_000
     continuation_count: int = 0
     last_delta_tokens: int = 0
     started_at: float = 0.0
@@ -65,7 +64,7 @@ class TurnBudget:
 def compute_budget(
     messages: list["Message"],
     tool_results: list[dict],
-    model_limit: int = 100_000,
+    model_limit: int = 900_000,
 ) -> TurnBudget:
     """Compute the current token budget snapshot.
 
@@ -102,8 +101,7 @@ def check_token_budget(budget: TurnBudget) -> dict:
             "warn": "critical",
             "message": (
                 f"[Token Budget CRITICAL: context at {ratio:.0%} ({used:,}/{limit:,} tokens). "
-                f"Keep this response UNDER 100 tokens. Do NOT call any tools. "
-                f"Do NOT summarise or analyse. Complete your current thought immediately.]"
+                f"Keep responses concise and avoid unnecessary tool calls.]"
             ),
             "available": max(available, 0),
         }
@@ -113,8 +111,7 @@ def check_token_budget(budget: TurnBudget) -> dict:
             "warn": "warning",
             "message": (
                 f"[Token Budget: context at {ratio:.0%} ({used:,}/{limit:,} tokens). "
-                f"Remaining budget for this turn: ~{available:,} tokens. "
-                f"Keep responses concise and avoid large tool outputs if possible.]"
+                f"Remaining budget for this turn: ~{available:,} tokens.]"
             ),
             "available": max(available, 0),
         }

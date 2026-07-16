@@ -59,7 +59,7 @@ class ModelDef:
     base_url: str = "https://api.deepseek.com/v1"
     supports_streaming: bool = True
     supports_fc: bool = True
-    max_tokens: int = 8192
+    max_tokens: int = 32768
     cost_per_1k_input: float = 0.0001
     cost_per_1k_output: float = 0.0002
 

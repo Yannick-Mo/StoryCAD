@@ -222,6 +222,30 @@ class UpdateSceneTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
+class ReadProjectOverviewTool(BaseTool):
+    meta = ToolMeta(
+        name="read_project_overview",
+        description="加载项目结构概览：幕/章/场景的树状骨架（仅名称和ID）、角色名和类型、主题名。不包含正文、性格描述、关系详情。这是了解项目全貌的入口工具",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            from app.agent.context import ContextBuilder
+            builder = ContextBuilder(db)
+            ctx = await builder.build_summary(pid, depth="minimal")
+            return ToolResult(success=True, data=ctx)
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
 class ReadFullProjectTool(BaseTool):
     meta = ToolMeta(
         name="read_full_project",

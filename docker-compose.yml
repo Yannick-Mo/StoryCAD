@@ -55,10 +55,6 @@ services:
   backend:
     build:
       context: ./backend
-      args:
-        HTTP_PROXY: http://172.18.240.1:7897
-        HTTPS_PROXY: http://172.18.240.1:7897
-        NO_PROXY: localhost,127.0.0.1
     ports:
       - "8000:8000"
     env_file: .env
@@ -127,10 +123,6 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        HTTP_PROXY: http://172.18.240.1:7897
-        HTTPS_PROXY: http://172.18.240.1:7897
-        NO_PROXY: localhost,127.0.0.1
     ports:
       - "5173:5173"
     volumes:

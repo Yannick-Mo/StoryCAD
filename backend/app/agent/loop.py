@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from typing import AsyncGenerator
@@ -26,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_compressor import (
     compress_context,
-    micro_compact,
 )
 from app.agent.hooks import hook_registry
 from app.agent.interceptors import (
@@ -53,8 +53,34 @@ from app.knowledge.skill_engine import _shared_engine as _skill_engine
 
 MAX_TURNS = 30
 MAX_RECOVERY = 3
-MAX_RAG_CHARS = 1000
-MODEL_CONTEXT_LIMIT = 100_000
+MAX_RAG_CHARS = 5000
+MODEL_CONTEXT_LIMIT = 900_000
+
+# ── Tool description cache ────────────────────────────────────────────
+_TOOL_DESC_CACHE: dict[str, str] = {}
+
+def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
+    keys = tuple(sorted(filtered_tools))
+    h = str(hash(keys))
+    if h not in _TOOL_DESC_CACHE:
+        _TOOL_DESC_CACHE[h] = get_tool_descriptions(filtered_tools)
+    return _TOOL_DESC_CACHE[h]
+
+# ── Debug dump ─────────────────────────────────────────────────────────
+_DEBUG_TOOL_LOG = os.environ.get("DEBUG_TOOL_LOG", "/tmp/debug_tool_interaction.log")
+
+def _debug_dump(label: str, data: object) -> None:
+    """Append a JSON line to the debug interaction log."""
+    import datetime
+    entry = json.dumps(
+        {"t": datetime.datetime.now().isoformat(), "l": label, "d": data},
+        ensure_ascii=False, default=str,
+    )
+    try:
+        with open(_DEBUG_TOOL_LOG, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    except Exception:
+        pass
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -241,21 +267,14 @@ def _build_skill_probe_paths(ctx: dict) -> list[str]:
 def _detect_context_depth(messages: list["Message"]) -> str:
     """Analyze recent user messages to determine the appropriate context depth.
 
-    Returns ``"minimal"``, ``"summary"``, or ``"full"``.
+    Returns ``"framework"``, ``"summary"``, or ``"minimal"``.
 
-    Rules:
-    - Character-related queries (性格, 动机, 人物, 角色) → ``"summary"``
-      so the AI gets character personality/motivation data.
-    - Scene/Settings queries (场景, 地点, 时间线, setting) → ``"summary"``
-      so the AI gets scene setting/time fields.
-    - Content/writing queries (内容, 正文, 写作, 文笔, 风格) → ``"summary"``
-      to give the AI more scene context.
-    - Analysis/structure queries (分析, 结构, 情节, plot) → stays at ``"minimal"``
-      (tools are sufficient).
-    - Default → ``"minimal"``
+    ``"framework"`` is the default and provides the richest context
+    (full character profiles, scene summaries, chapter goals, etc.).
+    Falls back to ``"summary"`` or ``"minimal"`` only for trivial queries.
     """
     if not messages:
-        return "minimal"
+        return "framework"
 
     # Collect recent user text content
     texts = []
@@ -268,25 +287,15 @@ def _detect_context_depth(messages: list["Message"]) -> str:
                 break
     combined = " ".join(texts).lower()
 
-    # Check if query is related to character depth
-    character_kw = {"性格", "动机", "背景故事", "人物关系", "角色弧",
-                     "personality", "motivation", "background", "character arc"}
-    if any(kw in combined for kw in character_kw):
-        return "summary"
+    # All non-trivial queries get framework depth (full structural data).
+    # Only greetings/acknowledgements get minimal.
+    trivial = {"嗯", "是", "好", "ok", "yes", "no", "y", "n",
+               "哦", "嗯嗯", "好的", "是的", "hi", "hello", "你好", "您好"}
+    stripped = combined.strip().lower()
+    if stripped in trivial or any(m.content and m.content.strip() in trivial for m in messages[-3:] if m.role == "user"):
+        return "minimal"
 
-    # Scene/setting details
-    setting_kw = {"场景地点", "场景时间", "地点设定", "时间线",
-                   "setting", "scene time", "timeline", "worldbuilding"}
-    if any(kw in combined for kw in setting_kw):
-        return "summary"
-
-    # Content/writing
-    writing_kw = {"正文内容", "文笔", "写作风格", "叙事",
-                   "dialogue", "对话", "描写", "叙述"}
-    if any(kw in combined for kw in writing_kw):
-        return "summary"
-
-    return "minimal"
+    return "framework"
 
 
 def _get_recent_scenes_hint(
@@ -399,6 +408,131 @@ def _render_cowriter_persona() -> str:
     return result if result else ""
 
 
+async def _build_turn_sections(
+    state: "LoopState",
+    cowriter_persona: str,
+    dynamic_sections: dict[str, str],
+    filtered_tool_desc: str,
+    budget_check: dict,
+) -> list[str]:
+    """Assemble per-turn system-prompt sections (everything after the static base).
+
+    Returns an ordered list of section strings that the caller joins together
+    and appends to the static ``base_system`` prefix.
+    """
+    from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
+
+    proj = state.project_context.get("project", {})
+    sections: list[str] = []
+
+    # 1. Mode declaration
+    sections.append(MODE_DECLARATION_CHAT if state.mode == "chat" else MODE_DECLARATION_COWRITER)
+
+    # 2. Cowriter persona
+    if cowriter_persona:
+        sections.append(cowriter_persona)
+
+    # 3. Project context header
+    proj_title = proj.get("title", "未命名")
+    proj_genre = proj.get("genre", "")
+    proj_id = state.project_id or proj.get("id", "unknown")
+    proj_logline = proj.get("logline", "")
+    proj_global_settings = proj.get("global_settings", "")
+
+    ctx_parts = [f"# --- 当前项目 ---\n项目: {proj_title}"]
+    if proj_genre:
+        ctx_parts.append(f"类型: {proj_genre}")
+    if proj_logline:
+        ctx_parts.append(f"一句话梗概: {proj_logline}")
+    if proj_global_settings:
+        if len(proj_global_settings) > 2000:
+            gs_snippet = proj_global_settings[:2000] + f"\n... [全文共 {len(proj_global_settings)} 字，已截断。可用 read_project 读取完整设定]"
+        else:
+            gs_snippet = proj_global_settings
+        ctx_parts.append(f"全局设定:\n{gs_snippet}")
+    ctx_parts.append(f"Project ID: {proj_id}")
+    sections.append("\n".join(ctx_parts))
+
+    # 4. Project stats
+    acts_data = state.project_context.get("acts", [])
+    characters_data = state.project_context.get("characters", [])
+    themes_data = state.project_context.get("themes", [])
+    relations_data = state.project_context.get("relations", [])
+    edges_data = state.project_context.get("edges", [])
+    total_ch = sum(len(a.get("chapters", [])) for a in acts_data)
+    total_sc = sum(
+        sum(len(ch.get("scenes", [])) for ch in a.get("chapters", []))
+        for a in acts_data
+    )
+    stats_parts = [f"项目规模：{len(acts_data)}幕/{total_ch}章/{total_sc}场"]
+    if characters_data:
+        stats_parts.append(f"{len(characters_data)}角色")
+    if themes_data:
+        stats_parts.append(f"{len(themes_data)}主题")
+    if relations_data:
+        stats_parts.append(f"{len(relations_data)}条关系")
+    if edges_data:
+        stats_parts.append(f"{len(edges_data)}条连线")
+    sections.append(" | ".join(stats_parts))
+
+    # 5. Data access guidance
+    sections.append(
+        "项目框架数据已在上下文中提供（结构树、角色档案、主题、关系）。\n"
+        "场景正文需通过 read_scene 工具读取。如需更多细节，使用 read_character / read_chapter / list_relations 等工具。"
+    )
+
+    # 6. Recent scenes hint
+    recent_hint = state.project_context.get("_recent_scenes_hint")
+    if recent_hint:
+        sections.append(recent_hint)
+
+    # 7. Available skills
+    available_skills = state.project_context.get("available_skills", [])
+    if available_skills:
+        skill_lines = ["\n# --- 可用写作技能（AI 可主动调用） ---"]
+        for s in available_skills:
+            name = s.get("name", "?")
+            desc = s.get("description", "")
+            when = s.get("when_to_use", "")
+            if when:
+                skill_lines.append(f"- {name}: {desc}")
+                skill_lines.append(f"  适用场景：{when[:200]}")
+            else:
+                skill_lines.append(f"- {name}: {desc}")
+        skill_lines.append("")
+        skill_lines.append("你可以通过调用 invoke_skill 工具来启用某个技能。启用后其专属提示词将生效，在创作模式下还会解锁专属工具。")
+        skill_lines.append("用户也可在消息中以 /技能名称 的形式直接调用。")
+        sections.append("\n".join(skill_lines))
+
+    # 8. Active skill prompts
+    active_skills = state.active_skills or []
+    if active_skills and state.project_id:
+        try:
+            merged_prompts = await _skill_engine.get_merged_prompts(active_skills)
+            if merged_prompts:
+                prompt_lines = ["\n# --- 当前已激活技能写作指导 ---"]
+                for key, val in merged_prompts.items():
+                    prompt_lines.append(f"\n## {key}\n{val.strip()}")
+                sections.append("\n".join(prompt_lines))
+        except Exception:
+            logger.warning("Failed to load active skill prompts", exc_info=True)
+
+    # 9. Dynamic sections from AttachmentInjector
+    for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
+        text = dynamic_sections.get(section_name)
+        if text:
+            sections.append(text)
+
+    # 10. Token budget warning
+    if state.budget_warn_level:
+        sections.append(budget_check["message"])
+
+    # 11. Tool list
+    sections.append(f"# --- 可用工具 ---\n{filtered_tool_desc}")
+
+    return sections
+
+
 def _build_tool_schemas(filtered_tools: dict[str, BaseTool]) -> list:
     """Convert filtered tools to ToolDef list for the LLM client."""
     from app.llm.types import ToolDef
@@ -443,6 +577,13 @@ async def autonomous_loop(
     base_system = _build_chat_system_prompt(base_sections)
     from app.agent.knowledge import APP_GUIDE
     base_system += "\n\n# --- 应用参考 ---\n" + APP_GUIDE
+    base_system += """
+# --- 项目数据访问规则（必须遵守） ---
+- 项目框架数据（幕/章/场景结构、角色档案、主题、关系）已在上下文中提供，可直接引用。
+- 场景正文内容不包含在上下文中——需要使用 read_scene 工具读取。
+- 在进行写入操作之前，先调用 read 工具获取最新数据。
+- 不要编造角色、章节、场景或关系数据。
+"""
     cowriter_persona = _render_cowriter_persona() if state.mode == "cowriter" else ""
 
     # ── Main Loop ────────────────────────────────────────────────────
@@ -453,13 +594,6 @@ async def autonomous_loop(
             "autonomous_loop turn=%d | mode=%s | msgs=%d | transition=%s",
             state.turn_count, state.mode, len(state.messages), state.transition,
         )
-
-        # ── Per-turn micro-compact (lightweight tool result clearing) ──
-        if state.turn_count > 1:
-            state = state.replace(
-                messages=micro_compact(list(state.messages), keep_recent=5),
-                transition="micro_compacted",
-            )
 
         # ── Phase 0: Context loading (runs on first turn AND after writes) ──
         if not state._context_loaded and state.project_id:
@@ -474,13 +608,15 @@ async def autonomous_loop(
                     last = state.messages[-1]
                     query_hint = (last.content or "")[:200]
 
-                # Determine context depth based on user's intent
-                depth = _detect_context_depth(state.messages)
+                depth = "framework"
+
+                skip_ctx_cache = len(state._invalidated_sections) > 0
 
                 ctx = await builder.build_summary(
                     _uuid.UUID(state.project_id),
                     query_hint=query_hint,
                     depth=depth,
+                    skip_cache=skip_ctx_cache,
                 )
 
                 # Prepend recent scene summaries hint
@@ -517,7 +653,7 @@ async def autonomous_loop(
 
         # ── Re-filter tools (skills may have changed) ──────────────
         filtered_tools = get_filtered_tools(tools, mode=state.mode)
-        filtered_tool_desc = get_tool_descriptions(filtered_tools) or tool_descriptions
+        filtered_tool_desc = _get_tool_descriptions_cached(filtered_tools) or tool_descriptions
         tool_schemas = _build_tool_schemas(filtered_tools)
 
         # ── Token budget check ─────────────────────────────────────
@@ -561,6 +697,7 @@ async def autonomous_loop(
                     ],
                 )
 
+                _debug_dump("PLAN_STEPS", state.pending_plan.get("steps", []))
                 for step in state.pending_plan.get("steps", []):
                     tool_name = step.get("tool", "")
                     args = step.get("params", {})
@@ -574,6 +711,7 @@ async def autonomous_loop(
                     except Exception as exc:
                         result = {"tool": tool_name, "success": False, "error": str(exc)}
                     yield _event_tool_done(result)
+                    _debug_dump("TOOL_RESULT_PLAN", result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     # Build tool result message
@@ -622,182 +760,11 @@ async def autonomous_loop(
             logger.info("Compressed %d → %d messages", original_count, len(state.messages))
 
         # ── Step 2: Build messages for LLM ─────────────────────────
-        # Use AttachmentInjector for per-turn context sections
         dynamic_sections = _attach.build_system_sections(state)
-
-        # Project context
-        proj = state.project_context.get("project", {})
-
-        # ── Build system prompt as array of named sections ──────────
-        # Static sections (identity, tool_usage, output_style, etc.) are
-        # rendered once outside the loop.  Everything below is per-turn
-        # dynamic content assembled into an ordered list.
-        sections: list[str] = []
-
-        # 1. Mode declaration (top priority)
-        from app.agent.response_builder import MODE_DECLARATION_CHAT, MODE_DECLARATION_COWRITER
-        sections.append(MODE_DECLARATION_CHAT if state.mode == "chat" else MODE_DECLARATION_COWRITER)
-
-        # 2. Cowriter persona (static per-session)
-        if cowriter_persona:
-            sections.append(cowriter_persona)
-
-        # 3. Project context
-        proj_title = proj.get("title", "未命名")
-        proj_genre = proj.get("genre", "")
-        proj_id = state.project_id or proj.get("id", "unknown")
-        proj_logline = proj.get("logline", "")
-        proj_global_settings = proj.get("global_settings", "")
-
-        ctx_parts = [f"# --- 当前项目 ---\n项目: {proj_title}"]
-        if proj_genre:
-            ctx_parts.append(f"类型: {proj_genre}")
-        if proj_logline:
-            ctx_parts.append(f"一句话梗概: {proj_logline}")
-        if proj_global_settings:
-            ctx_parts.append(f"全局设定: {proj_global_settings[:500]}")
-        ctx_parts.append(f"Project ID: {proj_id}")
-        sections.append("\n".join(ctx_parts))
-
-        # 4. Structure summary with IDs
-        acts_data = state.project_context.get("acts", [])
-        if acts_data:
-            structure_lines = ["\n项目结构："]
-            for act in acts_data:
-                chapters = act.get("chapters", [])
-                sc_count = sum(len(ch.get("scenes", [])) for ch in chapters)
-                structure_lines.append(f"- {act.get('name', '')}  ({len(chapters)}章, {sc_count}场)")
-                for ch in chapters[:6]:
-                    ch_id = ch.get("id", "?")
-                    ch_title = ch.get("title", "?")
-                    goal = ch.get("goal_preview", "")
-                    ch_sc_count = len(ch.get("scenes", []))
-                    goal_str = f": {goal[:60]}" if goal else ""
-                    structure_lines.append(f"  - {ch_title} [ch:{ch_id}]{goal_str} ({ch_sc_count}场)")
-                    for sc in ch.get("scenes", [])[:3]:
-                        sc_id = sc.get("id", "?")
-                        sc_title = sc.get("title", "?")
-                        structure_lines.append(f"    · {sc_title} [sc:{sc_id}]")
-                    if ch_sc_count > 3:
-                        structure_lines.append(f"    （还有 {ch_sc_count - 3} 场景略）")
-                if len(chapters) > 6:
-                    structure_lines.append(f"   （还有 {len(chapters) - 6} 章略）")
-            sections.append("\n".join(structure_lines))
-
-        # 5. Characters
-        characters_data = state.project_context.get("characters", [])
-        if characters_data:
-            char_lines = ["\n角色列表："]
-            for c in characters_data[:20]:
-                c_name = c.get("name", "?")
-                c_role = c.get("role", "")
-                c_id = c.get("id", "")
-                c_personality = c.get("personality", "")
-                line = f"- {c_name} [{c_id}]"
-                if c_role:
-                    line += f" ({c_role})"
-                if c_personality:
-                    line += f": {c_personality[:120]}"
-                char_lines.append(line)
-            if len(characters_data) > 20:
-                char_lines.append(f"  （还有 {len(characters_data) - 20} 个角色略）")
-            sections.append("\n".join(char_lines))
-
-        # 6. Relations
-        relations_data = state.project_context.get("relations", [])
-        if relations_data:
-            char_name_by_id = {}
-            for c in characters_data:
-                cid = c.get("id")
-                if cid:
-                    char_name_by_id[cid] = c.get("name", "?")
-            rel_lines = ["\n角色关系："]
-            for r in relations_data[:15]:
-                src_id = r.get("character_id", "")
-                tgt_id = r.get("target_id", "")
-                src_name = char_name_by_id.get(src_id, "?")
-                tgt_name = char_name_by_id.get(tgt_id, "?")
-                rel_label = r.get("label") or r.get("rel_type") or "关联"
-                rel_lines.append(f"- {src_name} → {rel_label} → {tgt_name}")
-            if len(relations_data) > 15:
-                rel_lines.append(f"  （还有 {len(relations_data) - 15} 条关系略）")
-            sections.append("\n".join(rel_lines))
-
-        # 7. Chapter edges
-        edges_data = state.project_context.get("edges", [])
-        if edges_data:
-            edge_lines = ["\n章节连线："]
-            for e in edges_data[:10]:
-                e_type = e.get("edge_type", "")
-                e_label = e.get("label", "")
-                edge_lines.append(f"- [{e_type}] {e_label}")
-            sections.append("\n".join(edge_lines))
-
-        # 8. Themes
-        themes_data = state.project_context.get("themes", [])
-        if themes_data:
-            theme_lines = ["\n主题："]
-            for t in themes_data[:10]:
-                t_name = t.get("name", "")
-                t_prop = t.get("proposition", "")
-                if t_prop:
-                    theme_lines.append(f"- {t_name}: {t_prop[:150]}")
-                else:
-                    theme_lines.append(f"- {t_name}")
-            sections.append("\n".join(theme_lines))
-
-        # 9. Recent scenes hint
-        recent_hint = state.project_context.get("_recent_scenes_hint")
-        if recent_hint:
-            sections.append(recent_hint)
-
-        # 10. Available skills
-        available_skills = state.project_context.get("available_skills", [])
-        if available_skills:
-            skill_lines = ["\n# --- 可用写作技能（AI 可主动调用） ---"]
-            for s in available_skills:
-                name = s.get("name", "?")
-                desc = s.get("description", "")
-                when = s.get("when_to_use", "")
-                if when:
-                    skill_lines.append(f"- {name}: {desc}")
-                    skill_lines.append(f"  适用场景：{when[:200]}")
-                else:
-                    skill_lines.append(f"- {name}: {desc}")
-            skill_lines.append("")
-            skill_lines.append("你可以通过调用 invoke_skill 工具来启用某个技能。启用后其专属提示词将生效，在创作模式下还会解锁专属工具。")
-            skill_lines.append("用户也可在消息中以 /技能名称 的形式直接调用。")
-            sections.append("\n".join(skill_lines))
-
-        # 11. Active skill prompts
-        active_skills = state.active_skills or []
-        if active_skills and state.project_id:
-            try:
-                merged_prompts = await _skill_engine.get_merged_prompts(active_skills)
-                if merged_prompts:
-                    prompt_lines = ["\n# --- 当前已激活技能写作指导 ---"]
-                    for key, val in merged_prompts.items():
-                        prompt_lines.append(f"\n## {key}\n{val.strip()}")
-                    sections.append("\n".join(prompt_lines))
-            except Exception:
-                logger.warning("Failed to load active skill prompts", exc_info=True)
-
-        # 12. Dynamic sections from AttachmentInjector
-        for section_name in ("tool_summary", "session_progress", "plan_reminder", "error_context"):
-            text = dynamic_sections.get(section_name)
-            if text:
-                sections.append(text)
-
-        # 13. Token budget warning
-        if state.budget_warn_level:
-            sections.append(budget_check["message"])
-
-        # 14. Compact tool list
-        sections.append(f"# --- 可用工具 ---\n{filtered_tool_desc}")
-
-        # ── Assemble final system message ──────────────────────────
-        # Static prefix (base_system) + per-turn dynamic sections,
-        # joined into a single system message for the LLM.
+        sections = await _build_turn_sections(
+            state, cowriter_persona, dynamic_sections,
+            filtered_tool_desc, budget_check,
+        )
         system_content = base_system + "\n\n" + "\n\n".join(sections)
 
         # Build final messages — strip orphaned tool messages that would
@@ -936,6 +903,7 @@ async def autonomous_loop(
                 new_tool_results.append(r)
                 yield _event_tool_done(r)
                 safe_result_map[r.get("_tool_use_id", "")] = r
+                _debug_dump("TOOL_RESULT_SAFE", r)
         state = state.replace(tool_results=new_tool_results)
 
         # ── Step 5: Build assistant message (WITH tool_calls & reasoning for API spec) ──
@@ -952,6 +920,8 @@ async def autonomous_loop(
             state = state.replace(
                 messages=state.messages + [assistant_msg],
             )
+            if tool_blocks:
+                _debug_dump("ASSISTANT_TOOL_CALLS", tool_blocks)
 
         # ── Step 6: Interceptor Layer (BEFORE EXCL/BARRIER exec) ───
         if tool_blocks:
@@ -979,6 +949,7 @@ async def autonomous_loop(
                         }
                         new_tool_results.append(result)
                         yield _event_tool_done(result)
+                        _debug_dump("TOOL_RESULT_BLOCKED", result)
                         content = (
                             f"[工具执行失败: {tool_name}]\n"
                             f"对话模式禁止写入操作，工具已被拦截。请向用户说明需要切换到协作模式来完成写入操作。"
@@ -1015,6 +986,7 @@ async def autonomous_loop(
 
                     new_tool_results.append(result)
                     yield _event_tool_done(result)
+                    _debug_dump("TOOL_RESULT", result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     if result.get("success"):
@@ -1060,7 +1032,7 @@ async def autonomous_loop(
             logger.debug("No tool calls — finishing turn")
             break
 
-        if state.transition in ("mode_blocked", "plan_generated_for_confirmation"):
+        if state.transition == "plan_generated_for_confirmation":
             break
 
         # ── Step 7a: Detect tool-parameter failure cascade ──────────
@@ -1097,13 +1069,24 @@ async def autonomous_loop(
         )
 
         if not assistant_text.strip():
-            state = state.replace(tool_only_turns=state.tool_only_turns + 1)
-            # Allow up to 6 consecutive tool-only turns for complex chains
-            # (e.g. read → worldview → act → chapter → scene → write)
-            if state.tool_only_turns > 6:
-                logger.warning("Tool-only loop detected — breaking")
-                yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
-                break
+            # Don't count turns where a write tool succeeded — DeepSeek
+            # models often produce tool-only calls after writes and the
+            # context-invalidation chain (write → invalidate → reload → write)
+            # is legitimate.  Reset the counter so long write chains work.
+            had_successful_write = any(
+                r.get("success") and
+                filtered_tools.get(r.get("tool")) is not None and
+                filtered_tools[r.get("tool")].is_write_operation
+                for r in new_tool_results
+            )
+            if had_successful_write:
+                state = state.replace(tool_only_turns=0)
+            else:
+                state = state.replace(tool_only_turns=state.tool_only_turns + 1)
+                if state.tool_only_turns > 6:
+                    logger.warning("Tool-only loop detected — breaking")
+                    yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")
+                    break
         else:
             state = state.replace(tool_only_turns=0)
 

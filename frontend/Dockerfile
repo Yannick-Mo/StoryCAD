@@ -4,10 +4,6 @@ WORKDIR /app
 
 RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
 
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
-
 COPY package.json ./
 RUN npm install --legacy-peer-deps && npm cache clean --force
 

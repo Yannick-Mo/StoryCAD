@@ -314,11 +314,13 @@ class ContextBuilder:
         project_id: uuid.UUID,
         query_hint: str = "",
         depth: str = "minimal",
+        skip_cache: bool = False,
     ) -> dict:
         ck = self._cache_key(project_id, "summary", depth)
-        cached = await self._cache_get(ck)
-        if cached is not None:
-            return cached
+        if not skip_cache:
+            cached = await self._cache_get(ck)
+            if cached is not None:
+                return cached
 
         proj = await self._get_project(project_id)
         if not proj:
@@ -354,9 +356,10 @@ class ContextBuilder:
                         "summary": (sc.summary or "")[:200],
                         "pov_character": sc.pov_character or "",
                     }
-                    if depth == "summary":
+                    if depth in ("summary", "framework"):
                         entry["setting"] = sc.setting or ""
                         entry["scene_time"] = sc.scene_time or ""
+                        entry["summary"] = (sc.summary or "")[:1000]
                     if depth == "full":
                         entry["content"] = (content_by_scene.get(sc.id) or "")[:1000]
                     scenes_data.append(entry)
@@ -368,7 +371,8 @@ class ContextBuilder:
                     "goal_preview": (ch.goal or "")[:100],
                     "scenes": scenes_data,
                 }
-                if depth in ("summary", "full"):
+                if depth in ("summary", "full", "framework"):
+                    ch_entry["goal"] = ch.goal or ""
                     ch_entry["status"] = ch.status or ""
                 chapters_data.append(ch_entry)
 
@@ -391,6 +395,12 @@ class ContextBuilder:
             }
             if depth in ("summary", "full"):
                 entry["personality"] = (c.personality or "")[:200]
+            if depth == "framework":
+                entry["personality"] = c.personality or ""
+                entry["motivation"] = c.motivation or ""
+                entry["background"] = c.background or ""
+                entry["appearance"] = c.appearance or ""
+                entry["arc"] = c.arc or ""
             characters_data.append(entry)
 
         themes_result = await self.db.execute(
@@ -398,10 +408,10 @@ class ContextBuilder:
         )
         themes_data = []
         for t in themes_result.scalars().all():
-            themes_data.append({
-                "name": t.name,
-                "proposition": t.proposition or "",
-            })
+            entry = {"name": t.name, "proposition": t.proposition or ""}
+            if depth == "framework":
+                entry["note"] = t.note or ""
+            themes_data.append(entry)
 
         available_skills = await self._get_available_skills()
 
@@ -418,6 +428,10 @@ class ContextBuilder:
 
         scene_count = sum(len(scenes_by_chapter.get(cid, [])) for cid in chapter_ids)
 
+        proj_global_settings = proj.global_settings or ""
+        if depth == "framework":
+            proj_global_settings = proj_global_settings
+
         result = {
             "project": {
                 "id": str(proj.id),
@@ -425,7 +439,7 @@ class ContextBuilder:
                 "genre": proj.genre or "",
                 "logline": proj.logline or "",
                 "status": proj.status or "",
-                "global_settings": (proj.global_settings or "")[:2000],
+                "global_settings": proj_global_settings if depth == "framework" else proj_global_settings[:2000],
             },
             "acts": acts_data,
             "characters": characters_data,

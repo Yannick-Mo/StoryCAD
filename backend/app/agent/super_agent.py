@@ -64,7 +64,7 @@ class SuperAgent:
         """Lazily load and cache the tool registry for write detection."""
         if self._tool_registry_cache is None:
             self._tool_registry_cache = await asyncio.to_thread(
-                _get_registry, self.db, llm_client=self._llm_client
+                _get_registry, llm_client=self._llm_client
             )
         return self._tool_registry_cache
 

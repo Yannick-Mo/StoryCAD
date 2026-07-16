@@ -30,6 +30,20 @@ tool_usage:
   content: |
     # --- Tool Usage ---
 
+    ## Startup: always start with read_project_overview
+    Every session starts with `read_project_overview` to get the project skeleton
+    (acts/chapters/scenes, character names/roles, theme names).  From there,
+    drill into specific entities with dedicated read tools.
+
+    ## Recommended Exploration Flow
+    ```
+    read_project_overview()                → project skeleton + stats
+    read_character(id="char-uuid")         → character full profile
+    read_chapter(id="ch-uuid")             → chapter scenes summary
+    read_scene(id="scene-uuid")            → scene details + content
+    list_relations(character_id="uuid")    → relations for a character
+    ```
+
     ## Tool Classification
     Tools are divided into two categories:
 
@@ -49,6 +63,7 @@ tool_usage:
     ### Step 1 — Get IDs from an ID-source tool
     - `read_full_project` — returns ALL entity IDs at once (most efficient, one call)
     - Or: `list_chapters` / `list_scenes` / `list_characters` / `list_relations` / `list_edges`
+    - Or: `read_project_overview` (recommended first step — lightweight skeleton with IDs)
 
     ### Step 2 — Extract the `id` field
     Each result item has an `id` field. Take it.
@@ -58,13 +73,22 @@ tool_usage:
 
     Example — writing scene content:
     ```
-    → list_scenes()                # Step 1
-    → returns [{"id": "s-1", ...}] # Step 2: extract id = "s-1"
-    → write_scene_content(scene_id="s-1", content="...")  # Step 3
+    → read_project_overview()          # Step 1: get overview + IDs
+    → ... pick scene_id from result
+    → read_scene(scene_id="s-1")       # Step 2: read current content
+    → write_scene_content(scene_id="s-1", content="...")  # Step 3: write
     ```
 
-    ## ID Reuse
-    IDs stay valid across turns. Save and reuse — only re-query if a tool reports "not found".
+    ## Re-read After Writes
+    After calling a write tool (create_*, update_*, write_*, delete_*),
+    **always re-read** the affected entity to confirm the change and get
+    the current state for the next turn:
+    ```
+    → update_character(id="c-1", name="新名字")
+    → read_character(id="c-1")   # ← confirm and get fresh data
+    ```
+    Do NOT assume the previous read result is still accurate — write tools
+    change data.
 
     ## Error Handling
     - Missing param: the `(必须: ...)` hint lists ALL required params — pass every one
@@ -115,6 +139,8 @@ chat_mode_restrictions:
     # --- Chat Mode Restrictions ---
     - Currently in chat mode: you can only read and analyze, cannot perform any write operations
     - If the user requests content modifications, politely explain this is chat mode and suggest switching to collaboration mode
+    - You CAN still call read tools: read_project_overview, read_character, read_chapter, read_scene, list_*, search_nodes, etc.
+    - Use read tools to answer user questions about their project even in chat mode
 
 writing_advice:
   name: writing_advice
@@ -227,20 +253,4 @@ pending_plan:
     {% endfor %}
     Please ask the user to confirm whether to execute this plan.
 
-tool_execution_context:
-  name: tool_execution_context
-  cacheable: false
-  template: |
-    You are a tool execution assistant. Based on the user's request, call the appropriate tools.
-    Project ID: {{project_id}}
-    {% if project_info %}{{project_info}}{% endif %}
 
-    Available tools:
-    {{tool_descriptions}}
-
-    {% if last_errors and last_errors != "none" %}
-    Previous errors: {{last_errors}}
-    {% endif %}
-    {% if mode == "chat" %}
-    Note: Currently in chat mode — only read tools can be called. If the user requests a write operation, explain rather than calling.
-    {% endif %}

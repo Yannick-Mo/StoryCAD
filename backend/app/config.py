@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     llm_models: str = ""
     llm_fallback_models: str = ""
     llm_proxy: str = ""
-    llm_max_sys_chars: int = 12000
-    llm_max_rag_chars: int = 1500
+    llm_max_sys_chars: int = 50000
+    llm_max_rag_chars: int = 10000
 
     # CORS configuration
     cors_origins: list[str] = ["http://localhost:5173"]

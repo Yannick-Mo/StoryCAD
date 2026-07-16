@@ -132,11 +132,13 @@ class ListScenesTool(BaseTool):
 class ListRelationsTool(BaseTool):
     meta = ToolMeta(
         name="list_relations",
-        description="列出项目中所有角色关系",
+        description="列出项目中所有角色关系，可按角色筛选",
         concurrency=ConcurrencyMode.SAFE,
         parameters={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "character_id": {"type": "string", "description": "按角色筛选（可选），只返回该角色参与的关系"},
+            },
         },
     )
 
@@ -145,9 +147,14 @@ class ListRelationsTool(BaseTool):
             pid = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, pid, kwargs.get("user_id"))
 
-            rels_result = await db.execute(
-                select(CharacterRelation).where(CharacterRelation.project_id == pid)
-            )
+            q = select(CharacterRelation).where(CharacterRelation.project_id == pid)
+            if kwargs.get("character_id"):
+                char_id = uuid.UUID(kwargs["character_id"])
+                q = q.where(
+                    (CharacterRelation.character_id == char_id) |
+                    (CharacterRelation.target_id == char_id)
+                )
+            rels_result = await db.execute(q)
             rels = rels_result.scalars().all()
 
             # Load character names

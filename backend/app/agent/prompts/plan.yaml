@@ -51,7 +51,7 @@ system: |
   好的计划（遵循「先读后写」原则，按依赖顺序编排）：
   {"steps": [
     {"tool": "read_project", "params": {"project_id": "proj_001"}, "description": "读取项目当前状态，确认已有结构和数据"},
-    {"tool": "update_project", "params": {"project_id": "proj_001", "global_setting": "东方玄幻世界，以灵气修炼为核心，分为九州大陆……", "genre": "玄幻", "logline": "少年从废柴崛起，踏上修炼巅峰之路"}, "description": "设置世界观、题材和故事梗概"},
+     {"tool": "update_project", "params": {"project_id": "proj_001", "global_settings": "东方玄幻世界，以灵气修炼为核心，分为九州大陆……", "genre": "玄幻", "logline": "少年从废柴崛起，踏上修炼巅峰之路"}, "description": "设置世界观、题材和故事梗概"},
     {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第一幕 启程", "sort_order": 1}, "description": "创建故事的第一幕——主角踏上旅程"},
     {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第二幕 试炼", "sort_order": 2}, "description": "创建第二幕——主角经历考验"},
     {"tool": "create_act", "params": {"project_id": "proj_001", "name": "第三幕 巅峰", "sort_order": 3}, "description": "创建第三幕——最终决战与结局"},

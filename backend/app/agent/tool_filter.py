@@ -7,7 +7,7 @@
 from app.agent.tools.base import BaseTool
 
 READ_ONLY_TOOLS: set[str] = {
-    "read_project", "read_chapter", "read_scene", "read_full_project",
+    "read_project", "read_chapter", "read_scene", "read_full_project", "read_project_overview", "read_character",
     "search_knowledge",
     "analyze_chapter", "analyze_character_arc", "project_health",
     "check_consistency", "analyze_rhythm", "suggest_next",
@@ -29,7 +29,7 @@ COWRITER_TOOLS: set[str] = {
     "create_scene", "update_scene", "delete_scene",
     # CRUD — character
     "create_character", "update_character", "delete_character",
-    "update_relation", "delete_relation",
+    "create_relation", "update_relation", "delete_relation",
     # CRUD — edge
     "create_edge", "update_edge", "delete_edge",
     # CRUD — theme

@@ -24,33 +24,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── Default model context limits (characters, approximate) ──────────
-DEFAULT_MODEL_LIMIT = 128_000  # DeepSeek V3 context window (chars)
+DEFAULT_MODEL_LIMIT = 1_800_000  # ~900K tokens (chars estimate, 90% of 1M)
 
 # ── Threshold ratios ────────────────────────────────────────────────
 COMPRESS_THRESHOLD = 0.80
 AGGRESSIVE_THRESHOLD = 0.95
 
 # ── Message retention counts ───────────────────────────────────────
-DEFAULT_HEAD_COUNT = 3
-DEFAULT_TAIL_COUNT = 6
-AGGRESSIVE_HEAD_COUNT = 1
-AGGRESSIVE_TAIL_COUNT = 4
-REACTIVE_HEAD_COUNT = 1
-REACTIVE_TAIL_COUNT = 3
+DEFAULT_HEAD_COUNT = 5
+DEFAULT_TAIL_COUNT = 12
+AGGRESSIVE_HEAD_COUNT = 3
+AGGRESSIVE_TAIL_COUNT = 8
+REACTIVE_HEAD_COUNT = 2
+REACTIVE_TAIL_COUNT = 5
 
 # ── Micro-compact config ────────────────────────────────────────────
-# Tools whose results are safe to clear (read-only / structural).
-# Content-read tools (read_scene, read_full_project, list_characters)
-# are EXCLUDED — they carry creative text the LLM needs across turns.
-# list_chapters and list_scenes are EXCLUDED — their results contain
-# UUIDs that downstream tools (read_chapter, read_scene, analyze_*,
-# create_*) need for parameter passing.
-_COMPACTABLE_TOOLS: set[str] = {
-    "read_chapter",
-    "list_relations", "list_edges", "search_nodes",
-    "analyze_chapter", "project_health", "check_consistency",
-    "analyze_rhythm", "suggest_next",
-}
+# Micro-compact is disabled by default — tool results are never truncated.
+# Set _MICRO_COMPACT_MAX_CHARS to a positive value to re-enable for
+# extremely large results only (safety net).
+_MICRO_COMPACT_MAX_CHARS: int = 0  # 0 = disabled
 
 # Tools whose results carry entity IDs that downstream tools depend on.
 # These must survive all compression layers so the LLM can chain
@@ -58,7 +50,8 @@ _COMPACTABLE_TOOLS: set[str] = {
 _ID_SOURCE_TOOLS: set[str] = {
     "list_chapters", "list_scenes", "list_characters",
     "list_relations", "list_edges", "read_full_project",
-    "read_chapter", "read_scene",
+    "read_chapter", "read_scene", "read_project_overview",
+    "read_character", "search_nodes",
 }
 
 
@@ -110,63 +103,34 @@ def micro_compact(
     messages: list["Message"],
     keep_recent: int = 5,
 ) -> list["Message"]:
-    """Replace compactable tool result contents with short markers.
+    """No-op per default — tool results are never truncated.
 
-    This is a **lightweight** compression that runs every turn.  It
-    does NOT change the message count or structure — only shortens the
-    ``content`` of ``role="tool"`` messages whose tool is in
-    ``_COMPACTABLE_TOOLS``.
-
-    The LLM still sees the tool call + the marker, so it knows *what*
-    happened, but it no longer pays token cost for the actual output.
-
-    Inspired by Claude Code's ``microcompactMessages()``.
+    If ``_MICRO_COMPACT_MAX_CHARS > 0``, compact any tool result larger
+    than that threshold to a short marker, keeping the last *keep_recent*
+    results intact.
     """
+    if _MICRO_COMPACT_MAX_CHARS <= 0:
+        return messages
+
     from app.llm.types import Message as M
 
-    compactable_count = 0
-    tokens_saved = 0
-    seen_compactable: list[int] = []  # indices of compactable tool messages
-
+    seen_large: list[int] = []
     for i, msg in enumerate(messages):
         if msg.role != "tool":
             continue
         content = msg.content or ""
-        if len(content) < 200:
-            continue  # Already small — skip
-        # Check if this tool result is from a compactable tool
-        # The content starts with "[工具执行结果: <tool_name>]"
-        tool_name = ""
-        if content.startswith("[工具执行结果:"):
-            end = content.find("]")
-            if end > 0:
-                tool_name = content[7:end].strip()
-        elif content.startswith("[工具执行失败:"):
-            continue  # Error messages are small
+        if len(content) > _MICRO_COMPACT_MAX_CHARS:
+            seen_large.append(i)
 
-        if tool_name in _COMPACTABLE_TOOLS:
-            seen_compactable.append(i)
-            compactable_count += 1
-            tokens_saved += len(content)
-
-    # Keep the last `keep_recent` compactable results
-    keep = set(seen_compactable[-keep_recent:]) if keep_recent > 0 else set()
-    for i in seen_compactable:
+    keep = set(seen_large[-keep_recent:]) if keep_recent > 0 else set()
+    for i in seen_large:
         if i not in keep:
             messages[i] = M(
                 role="tool",
-                content=f"[工具结果已缓存: {len(messages[i].content or '')} chars, 点击查看详情]",
+                content=f"[工具结果已缓存: {len(messages[i].content or '')} chars]",
                 tool_call_id=messages[i].tool_call_id,
                 name=messages[i].name,
             )
-
-    if compactable_count > 0:
-        logger.debug(
-            "micro_compact: cleared %d/%d tool results, saved ~%d chars",
-            len(seen_compactable) - len(keep),
-            compactable_count,
-            tokens_saved,
-        )
 
     return messages
 

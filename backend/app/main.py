@@ -17,6 +17,17 @@ _validate_config()
 async def lifespan(app: FastAPI):
     configure_from_settings(settings)
     await init_db()
+
+    # Cross-check tool registry vs filter sets at startup
+    import logging
+    logger = logging.getLogger(__name__)
+    from app.agent.tools import get_tool_registry
+    from app.agent.tool_filter import verify_tool_registry
+    registry = get_tool_registry()
+    issues = verify_tool_registry(registry)
+    for issue in issues:
+        logger.warning("Tool registry drift: %s", issue)
+
     yield
     from app.llm.client import close_shared_client
     await close_shared_client()

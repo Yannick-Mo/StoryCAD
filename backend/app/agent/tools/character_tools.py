@@ -35,6 +35,38 @@ class ListCharactersTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
 
+class ReadCharacterTool(BaseTool):
+    meta = ToolMeta(
+        name="read_character",
+        description="获取单个角色的完整档案（名称、类型、性格、外貌、背景、动机）。character_id 来自 list_characters 或 read_project_overview",
+        concurrency=ConcurrencyMode.SAFE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_id": {"type": "string", "description": "角色ID，来自 list_characters 或 read_project_overview 返回结果"},
+            },
+            "required": ["character_id"],
+        },
+    )
+
+    async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
+        try:
+            char_id_val = self._require_param(kwargs, "character_id")
+            if char_id_val is None:
+                return self._missing_param("character_id")
+            char_id = uuid.UUID(char_id_val)
+            pid = uuid.UUID(kwargs["project_id"])
+            await verify_project_owner(db, pid, kwargs.get("user_id"))
+            result = await db.execute(select(Character).where(Character.id == char_id))
+            char = result.scalar_one_or_none()
+            if not char:
+                return self._not_found("Character")
+            return ToolResult(success=True, data=row_to_dict(char))
+        except Exception as e:
+            await db.rollback()
+            return ToolResult(success=False, error=str(e))
+
+
 class CreateCharacterTool(BaseTool):
     meta = ToolMeta(
         name="create_character",

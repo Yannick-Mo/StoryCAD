@@ -4,11 +4,6 @@ WORKDIR /app
 
 RUN addgroup --system --gid 1001 appuser && adduser --system --uid 1001 appuser
 
-# Build-time proxy args
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
-
 # Install runtime deps only
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

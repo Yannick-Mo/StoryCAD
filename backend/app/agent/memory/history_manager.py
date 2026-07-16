@@ -12,11 +12,11 @@ from loguru import logger
 from app.llm.client import LLMClient
 from app.llm.types import Message
 
-MAX_HISTORY_TOKENS_EST = 6000
-MAX_HISTORY_TOKENS_HARD = 8000
-SUMMARIZE_AFTER = 20
-KEEP_RECENT = 10
-MIN_SUMMARIZE_INTERVAL = 5
+MAX_HISTORY_TOKENS_EST = 200_000
+MAX_HISTORY_TOKENS_HARD = 400_000
+SUMMARIZE_AFTER = 30
+KEEP_RECENT = 15
+MIN_SUMMARIZE_INTERVAL = 10
 TOKEN_ESTIMATE_SAFETY = 1.5
 
 # Tools whose output contains ID information the LLM needs for future calls.

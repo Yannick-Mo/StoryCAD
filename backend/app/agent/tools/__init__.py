@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.client import LLMClient
 from .base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode
 
@@ -14,17 +13,17 @@ def _safe_instantiate(cls: type[BaseTool], llm_client: LLMClient | None = None) 
         return None
 
 
-def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
+def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool]:
     from .list_tools import (
         ListChaptersTool, ListScenesTool,
         ListRelationsTool, ListEdgesTool, SearchNodesTool,
     )
     from .project_tools import (
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
-        ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
+        ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
     )
     from .character_tools import (
-        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool,
+        ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
     )
     from .agent_tools import GoalAgentTool, OutlineAgentTool
@@ -48,8 +47,8 @@ def get_tool_registry(db: AsyncSession | None = None, llm_client: LLMClient | No
     classes = [
         ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
-        ReadFullProjectTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
-        ListCharactersTool, CreateCharacterTool, UpdateCharacterTool,
+        ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
+        ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
         GoalAgentTool, OutlineAgentTool,
         ConsistencyCheckTool, RhythmAnalyzeTool,
@@ -108,11 +107,15 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
             elif t_inst.meta.is_destructive:
                 destructive_str = " [破坏性]"
 
-        # Build required-param hints with ID source annotations.
-        # Extract "来自 X" from parameter descriptions to show the source tool.
+        # Show ALL parameter names in parentheses after the tool name,
+        # plus list required params explicitly.
         params_schema = fn.get("parameters", {})
         properties = params_schema.get("properties", {})
         required = params_schema.get("required", [])
+        param_names = list(properties.keys())
+        param_hint = ""
+        if param_names:
+            param_hint = "(" + ", ".join(param_names) + ")"
         req_parts: list[str] = []
         for p in required:
             prop = properties.get(p, {})
@@ -123,11 +126,11 @@ def get_tool_descriptions(tools: dict[str, BaseTool]) -> str:
             else:
                 req_parts.append(p)
         if req_parts:
-            req_hint = " (必须: " + ", ".join(req_parts) + ")"
+            req_hint = " [必须: " + ", ".join(req_parts) + "]"
         else:
             req_hint = ""
 
-        lines.append(f"- {t_name}: {fn.get('description', '')}{req_hint}{destructive_str}")
+        lines.append(f"- {t_name}{param_hint}: {fn.get('description', '')}{req_hint}{destructive_str}")
     return "\n".join(lines)
 
 

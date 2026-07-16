@@ -305,11 +305,14 @@ class BaseTool(ABC):
     # ------------------------------------------------------------------
 
     def to_openai_tool(self) -> dict:
+        params = self._effective_parameters
+        if isinstance(params, dict) and "additionalProperties" not in params:
+            params = {**params, "additionalProperties": False}
         return {
             "type": "function",
             "function": {
                 "name": self._effective_name,
                 "description": self._effective_description,
-                "parameters": self._effective_parameters,
+                "parameters": params,
             },
         }

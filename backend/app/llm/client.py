@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from typing import Any, AsyncGenerator, Literal
-from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -171,7 +169,7 @@ class LLMClient:
         messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         stream: bool = False,
         tools: list[ToolDef] | None = None,
         tool_choice: str = "auto",
@@ -372,7 +370,7 @@ class LLMClient:
         messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         request_id: str = "",
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from the LLM one by one. Yields content strings."""
@@ -425,7 +423,7 @@ class LLMClient:
         messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         tools: list[ToolDef] | None = None,
         tool_choice: str = "auto",
         request_id: str = "",
@@ -468,7 +466,6 @@ class LLMClient:
 
             # Accumulators for streaming tool calls
             tool_call_builders: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
-            tool_call_emitted: set[int] = set()  # track which tool indices have been emitted
             reasoning_parts: list[str] = []
 
             try:
@@ -503,30 +500,17 @@ class LLMClient:
                                 if fn.get("arguments"):
                                     builder["function"]["arguments"] += fn["arguments"]
 
-                        # Emit tool calls incrementally as they arrive (name + args present)
-                        for idx in sorted(tool_call_builders.keys()):
-                            if idx in tool_call_emitted:
-                                continue
-                            builder = tool_call_builders[idx]
-                            if builder["function"]["name"] and builder["function"]["arguments"]:
-                                tool_call_emitted.add(idx)
-                                yield StreamChunk(
-                                    tool_call=ToolCall(
-                                        id=builder["id"],
-                                        function=dict(builder["function"]),
-                                    ),
-                                )
-
                     # When finish_reason signals the end of a tool call stream,
-                    # emit any tool calls that were NOT already emitted
-                    # incrementally during streaming.
+                    # emit ALL tool calls with their fully accumulated arguments.
+                    # (Previously we emitted during streaming, but DeepSeek sends
+                    # arguments incrementally — the first chunk may have only "{".
+                    # Emitting mid-stream causes `loop.py` to receive incomplete JSON
+                    # and parse it as empty `{}`. We now wait for finish_reason so
+                    # every tool call carries complete arguments.)
                     if finish_reason:
                         for idx in sorted(tool_call_builders.keys()):
-                            if idx in tool_call_emitted:
-                                continue
                             builder = tool_call_builders[idx]
                             if builder["function"]["name"]:
-                                tool_call_emitted.add(idx)
                                 yield StreamChunk(
                                     tool_call=ToolCall(
                                         id=builder["id"],
@@ -534,7 +518,6 @@ class LLMClient:
                                     ),
                                 )
                         tool_call_builders.clear()
-                        tool_call_emitted.clear()
 
                         usage = None
                         if chunk.get("usage"):

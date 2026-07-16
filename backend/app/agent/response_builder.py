@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────
 
-MAX_SYSTEM_TOKENS = 8000
-MAX_RAG_CHARS = settings.llm_max_rag_chars or 2000
+MAX_SYSTEM_TOKENS = 30000
+MAX_RAG_CHARS = settings.llm_max_rag_chars or 5000
 
 _PERSONA_CACHE: str | None = None
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -192,7 +192,7 @@ def _format_tool_data(data) -> str:
     if not data:
         return "(empty)"
     if isinstance(data, str):
-        return data[:200]
+        return data[:2000]
     try:
         # Try to extract a readable summary from dict/list results
         if isinstance(data, dict):
@@ -200,13 +200,13 @@ def _format_tool_data(data) -> str:
             for key in ("content_preview", "summary", "result", "content"):
                 val = data.get(key)
                 if val and isinstance(val, str):
-                    return str(val)[:200]
-            return str(data)[:200]
+                    return str(val)[:2000]
+            return str(data)[:2000]
         if isinstance(data, list):
             return f"[{len(data)} items]"
-        return str(data)[:200]
+        return str(data)[:2000]
     except Exception:
-        return str(data)[:200]
+        return str(data)[:2000]
 
 
 async def build_system_prompt(state: dict) -> str:
@@ -258,28 +258,15 @@ async def build_system_prompt(state: dict) -> str:
         project_title += f"\n类型：{genre}"
     sections.append(_ContextSection(tier=0, label="project_title", text=project_title))
 
-    # Tier 1 — high: characters, structure, tool results, plan, errors
-    chars = project_ctx.get("characters", [])
-    if chars:
-        char_lines = ["角色列表："]
-        for c in chars:
-            name = c.get("name", "?")
-            role = c.get("role", "")
-            personality = c.get("personality", "")
-            if personality:
-                char_lines.append(f"- {name}（{role}）：{personality[:200]}")
-            else:
-                char_lines.append(f"- {name}（{role}）")
-        sections.append(_ContextSection(tier=1, label="characters", text="\n".join(char_lines)))
-
+    # Tier 1 — high: compact stats, tool results, plan, errors
     if project_structure:
         sections.append(
-            _ContextSection(tier=1, label="project_structure", text=f"项目结构：{project_structure}")
+            _ContextSection(tier=1, label="project_stats", text=f"项目规模：{project_structure}")
         )
 
     if tool_results:
         result_lines = [f"工具执行结果（{success_count}/{total_count} 成功）："]
-        for r in tool_results[:5]:
+        for r in tool_results[:10]:
             icon = "✓" if r.get("success") else "✗"
             tool_name = r.get("tool", "unknown")
             raw = r.get("data") if r.get("success") else r.get("error", "?")
@@ -327,56 +314,18 @@ async def build_system_prompt(state: dict) -> str:
         )
 
     # Tier 3 — low: extra tool results
-    if len(tool_results) > 5:
+    if len(tool_results) > 10:
         extra = [
             f"{'✓' if r.get('success') else '✗'} {r.get('tool', '?')}"
-            for r in tool_results[5:]
+            for r in tool_results[10:]
         ]
         sections.append(
             _ContextSection(tier=3, label="extra_tool_results", text="其他工具执行：" + "；".join(extra))
         )
 
-    # Tier 2 — medium: RAG, themes, relations, guidelines
+    # Tier 2 — medium: RAG, guidelines
     if rag_text:
         sections.append(_ContextSection(tier=2, label="rag_context", text=f"参考知识：\n{rag_text}"))
-
-    themes = project_ctx.get("themes", [])
-    if themes:
-        theme_names = [t.get("name", "") for t in themes if t.get("name")]
-        if theme_names:
-            sections.append(_ContextSection(tier=2, label="themes", text="主题：" + "、".join(theme_names)))
-
-    relations = project_ctx.get("relations", [])
-    if relations:
-        # Build a character ID → name lookup from the character data
-        characters = project_ctx.get("characters", [])
-        char_name_by_id: dict[str, str] = {}
-        for c in characters:
-            cid = c.get("id")
-            if cid:
-                char_name_by_id[cid] = c.get("name", "?")
-        rel_lines = ["角色关系："]
-        for r in relations[:10]:
-            char_a_id = r.get("character_id", "")
-            char_b_id = r.get("target_id", "")
-            char_a = char_name_by_id.get(char_a_id, "?")
-            char_b = char_name_by_id.get(char_b_id, "?")
-            rel_type = r.get("rel_type", "")
-            label = r.get("label", "")
-            display_type = label or rel_type or "关联"
-            trust = r.get("trust", 0)
-            threat = r.get("threat", 0)
-            attraction = r.get("attraction", 0)
-            extra = []
-            if trust and trust != 50:
-                extra.append(f"信任{trust}")
-            if threat and threat != 50:
-                extra.append(f"威胁{threat}")
-            if attraction and attraction != 50:
-                extra.append(f"吸引{attraction}")
-            extra_str = f"（{'; '.join(extra)}）" if extra else ""
-            rel_lines.append(f"- {char_a} → {char_b}：{display_type}{extra_str}")
-        sections.append(_ContextSection(tier=2, label="relations", text="\n".join(rel_lines)))
 
     sections.append(_ContextSection(tier=2, label="app_guide", text=APP_GUIDE))
     sections.append(

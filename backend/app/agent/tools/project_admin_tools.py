@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 from sqlalchemy import select, func
 
 logger = logging.getLogger(__name__)
@@ -12,7 +11,6 @@ from app.storycad.models import Act, Chapter, ChapterEdge, Character, CharacterR
 from app.storycad.repository import StoryCADRepository
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
 from app.agent.project_creator.state import MaterialState
-from app.agent.utils import count_words
 from app.utils import row_to_dict
 
 
@@ -249,7 +247,7 @@ class DeleteActTool(BaseTool):
 class UpdateProjectTool(BaseTool):
     meta = ToolMeta(
         name="update_project",
-        description="更新项目全局设定，包括标题、描述、体裁、世界观设定、目标字数等。只传入需要修改的字段即可",
+        description="更新项目全局设定。参数：title(标题)、description(描述)、genre(体裁)、global_settings(世界观设定)、logline(一句话梗概)、target_audience(目标读者)、total_words(目标字数)、template_type(模板)。只传入需要修改的字段",
         concurrency=ConcurrencyMode.EXCLUSIVE,
         parameters={
             "type": "object",
@@ -258,6 +256,7 @@ class UpdateProjectTool(BaseTool):
                 "description": {"type": "string", "description": "项目描述"},
                 "genre": {"type": "string", "description": "故事体裁，例如'奇幻'、'科幻'、'悬疑'"},
                 "global_settings": {"type": "string", "description": "世界观设定、背景设定等全局设定文本"},
+                "logline": {"type": "string", "description": "一句话梗概/Logline"},
                 "target_audience": {"type": "string", "description": "目标读者群体"},
                 "total_words": {"type": "integer", "description": "目标总字数"},
                 "template_type": {"type": "string", "description": "模板类型，例如'four_act'、'three_act'"},
@@ -265,16 +264,37 @@ class UpdateProjectTool(BaseTool):
         },
     )
 
+    PARAM_ALIASES = {
+        "global_setting": "global_settings",
+        "world_setting": "global_settings",
+        "world_settings": "global_settings",
+    }
+
     async def run(self, db: AsyncSession, **kwargs) -> ToolResult:
         try:
             project_id = uuid.UUID(kwargs["project_id"])
             await verify_project_owner(db, project_id, kwargs.get("user_id"))
 
+            for wrong, correct in self.PARAM_ALIASES.items():
+                if wrong in kwargs and correct not in kwargs:
+                    kwargs[correct] = kwargs[wrong]
+                    logger.warning("update_project: aliased param '%s' -> '%s'", wrong, correct)
+
+            updatable = {"title", "description", "genre", "global_settings", "logline",
+                         "target_audience", "total_words", "template_type"}
+            given = set(kwargs) & updatable
+            if not given:
+                return ToolResult(
+                    success=False,
+                    error="未传入任何要更新的字段。请在调用时至少提供 title/description/genre/global_settings 中的一个",
+                    correction_hint="请传入要修改的字段及其新值，例如 update_project(global_settings='...')",
+                )
+
             project = await db.get(Project, project_id)
             if not project:
                 return self._not_found("Project")
 
-            for field in ("title", "description", "genre", "global_settings"):
+            for field in ("title", "description", "genre", "global_settings", "logline"):
                 if field in kwargs:
                     setattr(project, field, kwargs[field])
 
@@ -293,12 +313,18 @@ class UpdateProjectTool(BaseTool):
                         setattr(config_obj, field, kwargs[field])
 
             await db.commit()
+            gs = project.global_settings or ""
+            if len(gs) > 2000:
+                gs_preview = gs[:2000] + f"\n... [全长 {len(gs)} 字，已截断]"
+            else:
+                gs_preview = gs
             return ToolResult(success=True, data={
                 "project_id": str(project_id),
                 "title": project.title,
                 "description": project.description,
                 "genre": project.genre,
-                "global_settings": (project.global_settings or "")[:200],
+                "logline": project.logline or "",
+                "global_settings": gs_preview,
             })
         except Exception as e:
             await db.rollback()
