@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from typing import AsyncGenerator
@@ -65,22 +64,6 @@ def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
     if h not in _TOOL_DESC_CACHE:
         _TOOL_DESC_CACHE[h] = get_tool_descriptions(filtered_tools)
     return _TOOL_DESC_CACHE[h]
-
-# ── Debug dump ─────────────────────────────────────────────────────────
-_DEBUG_TOOL_LOG = os.environ.get("DEBUG_TOOL_LOG", "/tmp/debug_tool_interaction.log")
-
-def _debug_dump(label: str, data: object) -> None:
-    """Append a JSON line to the debug interaction log."""
-    import datetime
-    entry = json.dumps(
-        {"t": datetime.datetime.now().isoformat(), "l": label, "d": data},
-        ensure_ascii=False, default=str,
-    )
-    try:
-        with open(_DEBUG_TOOL_LOG, "a", encoding="utf-8") as f:
-            f.write(entry + "\n")
-    except Exception:
-        pass
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -697,7 +680,6 @@ async def autonomous_loop(
                     ],
                 )
 
-                _debug_dump("PLAN_STEPS", state.pending_plan.get("steps", []))
                 for step in state.pending_plan.get("steps", []):
                     tool_name = step.get("tool", "")
                     args = step.get("params", {})
@@ -711,7 +693,6 @@ async def autonomous_loop(
                     except Exception as exc:
                         result = {"tool": tool_name, "success": False, "error": str(exc)}
                     yield _event_tool_done(result)
-                    _debug_dump("TOOL_RESULT_PLAN", result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     # Build tool result message
@@ -903,7 +884,6 @@ async def autonomous_loop(
                 new_tool_results.append(r)
                 yield _event_tool_done(r)
                 safe_result_map[r.get("_tool_use_id", "")] = r
-                _debug_dump("TOOL_RESULT_SAFE", r)
         state = state.replace(tool_results=new_tool_results)
 
         # ── Step 5: Build assistant message (WITH tool_calls & reasoning for API spec) ──
@@ -920,8 +900,7 @@ async def autonomous_loop(
             state = state.replace(
                 messages=state.messages + [assistant_msg],
             )
-            if tool_blocks:
-                _debug_dump("ASSISTANT_TOOL_CALLS", tool_blocks)
+
 
         # ── Step 6: Interceptor Layer (BEFORE EXCL/BARRIER exec) ───
         if tool_blocks:
@@ -949,7 +928,6 @@ async def autonomous_loop(
                         }
                         new_tool_results.append(result)
                         yield _event_tool_done(result)
-                        _debug_dump("TOOL_RESULT_BLOCKED", result)
                         content = (
                             f"[工具执行失败: {tool_name}]\n"
                             f"对话模式禁止写入操作，工具已被拦截。请向用户说明需要切换到协作模式来完成写入操作。"
@@ -986,7 +964,6 @@ async def autonomous_loop(
 
                     new_tool_results.append(result)
                     yield _event_tool_done(result)
-                    _debug_dump("TOOL_RESULT", result)
                     state = _invalidate_after_write(state, tool_name, result, filtered_tools)
 
                     if result.get("success"):
