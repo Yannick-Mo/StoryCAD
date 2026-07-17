@@ -32,18 +32,19 @@ logger = logging.getLogger(__name__)
 # in the tool class.  The interceptor checks this flag regardless of the
 # hardcoded sets.
 
-# Tool names that write to project data (needs confirmation in cowriter mode
-# when the session phase is "explore")
-_WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE: set[str] = {
-    "create_act", "create_chapter", "create_scene", "create_character",
-    "update_project", "update_act", "update_chapter", "update_scene",
-    "update_character", "create_relation", "update_relation",
-    "write_scene_content", "continue_scene", "rewrite_scene",
-    "expand_selection", "compress_selection",
-    "set_chapter_goal",
-    "call_goal_agent", "call_outline_agent",
-    "create_edge", "update_edge",
-}
+def _get_write_tools_for_explore(tools_registry: dict[str, "BaseTool"] | None = None) -> set[str]:
+    """Derive write tools that need confirmation in explore phase from tool metadata.
+
+    Uses the tool registry's concurrency mode: any EXCLUSIVE tool is a write.
+    Falls back to COWRITER_TOOLS from tool_filter when registry is unavailable.
+    """
+    if tools_registry:
+        return {
+            name for name, tool in tools_registry.items()
+            if tool.is_write_operation
+        }
+    from app.agent.tool_filter import COWRITER_TOOLS
+    return COWRITER_TOOLS
 
 
 # ── Data structures ──────────────────────────────────────────────────────────
@@ -194,7 +195,9 @@ def _needs_confirmation(
 
     # Rule 2: Cowriter explore phase — confirm all writes
     phase = cowriter_session.get("phase", "")
-    if phase == "explore" and tool_name in _WRITE_TOOLS_NEEDING_CONFIRM_IN_EXPLORE:
-        return True
+    if phase == "explore":
+        write_tools = _get_write_tools_for_explore(tools_registry)
+        if tool_name in write_tools:
+            return True
 
     return False

@@ -15,6 +15,7 @@ from pathlib import Path
 import aiofiles
 import yaml
 
+from app.agent.context_compressor import estimate_text_tokens
 from app.agent.prompts.builder import get_prompt_builder
 from app.config import settings
 
@@ -73,20 +74,6 @@ async def _load_persona() -> str:
     return _PERSONA_CACHE
 
 
-# ── Token estimation ───────────────────────────────────────────────────
-
-
-def estimate_tokens(text: str) -> int:
-    """CJK-aware token estimation.  CJK chars ≈ 1.5 tokens, ASCII ≈ 0.25."""
-    cjk = sum(
-        1
-        for c in text
-        if "一" <= c <= "鿿" or "　" <= c <= "〿" or "＀" <= c <= "￯"
-    )
-    ascii_count = len(text) - cjk
-    return int(cjk * 1.5 + ascii_count * 0.25) + 1
-
-
 # ── Context trimming ───────────────────────────────────────────────────
 
 
@@ -104,7 +91,7 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
     used = 0
 
     for sec in sections:
-        tokens = estimate_tokens(sec.text)
+        tokens = estimate_text_tokens(sec.text)
         if sec.tier <= 1:
             result_parts.append(sec.text)
             used += tokens
@@ -119,7 +106,7 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
                     trunc_len = int(len(sec.text) * ratio)
                     truncated = sec.text[:trunc_len] + "\n... [截断]"
                     result_parts.append(truncated)
-                    used += estimate_tokens(truncated)
+                    used += estimate_text_tokens(truncated)
         else:
             if used + tokens <= budget * 0.9:
                 result_parts.append(sec.text)
@@ -135,7 +122,7 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
         )
         tier0_count = sum(1 for s in sections if s.tier == 0)
         tier0_parts = result_parts[:tier0_count]
-        tier0_tokens = sum(estimate_tokens(p) for p in tier0_parts)
+        tier0_tokens = sum(estimate_text_tokens(p) for p in tier0_parts)
         nontier0_parts = result_parts[tier0_count:]
         nontier0_tokens = used - tier0_tokens
 
@@ -151,7 +138,7 @@ def trim_context(sections: list[_ContextSection], budget: int = MAX_SYSTEM_TOKEN
                 trunc_len = int(len(part) * ratio)
                 if trunc_len > 60:
                     truncated_parts.append(part[:trunc_len])
-                    new_used += estimate_tokens(part[:trunc_len])
+                    new_used += estimate_text_tokens(part[:trunc_len])
             result = "\n\n".join(truncated_parts)
             used = new_used
 

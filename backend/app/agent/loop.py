@@ -58,6 +58,9 @@ MODEL_CONTEXT_LIMIT = 900_000
 # ── Tool description cache ────────────────────────────────────────────
 _TOOL_DESC_CACHE: dict[str, str] = {}
 
+# ── Context compression scan tracker ──────────────────────────────────
+_last_scan_count = 0
+
 def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
     keys = tuple(sorted(filtered_tools))
     h = str(hash(keys))
@@ -730,8 +733,13 @@ async def autonomous_loop(
                 # Fall through to LLM for response about rejection
 
         # ── Step 1: Context Management (proactive, with auto-escalation) ──
+        global _last_scan_count
         original_count = len(state.messages)
-        compressed = compress_context(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+        if abs(original_count - _last_scan_count) < 3:
+            compressed = list(state.messages)
+        else:
+            compressed = compress_context(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+            _last_scan_count = original_count
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3
             state = state.replace(
@@ -821,7 +829,7 @@ async def autonomous_loop(
             streaming_executor.discard()
             raise
         except Exception as e:
-            logger.error("LLM streaming error: %s", e, exc_info=True)
+            logger.error("LLM streaming error: {}", e, exc_info=True)
             streaming_executor.discard()
             # Run post-error hooks
             await hook_registry.run("post_error", state=state, llm_client=llm, error=str(e),
@@ -862,8 +870,9 @@ async def autonomous_loop(
                 break
             else:
                 state = decision.get("state", state)
+                new_errors = (state.errors + [str(e)])[-20:]
                 state = state.replace(
-                    errors=state.errors + [str(e)],
+                    errors=new_errors,
                     transition="error_recovery_retry",
                 )
                 delay = decision.get("delay_seconds", 0)
@@ -1058,8 +1067,14 @@ async def autonomous_loop(
             )
             if had_successful_write:
                 state = state.replace(tool_only_turns=0)
+                # Track write-only turns separately to catch infinite write loops
+                state = state.replace(write_only_turns=state.write_only_turns + 1)
+                if state.write_only_turns > 6:
+                    logger.warning("Write-only loop detected — breaking")
+                    yield _event_token("\n\n[连续写入操作已超限，请停止写入并检查项目数据]")
+                    break
             else:
-                state = state.replace(tool_only_turns=state.tool_only_turns + 1)
+                state = state.replace(tool_only_turns=state.tool_only_turns + 1, write_only_turns=0)
                 if state.tool_only_turns > 6:
                     logger.warning("Tool-only loop detected — breaking")
                     yield _event_token("\n\n[连续工具调用已超限，请重新描述你的需求]")

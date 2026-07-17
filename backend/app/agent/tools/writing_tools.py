@@ -9,6 +9,18 @@ from app.storycad.models import Scene, SceneContent
 from app.agent.utils import count_words
 
 
+_WRITE_SCENE_TOOL: WriteSceneContentTool | None = None
+
+
+def _get_write_scene_tool(llm_client=None) -> WriteSceneContentTool:
+    global _WRITE_SCENE_TOOL
+    if _WRITE_SCENE_TOOL is None:
+        _WRITE_SCENE_TOOL = WriteSceneContentTool(llm_client=llm_client)
+    elif llm_client is not None:
+        _WRITE_SCENE_TOOL.llm_client = llm_client
+    return _WRITE_SCENE_TOOL
+
+
 def _fuzzy_locate(content: str, snippet: str, threshold: float = 0.6) -> int:
     """Find *snippet* in *content* using fuzzy matching.
 
@@ -146,7 +158,7 @@ class ContinueSceneTool(BaseTool):
             sc = result.scalar_one_or_none()
             existing = sc.content if sc else ""
             new_content = existing + ("\n\n" if existing else "") + additional
-            writer = WriteSceneContentTool(llm_client=self.llm_client)
+            writer = _get_write_scene_tool(self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()
@@ -184,7 +196,7 @@ class RewriteSceneTool(BaseTool):
             if not scene_obj:
                 return self._not_found("Scene")
             await verify_project_owner(db, scene_obj.project_id, kwargs.get("user_id"))
-            writer = WriteSceneContentTool(llm_client=self.llm_client)
+            writer = _get_write_scene_tool(self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=content)
         except Exception as e:
             await db.rollback()
@@ -237,7 +249,7 @@ class ExpandSelectionTool(BaseTool):
                     correction_hint="请先调用 read_scene 获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
                 )
             new_content = sc.content[:pos] + expanded + sc.content[pos + len(original):]
-            writer = WriteSceneContentTool(llm_client=self.llm_client)
+            writer = _get_write_scene_tool(self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()
@@ -290,7 +302,7 @@ class CompressSelectionTool(BaseTool):
                     correction_hint="请先调用 read_scene 获取场景完整正文，复制需要替换的精确文本后重新调用本工具",
                 )
             new_content = sc.content[:pos] + compressed + sc.content[pos + len(original):]
-            writer = WriteSceneContentTool(llm_client=self.llm_client)
+            writer = _get_write_scene_tool(self.llm_client)
             return await writer.run(db, user_id=kwargs.get("user_id"), scene_id=str(sc_id), content=new_content)
         except Exception as e:
             await db.rollback()

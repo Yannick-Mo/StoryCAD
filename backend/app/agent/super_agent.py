@@ -86,10 +86,13 @@ class SuperAgent:
         response, not structured UI cards.
         """
         tool_results = final_values.get("tool_results", [])
-        visible_results = [
-            tr for tr in tool_results
-            if tr.get("tool") not in ("cowriter_analysis",)
-        ]
+        visible_results = []
+        for tr in tool_results:
+            if isinstance(tr, dict):
+                if tr.get("tool") not in ("cowriter_analysis",):
+                    visible_results.append(tr)
+            else:
+                logger.warning("_emit_tool_events: non-dict in tool_results: type=%s value=%s", type(tr).__name__, str(tr)[:100])
         for tr in visible_results:
             if skip_keys:
                 tid = tr.get("_tool_use_id", "")
@@ -298,7 +301,6 @@ class SuperAgent:
 
         # 8. Autonomous loop dispatch (always)
         assistant_content = ""
-        token_buffer: list[str] = []
         final_values: dict | None = None
         _streaming_tool_results: set[str] = set()
 
@@ -320,7 +322,9 @@ class SuperAgent:
                 elif "_step" in event:
                     yield {"type": "step", "data": event["_step"]}
                 elif "_stream_token" in event:
-                    token_buffer.append(event["_stream_token"])
+                    token = event["_stream_token"]
+                    assistant_content += token
+                    yield {"type": "token", "data": token}
                 elif "_tool_done" in event:
                     yield {
                         "type": "tool_done",
@@ -337,9 +341,12 @@ class SuperAgent:
             raise
         except Exception as exc:
             log.error(
-                "agent_loop_error | error_type=%s | error=%s",
-                type(exc).__name__, exc, exc_info=True,
+                "agent_loop_error | error_type={} | error={}", type(exc).__name__, exc, exc_info=True,
             )
+            yield {
+                "type": "error",
+                "data": json.dumps({"message": f"代理执行出错: {str(exc)[:200]}"}),
+            }
             raise
 
         # 9. Final state fallback
@@ -351,10 +358,15 @@ class SuperAgent:
             return
 
         # 10. Emit tool events
-        async for evt in self._emit_tool_events(
-            final_values, skip_keys=_streaming_tool_results
-        ):
-            yield evt
+        try:
+            async for evt in self._emit_tool_events(
+                final_values, skip_keys=_streaming_tool_results
+            ):
+                yield evt
+        except Exception as exc:
+            log.error("_emit_tool_events failed: {}", exc, exc_info=True)
+            yield {"type": "error", "data": json.dumps({"message": f"工具事件处理出错: {str(exc)[:200]}"})}
+            raise
 
         # 11. State cleanup
         plan_was_confirmed = final_values.get("plan_confirmed", False)
@@ -374,12 +386,8 @@ class SuperAgent:
             cowriter_session=final_values.get("cowriter_session", {}),
         )
 
-        # 13. Flush response tokens
-        if token_buffer:
-            assistant_content = "".join(token_buffer)
-            for token in token_buffer:
-                yield {"type": "token", "data": token}
-        elif final_values:
+        # 13. Fallback: if no tokens were streamed, extract from final state
+        if not assistant_content and final_values:
             messages = final_values.get("messages", [])
             if messages:
                 last = messages[-1]

@@ -69,6 +69,22 @@ def _is_id_source_msg(msg: "Message") -> bool:
     return False
 
 
+def estimate_text_tokens(text: str) -> int:
+    """CJK-aware token estimation for a plain text string.
+
+    CJK chars ≈ 1.5 tokens, ASCII ≈ 0.25 tokens.
+    """
+    if not text:
+        return 0
+    cjk = sum(
+        1
+        for c in text
+        if "一" <= c <= "鿿" or "　" <= c <= "〿" or "＀" <= c <= "￯"
+    )
+    ascii_count = len(text) - cjk
+    return int(cjk * 1.5 + ascii_count * 0.25) + 1
+
+
 def estimate_tokens(messages: list["Message"], model_limit: int = DEFAULT_MODEL_LIMIT) -> int:
     """Estimate the token count of a message list.
 

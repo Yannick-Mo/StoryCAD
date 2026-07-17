@@ -205,6 +205,7 @@ class ConversationMemory:
             return
         if self._redis:
             await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "agent_state", data)
+            await self._redis.expire(f"{_CONV_PREFIX}{conversation_id}", 86400 * 7)
         else:
             async with self._lock:
                 if conversation_id in self._meta:

@@ -72,6 +72,8 @@ class LoopState:
     # not pollute tool-only loop detection, and the retry_count=0 reset
     # at loop.py:848 does not prevent accumulation.
     tool_only_turns: int = 0
+    # Tracks consecutive write-only turns to catch infinite write loops
+    write_only_turns: int = 0
 
     # ── Lifecycle ───────────────────────────────────────────────────
     turn_count: int = 0
@@ -137,6 +139,7 @@ class LoopState:
             budget_warn_level=initial_state.get("budget_warn_level", "") or "",
             # Tool-only loop detection
             tool_only_turns=int(initial_state.get("tool_only_turns", 0) or 0),
+            write_only_turns=int(initial_state.get("write_only_turns", 0) or 0),
             # Lifecycle
             turn_count=int(initial_state.get("_turn_count", 0) or 0),
             _context_loaded=bool(initial_state.get("_context_loaded", False)),
@@ -178,6 +181,7 @@ class LoopState:
             "recovery_state": self.recovery_state,
             "_model_override": self._model_override,
             "tool_only_turns": self.tool_only_turns,
+            "write_only_turns": self.write_only_turns,
             # Token budget
             "budget_total_estimated": self.budget_total_estimated,
             "budget_model_limit": self.budget_model_limit,

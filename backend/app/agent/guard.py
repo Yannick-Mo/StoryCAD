@@ -132,68 +132,20 @@ _INJECTION_BLOCKLIST_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Obfuscation-agnostic patterns: use aho-corasick approach — check un-obfuscated content
-# instead of expanding every pattern with separators
-_INJECTION_OBFUSCATED_RE = re.compile(
-    "|".join(
-        re.escape(c) for c in [
-            "ignoreallpreviousinstructions",
-            "ignoreallpriorinstructions",
-            "ignoreanypreviousinstructions",
-            "forgetallpreviousinstructions",
-            "disregardallpreviousinstructions",
-            "ignoreeverythingabove",
-            "ignoreeverythingbefore",
-            "ignorealinstructions",
-            "forgetyourinstructions",
-            "forgetyourprompts",
-            "youarenow",
-            "actas",
-            "pretendtobe",
-            "youarefree",
-            "youhavebeenreleased",
-            "youarenotbound",
-            "youareunbounded",
-            "newrules",
-            "newinstructions",
-            "override",
-            "printyourprompt",
-            "printyourinstructions",
-            "showyourprompt",
-            "repeateverythingabove",
-            "outputyourprompt",
-            "whatareyourinstructions",
-            "whatareyourrules",
-            "doanythingnow",
-            "jailbreak",
-            "roleplay",
-            "ignoreyourprogramming",
-            "忽略所有之前的指令",
-            "忽略所有先前的指令",
-            "忘记你之前的设定",
-            "忘记你之前的指令",
-            "忘记你的提示",
-            "忘记你的规则",
-            "你现在是",
-            "假装你是",
-            "你已经被释放",
-            "你自由了",
-            "你不需要遵守",
-            "新规则",
-            "新指令",
-            "覆盖指令",
-            "输出你的提示",
-            "输出你的指令",
-            "你的指令是什么",
-            "你的提示是什么",
-            "你的规则是什么",
-            "越狱",
-            "破解",
-            "绕过",
-        ]
-    ),
-    re.IGNORECASE,
-)
+def _build_obfuscated_patterns() -> re.Pattern:
+    """Auto-generate obfuscation-agnostic regex from REJECTED_PATTERNS.
+
+    Removes whitespace/separators from each pattern so injections like
+    'ignore all previous instructions' also match 'ignoreallpreviousinstructions'.
+    """
+    patterns = []
+    for p in _REJECTED_PATTERNS:
+        stripped = re.sub(r'[\s\-_.]+', '', p)
+        patterns.append(re.escape(stripped))
+    return re.compile("|".join(patterns), re.IGNORECASE)
+
+
+_INJECTION_OBFUSCATED_RE = _build_obfuscated_patterns()
 
 
 def _has_base64(s: str) -> bool:

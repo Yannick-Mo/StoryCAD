@@ -123,7 +123,8 @@ def _compress_entity_data(data: Any) -> Any:
 
 class HistoryManager:
     def __init__(self, llm_client: LLMClient | None = None):
-        self.llm = llm_client or LLMClient()
+        from app.llm.client import get_shared_client
+        self.llm = llm_client or get_shared_client()
         self._last_summary_count = 0
 
     async def maybe_summarize(self, messages: list[Message]) -> list[Message]:
