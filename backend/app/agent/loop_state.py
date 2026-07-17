@@ -75,6 +75,9 @@ class LoopState:
     # Tracks consecutive write-only turns to catch infinite write loops
     write_only_turns: int = 0
 
+    # ── Context compression scan tracker ────────────────────────────
+    _last_scan_count: int = 0
+
     # ── Lifecycle ───────────────────────────────────────────────────
     turn_count: int = 0
     _context_loaded: bool = False
@@ -140,6 +143,8 @@ class LoopState:
             # Tool-only loop detection
             tool_only_turns=int(initial_state.get("tool_only_turns", 0) or 0),
             write_only_turns=int(initial_state.get("write_only_turns", 0) or 0),
+            # Context compression tracker
+            _last_scan_count=int(initial_state.get("_last_scan_count", 0) or 0),
             # Lifecycle
             turn_count=int(initial_state.get("_turn_count", 0) or 0),
             _context_loaded=bool(initial_state.get("_context_loaded", False)),
@@ -182,6 +187,7 @@ class LoopState:
             "_model_override": self._model_override,
             "tool_only_turns": self.tool_only_turns,
             "write_only_turns": self.write_only_turns,
+            "_last_scan_count": self._last_scan_count,
             # Token budget
             "budget_total_estimated": self.budget_total_estimated,
             "budget_model_limit": self.budget_model_limit,

@@ -10,7 +10,6 @@ from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.attachments import AttachmentInjector
 from app.agent.guard import InputGuard, RateLimiter
 from app.agent.memory.conversation import ConversationMemory
 from app.agent.memory.history_manager import HistoryManager
@@ -49,7 +48,6 @@ class SuperAgent:
         self.conv_memory = ConversationMemory(redis_client)
         self._history_manager: HistoryManager | None = None
         self.input_guard = InputGuard(rate_limiter=RateLimiter())
-        self.attachment_injector = AttachmentInjector(redis_client)
 
         # Tool registry — cached for _emit_tool_events write detection
         self._tool_registry_cache: dict | None = None
@@ -277,29 +275,10 @@ class SuperAgent:
 
         yield {"type": "conv_id", "data": conversation_id}
 
-        # 7. Attachment injection
-        attachment_state_for_injector = {
-            "project_id": project_id,
-            "conversation_id": conversation_id,
-            "cowriter_session": saved_session or {},
-            "errors": [],
-            "active_skills": active_skills,
-            "pending_plan": saved_pending_plan,
-            "plan_confirmed": saved_plan_confirmed,
-            "_context_loaded": False,  # Always reload context on resume
-            "mode": mode,
-        }
-        turn = len([m for m in history if m.role == "user"]) + 1
-        attachments = await self.attachment_injector.collect(
-            attachment_state_for_injector, [], turn,
-        )
-        if attachments:
-            messages = list(initial_state["messages"])
-            messages.extend(attachments)
-            initial_state["messages"] = messages
-            log.debug("injected %d attachment messages | turn=%d", len(attachments), turn)
-
-        # 8. Autonomous loop dispatch (always)
+        # 7. Autonomous loop dispatch
+        # Per-turn context injection (tool_summary, session_progress, plan_reminder,
+        # error_context) is handled dynamically inside autonomous_loop() via
+        # AttachmentInjector.build_system_sections() — no pre-loop injection needed.
         assistant_content = ""
         final_values: dict | None = None
         _streaming_tool_results: set[str] = set()

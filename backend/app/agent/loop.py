@@ -58,9 +58,6 @@ MODEL_CONTEXT_LIMIT = 900_000
 # ── Tool description cache ────────────────────────────────────────────
 _TOOL_DESC_CACHE: dict[str, str] = {}
 
-# ── Context compression scan tracker ──────────────────────────────────
-_last_scan_count = 0
-
 def _get_tool_descriptions_cached(filtered_tools: dict) -> str:
     keys = tuple(sorted(filtered_tools))
     h = str(hash(keys))
@@ -733,13 +730,12 @@ async def autonomous_loop(
                 # Fall through to LLM for response about rejection
 
         # ── Step 1: Context Management (proactive, with auto-escalation) ──
-        global _last_scan_count
         original_count = len(state.messages)
-        if abs(original_count - _last_scan_count) < 3:
+        if abs(original_count - state._last_scan_count) < 3:
             compressed = list(state.messages)
         else:
             compressed = compress_context(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
-            _last_scan_count = original_count
+            state = state.replace(_last_scan_count=original_count)
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3
             state = state.replace(
