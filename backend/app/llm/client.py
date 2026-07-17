@@ -107,7 +107,7 @@ class LLMClient:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(timeout),
                 proxy=proxy_url if proxy_url else None,
-                trust_env=False,
+                trust_env=True,
             )
             self._owns_client = True
 
