@@ -18,6 +18,23 @@
 
 ---
 
+## 界面截图
+
+<div align="center">
+  <img src="img-ui/网站首页.png" alt="网站首页" width="45%" />
+  <img src="img-ui/幕.png" alt="幕" width="45%" />
+</div>
+<div align="center">
+  <img src="img-ui/章节点.png" alt="章节点" width="45%" />
+  <img src="img-ui/ai助手.png" alt="AI 助手" width="45%" />
+</div>
+<div align="center">
+  <img src="img-ui/灵感生成.png" alt="灵感生成" width="45%" />
+  <img src="img-ui/灵感生成-故事开头.png" alt="灵感生成-故事开头" width="45%" />
+</div>
+
+---
+
 ## 技术栈
 
 | 层 | 技术 |
