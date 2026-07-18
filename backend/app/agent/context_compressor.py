@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from app.llm.types import Message
@@ -347,6 +347,112 @@ def compress_context(
         return reactive_compress(messages, model_limit=model_limit)
 
     return compressed
+
+
+# ── Layer 4: LLM-powered compression (async, real summary) ────────
+
+
+def _format_for_summary(messages: list["Message"]) -> str:
+    """Format messages into a text block suitable for LLM summarization."""
+    lines: list[str] = []
+    for m in messages:
+        role_label = {"user": "用户", "assistant": "AI", "system": "系统", "tool": "工具"}.get(m.role, m.role)
+        content = (m.content or "")[:800]
+        if m.role == "tool":
+            tool_name = content.split("\n")[0] if "\n" in content else content[:80]
+            lines.append(f"[{role_label}]: {tool_name}")
+        else:
+            lines.append(f"[{role_label}]: {content}")
+    return "\n\n".join(lines)
+
+
+_SUMMARY_PROMPT = """你是一个对话摘要助手。请用简洁的中文摘要以下对话内容。
+
+要求：
+- 保留用户的关键需求、创作决策、情节设定
+- 保留 AI 给出的重要建议和已执行的操作
+- 标记任何待办事项或未完成的任务
+- 保留所有实体 ID 和名称（角色名、章节名等）
+- 摘要控制在 300 字以内
+
+对话内容：
+{text}
+
+摘要："""
+
+
+async def async_compress_context(
+    messages: list["Message"],
+    llm_chat: Callable[..., Any],
+    *,
+    model_limit: int = DEFAULT_MODEL_LIMIT,
+    head_count: int | None = None,
+    tail_count: int | None = None,
+) -> list["Message"]:
+    """Async compression using LLM-generated summary for the middle section.
+
+    Falls back to synchronous ``compress_history`` if the LLM call fails,
+    so compression always succeeds (degraded but never skipped).
+    """
+    from app.llm.types import Message as M
+
+    tokens = estimate_tokens(messages, model_limit)
+    ratio = tokens / model_limit if model_limit else 0
+
+    if ratio <= COMPRESS_THRESHOLD:
+        return list(messages)
+
+    h = head_count if head_count is not None else DEFAULT_HEAD_COUNT
+    t = tail_count if tail_count is not None else DEFAULT_TAIL_COUNT
+    if ratio > AGGRESSIVE_THRESHOLD:
+        h = AGGRESSIVE_HEAD_COUNT
+        t = AGGRESSIVE_TAIL_COUNT
+
+    if len(messages) <= h + t + 2:
+        return list(messages)
+
+    head = messages[:h]
+    tail = messages[-t:]
+    middle = messages[h:-t]
+
+    preserved_id_msgs: list[M] = []
+    rest_middle: list[M] = []
+    for msg in middle:
+        if _is_id_source_msg(msg):
+            preserved_id_msgs.append(msg)
+        else:
+            rest_middle.append(msg)
+
+    if not rest_middle:
+        return list(head) + preserved_id_msgs + list(tail)
+
+    summary_text = ""
+    try:
+        formatted = _format_for_summary(rest_middle)
+        prompt = _SUMMARY_PROMPT.format(text=formatted)
+        result = await llm_chat([M(role="user", content=prompt)], max_tokens=1024, temperature=0.3)
+        summary_text = (result.content or "").strip()
+    except Exception:
+        logger.warning("LLM summary failed — falling back to truncation-based compression")
+        return compress_history(messages, model_limit=model_limit, head_count=head_count, tail_count=tail_count)
+
+    summary = M(
+        role="system",
+        content=(
+            "<system-reminder>\n"
+            "[以下为之前对话的 LLM 摘要]\n"
+            f"{summary_text}\n"
+            "</system-reminder>"
+        ),
+    )
+
+    result = list(head) + [summary] + preserved_id_msgs + list(tail)
+    new_tokens = estimate_tokens(result, model_limit)
+    logger.info(
+        "LLM context compressed: %d msgs → %d msgs, ~%d → ~%d tokens",
+        len(messages), len(result), tokens, new_tokens,
+    )
+    return result
 
 
 def build_boundary_message(original_count: int, compressed_count: int, reactive: bool = False) -> "Message":

@@ -20,7 +20,18 @@ export interface SyncResult {
 
 export async function loadEditorData(projectId: string): Promise<EditorMockData> {
   const raw: Record<string, unknown[]> = await apiGet(`/api/projects/${projectId}/editor-data`)
-  return normalizeApiData(raw)
+  const data = normalizeApiData(raw)
+  try {
+    const contents = await loadAllSceneContents(projectId)
+    for (const ch of data.chapters) {
+      for (const sc of ch.scenes) {
+        if (contents[sc.id]) sc.content = contents[sc.id]
+      }
+    }
+  } catch {
+    // Scene content is best-effort; preview/export will show empty if unavailable
+  }
+  return data
 }
 
 export async function syncEditorData(projectId: string, changes: SyncPayload): Promise<SyncResult> {
@@ -34,6 +45,11 @@ export async function syncEditorData(projectId: string, changes: SyncPayload): P
 export async function loadSceneContent(projectId: string, sceneId: string): Promise<string> {
   const data = await apiGet<{ scene_id: string; content: string }>(`/api/projects/${projectId}/scenes/${sceneId}/content`)
   return data.content
+}
+
+export async function loadAllSceneContents(projectId: string): Promise<Record<string, string>> {
+  const data = await apiGet<{ contents: Record<string, string> }>(`/api/projects/${projectId}/scenes/content`)
+  return data.contents
 }
 
 export async function saveSceneContent(projectId: string, sceneId: string, content: string): Promise<{ word_count: number }> {
@@ -161,7 +177,7 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
   }
 
   return {
-    projectTitle: "",
+    projectTitle: (raw.project_title as string) || "",
     acts: acts.map(a => ({ id: a.id, name: a.name, order: a.sort_order || 0, color: a.color || "#8b5cf6" })),
     chapters: Array.from(chMap.values()),
     edges: edges.map(e => ({

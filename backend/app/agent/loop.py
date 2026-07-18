@@ -25,7 +25,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_compressor import (
-    compress_context,
+    async_compress_context,
 )
 from app.agent.hooks import hook_registry
 from app.agent.interceptors import (
@@ -734,7 +734,7 @@ async def autonomous_loop(
         if abs(original_count - state._last_scan_count) < 3:
             compressed = list(state.messages)
         else:
-            compressed = compress_context(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
+            compressed = await async_compress_context(state.messages, llm.chat, model_limit=MODEL_CONTEXT_LIMIT)
             state = state.replace(_last_scan_count=original_count)
         if len(compressed) != original_count:
             reactive = len(compressed) < original_count * 0.3

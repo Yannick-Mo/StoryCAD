@@ -19,7 +19,8 @@ const NODE_W = 176
 const NODE_H = 90
 const ACT_H = 220
 const ACT_GAP = 32
-const CH_PER_ROW = 6
+const CH_PER_ROW = 5
+const ROW_GAP = 24
 
 const EDGE_LABELS: Record<string, string> = {
   causal: '因果',
@@ -107,10 +108,14 @@ export default function PlotCanvas({
     const result: Node[] = []
     let y = 20
     sortedActs.forEach(act => {
-      const chs = chapters.filter(c => c.actId === act.id)
+      const chs = chapters
+        .filter(c => c.actId === act.id)
+        .sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999))
       const count = chs.length
-      const calcW = Math.max(count * 240 + 80, 300)
-      const calcH = ACT_H
+      const cols = Math.min(count, CH_PER_ROW)
+      const rows = Math.max(1, Math.ceil(count / CH_PER_ROW))
+      const calcW = Math.max(cols * 240 + 80, 300)
+      const calcH = Math.max(ACT_H, 60 + rows * NODE_H + (rows - 1) * ROW_GAP + 20)
       const w = act.width ? Math.max(act.width, calcW) : calcW
       const h = act.height ? Math.max(act.height, calcH) : calcH
       const actNodeId = `act-${act.id}`
@@ -119,21 +124,19 @@ export default function PlotCanvas({
         type: 'actGroup',
         position: { x: 20, y },
         data: { label: act.name, color: act.color },
-        // Keep the group node transparent to pointer events. Do not remove this:
-        // edge/node clicks inside the visual group depend on events reaching the
-        // React Flow edge/node layers. Group blank-area drag/resize is handled
-        // by pane coordinate hit tests below.
         style: { width: w, height: h, pointerEvents: 'none' },
         dragHandle: '.act-drag-handle',
         selectable: false,
       })
       chs.forEach((ch, i) => {
+        const row = Math.floor(i / CH_PER_ROW)
+        const col = i % CH_PER_ROW
         result.push({
           id: ch.id,
           type: 'chapter',
           parentId: actNodeId,
           extent: 'parent',
-          position: { x: i * 240 + 40, y: 60 },
+          position: { x: col * 240 + 40, y: 60 + row * (NODE_H + ROW_GAP) },
           data: {
             actId: ch.actId,
             actColor: act.color,
@@ -161,8 +164,8 @@ export default function PlotCanvas({
       const a = getAbsPos(srcNode, initialNodes)
       const b = getAbsPos(tgtNode, initialNodes)
 
-      const sourceHandle = e.sourceHandle ?? getBestHandle(a, b).sourceHandle
-      const targetHandle = e.targetHandle ?? getBestHandle(a, b).targetHandle
+      const sourceHandle = e.sourceHandle ?? getBestHandle(a, b, isTimeline).sourceHandle
+      const targetHandle = e.targetHandle ?? getBestHandle(a, b, isTimeline).targetHandle
 
       const isTimeline = e.type === 'timeline'
       const isSelected = selection.type === 'edge' && selection.id === e.id
@@ -533,8 +536,8 @@ export default function PlotCanvas({
         onInit={(instance) => { rfRef.current = instance }}
         deleteKeyCode="Delete"
         fitView
-        minZoom={0.3}
-        maxZoom={2}
+        minZoom={0.05}
+        maxZoom={5}
         connectionRadius={48}
         proOptions={{ hideAttribution: true }}
       >

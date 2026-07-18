@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useResizePanel } from '../../../hooks/useResizePanel'
-import { sendMessage, getConversations } from '../../../api/ai_v2'
+import { sendMessage, getConversations, getConversation, compressContext } from '../../../api/ai_v2'
 import type { Conversation } from '../../../api/ai_v2'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -38,7 +38,7 @@ interface AiPanelProps {
 
 interface DisplayMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
 }
 
@@ -179,6 +179,29 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     setStep(null)
   }, [])
 
+  const addSystemMsg = useCallback((text: string) => {
+    setMessages(prev => [...prev, { id: generateId(), role: 'system', content: text }])
+  }, [])
+
+  const loadConversation = useCallback(async (convId: string) => {
+    setConversationId(convId)
+    convIdRef.current = convId
+    setLoading(true)
+    setError(null)
+    try {
+      const detail = await getConversation(projectId, convId)
+      setMessages(detail.messages.map(m => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载对话失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
   const clear = useCallback(() => {
     setConversationId(null)
     convIdRef.current = null
@@ -200,6 +223,8 @@ function useAiChat(projectId: string, contextView: string, contextId?: string) {
     toolResults, setToolResults,
     send,
     abort,
+    addSystemMsg,
+    loadConversation,
     clear,
   }
 }
@@ -246,6 +271,15 @@ const markdownComponents: Components = {
 }
 
 function MessageBubble({ msg }: { msg: DisplayMessage }) {
+  if (msg.role === 'system') {
+    return (
+      <div className="flex justify-center select-text">
+        <div className="text-xs text-gray-500 italic text-center max-w-full px-2 py-1">
+          {msg.content}
+        </div>
+      </div>
+    )
+  }
   const isUser = msg.role === 'user'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} select-text`}>
@@ -388,8 +422,27 @@ export default function AiChatPanel({
     }
   }
 
+  const [compressConfirm, setCompressConfirm] = useState(false)
+  const [convOpen, setConvOpen] = useState(false)
+
+  const handleCompress = async () => {
+    setCompressConfirm(false)
+    if (!chat.conversationId) return
+    try {
+      const result = await compressContext(projectId, chat.conversationId)
+      if (result.compressed && result.saved_percent !== undefined) {
+        chat.addSystemMsg(`上下文已压缩：${result.before?.messages} 条 → ${result.after?.messages} 条，节省约 ${result.saved_percent}% token`)
+      } else {
+        chat.addSystemMsg(result.detail || '上下文压缩完成')
+      }
+    } catch (e) {
+      chat.addSystemMsg('压缩失败：' + (e instanceof Error ? e.message : '未知错误'))
+    }
+  }
+
   const handleNewChat = () => {
     chat.clear()
+    setConvOpen(false)
   }
 
   return (
@@ -401,15 +454,44 @@ export default function AiChatPanel({
       />
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-12 border-b border-gray-800 shrink-0 bg-gray-950/80">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-amber-100">{contextLabel}</h3>
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Conversation switcher — always visible when conversations exist */}
+          {chat.conversations.length > 0 ? (
+            <div className="relative">
+              <button onClick={() => setConvOpen(!convOpen)} className="flex items-center gap-1 text-sm font-medium truncate max-w-[140px] hover:text-amber-400 transition-colors" title="切换对话">
+                <span className="truncate text-amber-100">
+                  {chat.conversationId
+                    ? (chat.conversations.find(c => c.id === chat.conversationId)?.title || '当前对话')
+                    : '选择对话'}
+                </span>
+                <span className="text-gray-500 text-xs shrink-0">{convOpen ? '▲' : '▼'}</span>
+              </button>
+              {convOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setConvOpen(false)} />
+                  <div className="absolute top-full left-0 mt-1 z-50 w-52 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+                    {chat.conversations.map(c => (
+                      <button key={c.id} onClick={() => { chat.loadConversation(c.id); setConvOpen(false) }}
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${c.id === chat.conversationId ? 'bg-amber-600/20 text-amber-400' : 'text-gray-300 hover:bg-gray-800'}`}
+                      >
+                        <div className="truncate">{c.title || '未命名对话'}</div>
+                        <div className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleDateString()}</div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <span className="text-sm font-medium text-amber-100">{contextLabel}</span>
+          )}
           <button
             onClick={() => {
               const newMode = chat.mode === 'chat' ? 'cowriter' : 'chat'
               chat.setMode(newMode)
               chat.setPendingPlan(null)
             }}
-            className={`text-[10px] px-2 py-0.5 rounded transition-colors flex items-center gap-1 ${
+            className={`text-[10px] px-2 py-0.5 rounded transition-colors flex items-center gap-1 shrink-0 ${
               chat.mode === 'cowriter'
                 ? 'bg-amber-700 text-amber-100 hover:bg-amber-600'
                 : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700'
@@ -420,15 +502,17 @@ export default function AiChatPanel({
             {chat.mode === 'cowriter' ? UI_TEXT.cowriter : UI_TEXT.chat}
           </button>
           {chat.conversationId && (
-            <button
-              onClick={handleNewChat}
-              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
-            >
-              {UI_TEXT.newConversation}
-            </button>
+            <button onClick={() => setCompressConfirm(true)}
+              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-amber-400 hover:bg-gray-700 transition-colors shrink-0"
+              title="压缩上下文，节省 token">压缩</button>
           )}
         </div>
-        <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">x</button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={handleNewChat}
+            className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
+            title="新建对话">{UI_TEXT.newConversation}</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">x</button>
+        </div>
       </div>
 
       {/* Messages area */}
@@ -488,6 +572,22 @@ export default function AiChatPanel({
           </div>
         )}
       </div>
+
+      {/* Compress confirmation */}
+      {compressConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" onClick={() => setCompressConfirm(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 w-80 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h4 className="text-sm font-medium text-gray-200 mb-2">压缩上下文？</h4>
+            <p className="text-xs text-gray-400 leading-relaxed mb-4">
+              将把之前的对话内容压缩为摘要以节省 token。之后的 AI 回复将根据摘要理解上下文，部分细节可能丢失。
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCompressConfirm(false)} className="px-3 py-1.5 rounded text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">取消</button>
+              <button onClick={handleCompress} className="px-3 py-1.5 rounded text-xs bg-amber-600 text-black hover:bg-amber-500 transition-colors">确认压缩</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Resize handle (input top edge) */}
       <div

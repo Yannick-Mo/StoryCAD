@@ -235,6 +235,22 @@ class ConversationMemory:
                 if conversation_id in self._store and self._store[conversation_id]:
                     self._store[conversation_id].pop()
 
+    async def replace_history(self, conversation_id: str, messages: list[Message]) -> None:
+        """Atomically replace all stored messages for a conversation."""
+        dicts = [_msg_to_dict(m) for m in messages]
+        if self._redis:
+            pipe = self._redis.pipeline()
+            key = f"{_CONV_MSGS_PREFIX}{conversation_id}"
+            pipe.delete(key)
+            for d in dicts:
+                pipe.rpush(key, json.dumps(d))
+            pipe.expire(key, 86400 * 7)
+            await pipe.execute()
+        else:
+            async with self._lock:
+                self._store[conversation_id] = dicts
+                self._store_access[conversation_id] = time.time()
+
     async def delete_conversation(self, project_id: str, user_id: str, conversation_id: str) -> bool:
         if self._redis:
             belongs = await self._redis.sismember(

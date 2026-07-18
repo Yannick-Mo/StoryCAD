@@ -61,6 +61,7 @@ class StoryCADRepository:
         )
         proj = proj_result.scalar_one_or_none()
         if proj:
+            result["project_title"] = proj.title or ""
             result["global_settings"] = proj.global_settings or ""
 
         return result
@@ -135,7 +136,6 @@ class StoryCADRepository:
     # ============================================================
 
     async def get_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID) -> str | None:
-        # Verify scene belongs to project before returning content
         scene = await self.db.execute(
             select(Scene).where(Scene.id == scene_id, Scene.project_id == project_id)
         )
@@ -146,6 +146,12 @@ class StoryCADRepository:
         )
         sc = result.scalar_one_or_none()
         return sc.content if sc else None
+
+    async def get_all_scene_contents(self, project_id: uuid.UUID) -> dict[str, str]:
+        result = await self.db.execute(
+            select(SceneContent).where(SceneContent.project_id == project_id)
+        )
+        return {str(sc.scene_id): sc.content for sc in result.scalars().all()}
 
     async def save_scene_content(self, scene_id: uuid.UUID, project_id: uuid.UUID, content: str):
         # Verify scene belongs to project

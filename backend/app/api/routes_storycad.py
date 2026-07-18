@@ -55,6 +55,18 @@ async def sync_editor_data(
 # Scene content (lazy-loaded large text)
 # ============================================================
 
+@router.get("/scenes/content")
+async def get_all_scene_contents(
+    project_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_owner(project_id, current_user, db)
+    repo = await _get_repo(db)
+    contents = await repo.get_all_scene_contents(project_id)
+    return {"contents": contents}
+
+
 @router.get("/scenes/{scene_id}/content")
 async def get_scene_content(
     project_id: uuid.UUID,

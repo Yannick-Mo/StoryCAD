@@ -12,6 +12,7 @@ from pydantic import BaseModel, field_validator
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.context_compressor import async_compress_context, estimate_tokens
 from app.agent.privacy import sanitise_event
 from app.agent.super_agent import SuperAgent
 from app.api.deps import get_db, get_current_user, get_redis
@@ -143,6 +144,47 @@ async def chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class CompressRequest(BaseModel):
+    conversation_id: str
+
+
+@router.post("/projects/{project_id}/chat/compress")
+async def compress_context(
+    project_id: uuid.UUID,
+    req: CompressRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis_client: Redis | None = Depends(get_redis),
+):
+    await _verify_project_owner(db, project_id, user)
+    llm_client = get_shared_client().fork()
+    agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
+    history = await agent.conv_memory.get_history(req.conversation_id)
+    if not history:
+        return {"compressed": False, "detail": "对话历史为空"}
+
+    before_count = len(history)
+    before_tokens = estimate_tokens(history)
+
+    compressed = await async_compress_context(history, llm_client.chat)
+    await agent.conv_memory.replace_history(req.conversation_id, compressed)
+    # Also save a boundary system message so the next turn shows compression happened
+    from app.agent.context_compressor import build_boundary_message
+    boundary = build_boundary_message(before_count, len(compressed))
+    await agent.conv_memory.save_message(req.conversation_id, boundary)
+
+    after_count = len(compressed)
+    after_tokens = estimate_tokens(compressed)
+    saved_pct = round((1 - after_tokens / max(before_tokens, 1)) * 100)
+
+    return {
+        "compressed": True,
+        "before": {"messages": before_count, "tokens": before_tokens},
+        "after": {"messages": after_count, "tokens": after_tokens},
+        "saved_percent": saved_pct,
+    }
 
 
 @router.post("/projects/{project_id}/conversations")

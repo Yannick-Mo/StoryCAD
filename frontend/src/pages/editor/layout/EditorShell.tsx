@@ -199,15 +199,30 @@ export default function EditorShell({ projectId }: { projectId: string }) {
   const handleExport = () => {
     const completed = getCompletedChain(data.chapters, data.edges, data.acts)
     const allChapters = completed.flat()
-    const text = allChapters.map(ch => {
-      const scenes = ch.scenes.filter(s => s.content).map(s => s.content).join('\n\n')
-      return `${ch.title}\n${ch.goal}\n\n${scenes}\n\n${'-'.repeat(16)}\n\n`
-    }).join('')
-    const blob = new Blob([text], { type: 'text/plain' })
+    let lastActId = ''
+    const parts: string[] = []
+    for (const ch of allChapters) {
+      const act = data.acts.find(a => a.id === ch.actId)
+      if (act && act.id !== lastActId) {
+        parts.push(`\n${'='.repeat(40)}\n${act.name}\n${'='.repeat(40)}\n`)
+        lastActId = act.id
+      }
+      parts.push(`\n## ${ch.title}\n`)
+      if (ch.goal) parts.push(`目标：${ch.goal}\n\n`)
+      for (const scene of ch.scenes) {
+        if (scene.content) {
+          if (scene.title) parts.push(`【${scene.title}】\n\n`)
+          parts.push(scene.content + '\n\n')
+        }
+      }
+    }
+    const text = parts.join('')
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = '小说已完成内容.txt'
+    const title = data.projectTitle || '已完成内容'
+    a.download = `${title}.txt`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -512,7 +527,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
         })()}
 
         {/* Modals */}
-        <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} onClose={() => setPreviewOpen(false)} />
+        <PreviewModal open={previewOpen} chapters={getCompletedChain(data.chapters, data.edges, data.acts).flat()} acts={data.acts} onClose={() => setPreviewOpen(false)} />
 
         <GlobalSettingsModal
           open={globalSettingsOpen}

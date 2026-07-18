@@ -239,3 +239,29 @@ export async function createConversation(projectId: string): Promise<{ conversat
   }
   return resp.json()
 }
+
+export interface CompressResult {
+  compressed: boolean
+  detail?: string
+  before?: { messages: number; tokens: number }
+  after?: { messages: number; tokens: number }
+  saved_percent?: number
+}
+
+export async function compressContext(projectId: string, conversationId: string): Promise<CompressResult> {
+  const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/chat/compress`, {
+    method: 'POST',
+    headers: {
+      ...(await authHeaders()),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ conversation_id: conversationId }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    let detail = `Compress failed: ${resp.status}`
+    try { detail = JSON.parse(text).detail || detail } catch {}
+    throw new Error(detail)
+  }
+  return resp.json()
+}
