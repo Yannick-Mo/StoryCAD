@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useResizePanel } from '../../../hooks/useResizePanel'
-import { sendMessage, getConversations, getConversation, compressContext } from '../../../api/ai_v2'
+import { sendMessage, getConversations, getConversation, compressContext, renameConversation, deleteConversation } from '../../../api/ai_v2'
 import type { Conversation } from '../../../api/ai_v2'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 11)
@@ -424,6 +425,10 @@ export default function AiChatPanel({
 
   const [compressConfirm, setCompressConfirm] = useState(false)
   const [convOpen, setConvOpen] = useState(false)
+  const [renameId, setRenameId] = useState<string | null>(null)
+  const [renameVal, setRenameVal] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   const handleCompress = async () => {
     setCompressConfirm(false)
@@ -444,6 +449,33 @@ export default function AiChatPanel({
     chat.clear()
     setConvOpen(false)
   }
+
+  const handleRename = async (convId: string) => {
+    const title = renameVal.trim()
+    if (!title) { setRenameId(null); return }
+    try {
+      await renameConversation(projectId, convId, title)
+      chat.setConversations(prev => prev.map(c => c.id === convId ? { ...c, title } : c))
+    } catch (e) {
+      console.error('rename failed', e)
+    }
+    setRenameId(null)
+  }
+
+  const handleDelete = async () => {
+    const convId = deleteTarget
+    setDeleteTarget(null)
+    if (!convId) return
+    try {
+      await deleteConversation(projectId, convId)
+      chat.setConversations(prev => prev.filter(c => c.id !== convId))
+      if (chat.conversationId === convId) chat.clear()
+    } catch (e) {
+      console.error('delete failed', e)
+    }
+  }
+
+  useEffect(() => { if (renameId) renameInputRef.current?.focus() }, [renameId])
 
   return (
     <div className="fixed right-0 top-0 h-full z-50 flex flex-col bg-gray-900 border-l border-gray-800 shadow-2xl" style={{ width }}>
@@ -469,14 +501,27 @@ export default function AiChatPanel({
               {convOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setConvOpen(false)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 w-52 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+                  <div className="absolute top-full left-0 mt-1 z-50 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
                     {chat.conversations.map(c => (
-                      <button key={c.id} onClick={() => { chat.loadConversation(c.id); setConvOpen(false) }}
-                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${c.id === chat.conversationId ? 'bg-amber-600/20 text-amber-400' : 'text-gray-300 hover:bg-gray-800'}`}
-                      >
-                        <div className="truncate">{c.title || '未命名对话'}</div>
-                        <div className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleDateString()}</div>
-                      </button>
+                      <div key={c.id} className={`flex items-center gap-1 px-3 py-2 text-xs transition-colors ${c.id === chat.conversationId ? 'bg-amber-600/20 text-amber-400' : 'text-gray-300 hover:bg-gray-800'}`}>
+                        {renameId === c.id ? (
+                          <input ref={renameInputRef} value={renameVal} onChange={e => setRenameVal(e.target.value)}
+                            onBlur={() => handleRename(c.id)} onKeyDown={e => { if (e.key === 'Enter') handleRename(c.id); if (e.key === 'Escape') setRenameId(null) }}
+                            className="flex-1 bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-xs text-gray-100 outline-none"
+                            onClick={e => e.stopPropagation()} />
+                        ) : (
+                          <>
+                            <button className="flex-1 text-left min-w-0" onClick={() => { chat.loadConversation(c.id); setConvOpen(false) }}>
+                              <div className="truncate">{c.title || '未命名对话'}</div>
+                              <div className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleDateString()}</div>
+                            </button>
+                            <button onClick={e => { e.stopPropagation(); setRenameId(c.id); setRenameVal(c.title || ''); setConvOpen(true) }}
+                              className="shrink-0 text-gray-600 hover:text-amber-400 transition-colors px-0.5" title="重命名">✏️</button>
+                            <button onClick={e => { e.stopPropagation(); setDeleteTarget(c.id); setConvOpen(true) }}
+                              className="shrink-0 text-gray-600 hover:text-red-400 transition-colors px-0.5" title="删除">✕</button>
+                          </>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </>
@@ -572,6 +617,17 @@ export default function AiChatPanel({
           </div>
         )}
       </div>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除对话"
+        message="删除后对话记录不可恢复，确定删除？"
+        confirmText="确认删除"
+        cancelText="取消"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* Compress confirmation */}
       {compressConfirm && (

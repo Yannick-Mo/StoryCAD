@@ -233,6 +233,26 @@ async def get_conversation(
     return conv
 
 
+class RenameRequest(BaseModel):
+    title: str
+
+
+@router.patch("/projects/{project_id}/conversations/{conv_id}")
+async def rename_conversation(
+    project_id: uuid.UUID,
+    conv_id: str,
+    req: RenameRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis_client: Redis | None = Depends(get_redis),
+):
+    await _verify_project_owner(db, project_id, user)
+    llm_client = get_shared_client()
+    agent = SuperAgent(db=db, redis_client=redis_client, llm_client=llm_client)
+    await agent.conv_memory.rename_conversation(conv_id, req.title)
+    return {"ok": True}
+
+
 @router.delete("/projects/{project_id}/conversations/{conv_id}")
 async def delete_conversation(
     project_id: uuid.UUID,

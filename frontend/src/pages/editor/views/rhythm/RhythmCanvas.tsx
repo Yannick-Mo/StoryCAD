@@ -111,9 +111,9 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
   }, [rhythms, chapters, onSelectChapter])
 
   return (
-    <div className="h-full w-full flex flex-col overflow-auto p-4">
-      {/* Chart */}
-      <div className="flex-1 min-h-0 overflow-x-auto">
+    <div className="absolute inset-0 flex flex-col overflow-hidden p-4">
+      {/* Chart — always visible */}
+      <div className="shrink-0 overflow-x-auto pb-2">
         <svg width={totalW} height={PAD_T + CHART_H + PAD_B} className="shrink-0">
           {/* Y axis grid lines */}
           {[0, 2, 4, 6, 8, 10].map(v => (
@@ -196,8 +196,8 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
         </div>
       </div>
 
-      {/* Table */}
-      <div className="shrink-0 mt-4 border-t border-gray-800 pt-3">
+      {/* Table — scrollable */}
+      <div className="flex-1 min-h-0 overflow-y-auto mt-4 border-t border-gray-800 pt-3">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-gray-500 border-b border-gray-800">
@@ -229,38 +229,38 @@ export default function RhythmCanvas({ projectId, rhythms, chapters, acts, selec
             })}
           </tbody>
         </table>
+
+        {analysisResult && (
+          <div className="mt-4 p-3 rounded-lg bg-gray-800/60 border border-amber-800/30 shrink-0">
+            <h4 className="text-xs font-semibold text-amber-400 mb-2">📊 AI 分析结果</h4>
+            {(analysisResult.chapters.some(c => c.anomaly_label) || analysisResult.overall_assessment) && (
+              <div className="mb-2 space-y-1">
+                {analysisResult.chapters.filter(c => c.anomaly_label).map((ch, i) => (
+                  <div key={i} className="text-xs px-2 py-1 rounded bg-yellow-900/30 text-yellow-300">
+                    🟡 {ch.title}: {ch.anomaly_label}
+                    {ch.ai_note && <span className="text-gray-400 block mt-0.5">💡 {ch.ai_note}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {analysisResult.overall_assessment && (
+              <p className="text-xs text-gray-400 leading-relaxed mt-2">{analysisResult.overall_assessment}</p>
+            )}
+          </div>
+        )}
+
+        {editChapter && (
+          <RhythmEditPanel
+            chapterTitle={editChapter.title}
+            initialValues={editChapter.values}
+            onSave={(values) => {
+              onSaveRhythm(editChapter.id, values)
+              setEditChapter(null)
+            }}
+            onClose={() => setEditChapter(null)}
+          />
+        )}
       </div>
-
-      {analysisResult && (
-        <div className="mt-4 p-3 rounded-lg bg-gray-800/60 border border-amber-800/30">
-          <h4 className="text-xs font-semibold text-amber-400 mb-2">📊 AI 分析结果</h4>
-          {(analysisResult.chapters.some(c => c.anomaly_label) || analysisResult.overall_assessment) && (
-            <div className="mb-2 space-y-1">
-              {analysisResult.chapters.filter(c => c.anomaly_label).map((ch, i) => (
-                <div key={i} className="text-xs px-2 py-1 rounded bg-yellow-900/30 text-yellow-300">
-                  🟡 {ch.title}: {ch.anomaly_label}
-                  {ch.ai_note && <span className="text-gray-400 block mt-0.5">💡 {ch.ai_note}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-          {analysisResult.overall_assessment && (
-            <p className="text-xs text-gray-400 leading-relaxed mt-2">{analysisResult.overall_assessment}</p>
-          )}
-        </div>
-      )}
-
-      {editChapter && (
-        <RhythmEditPanel
-          chapterTitle={editChapter.title}
-          initialValues={editChapter.values}
-          onSave={(values) => {
-            onSaveRhythm(editChapter.id, values)
-            setEditChapter(null)
-          }}
-          onClose={() => setEditChapter(null)}
-        />
-      )}
     </div>
   )
 }

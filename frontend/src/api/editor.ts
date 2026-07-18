@@ -190,20 +190,22 @@ function normalizeApiData(raw: Record<string, unknown[]>): EditorMockData {
       targetHandle: e.target_handle || undefined,
     })),
     characters: Array.from(charMap.values()),
-    rhythms: (raw.rhythms || []).map((r: any) => {
-      const chIdx = chapters.findIndex((c: any) => c.id === r.chapter_id)
-      return {
-        id: r.id,
-        chapterId: r.chapter_id,
-        chapterIndex: chIdx >= 0 ? chIdx : 0,
-        label: `${chIdx >= 0 ? `第${chIdx + 1}章` : '?'}`,
-        action: r.action,
-        suspense: r.suspense,
-        emotion: r.emotion,
-        humor: r.humor,
-        intensity: r.intensity,
-      }
-    }),
+    rhythms: (raw.rhythms || [])
+      .map((r: any) => {
+        const chIdx = chapters.findIndex((c: any) => c.id === r.chapter_id)
+        return {
+          id: r.id,
+          chapterId: r.chapter_id,
+          chapterIndex: chIdx >= 0 ? chIdx : 0,
+          label: `${chIdx >= 0 ? `第${chIdx + 1}章` : '?'}`,
+          action: r.action,
+          suspense: r.suspense,
+          emotion: r.emotion,
+          humor: r.humor,
+          intensity: r.intensity,
+        }
+      })
+      .sort((a, b) => a.chapterIndex - b.chapterIndex),
     themes: themes.map((t, i) => ({
       id: t.id,
       name: t.name,

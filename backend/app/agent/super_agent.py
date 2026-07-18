@@ -175,7 +175,10 @@ class SuperAgent:
             conversation_id = await self.conv_memory.create_conversation(
                 project_id, user_id
             )
-            log.info("created conversation | conv_id=%s", conversation_id)
+            # Auto-name: use first message (truncated) as title
+            title = (message[:60] + '…') if len(message) > 60 else message
+            await self.conv_memory.rename_conversation(conversation_id, title)
+            log.info("created conversation | conv_id=%s | title=%s", conversation_id, title)
 
         # 3. History loading
         history = await self.conv_memory.get_history(conversation_id)

@@ -215,6 +215,15 @@ export async function getConversation(projectId: string, convId: string): Promis
   return resp.json()
 }
 
+export async function renameConversation(projectId: string, convId: string, title: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
+    method: 'PATCH',
+    headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+  if (!resp.ok) throw new Error(await parseError(resp))
+}
+
 export async function deleteConversation(projectId: string, convId: string): Promise<void> {
   const resp = await fetch(`${API_BASE}/api/v2/projects/${projectId}/conversations/${convId}`, {
     method: 'DELETE',

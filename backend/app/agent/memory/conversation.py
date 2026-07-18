@@ -91,6 +91,14 @@ class ConversationMemory:
                 self._store_access[conv_id] = now
         return conv_id
 
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        if self._redis:
+            await self._redis.hset(f"{_CONV_PREFIX}{conversation_id}", "title", title)
+        else:
+            async with self._lock:
+                if conversation_id in self._meta:
+                    self._meta[conversation_id]["title"] = title
+
     async def get_or_create_conversation(self, project_id: str, user_id: str, conversation_id: str | None = None, title: str = "") -> tuple[str, bool]:
         """Return (conversation_id, is_new). Atomic check-and-create."""
         if conversation_id:
