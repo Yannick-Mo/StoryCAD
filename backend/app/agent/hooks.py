@@ -113,9 +113,9 @@ hook_registry = HookRegistry()
 # ── Built-in hooks ──────────────────────────────────────────────────
 
 
-@hook_registry.register("post_turn", name="log_token_usage")
-async def _log_token_usage(**kwargs: Any) -> None:
-    """Log token usage and timing after each turn."""
+@hook_registry.register("post_turn", name="log_turn_metrics")
+async def _log_turn_metrics(**kwargs: Any) -> None:
+    """Log timing and message count after each turn."""
     state = kwargs.get("state")
     llm_client = kwargs.get("llm_client")
     turn_start = kwargs.get("turn_start")

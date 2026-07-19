@@ -1,47 +1,7 @@
 // frontend/src/api/ai.ts
-import { apiPost, getToken } from './auth'
+import { getToken } from './auth'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
-
-export interface AiGenerateRequest {
-  chapter_id: string
-  mode: 'goal' | 'outline'
-  prompt: string
-}
-
-export interface GoalResult {
-  goal: string
-  reasoning: string
-}
-
-export interface SceneOutlineItem {
-  title: string
-  pov_character: string
-  setting: string
-  scene_time: string
-  summary: string
-}
-
-export interface OutlineResult {
-  planning: string
-  scenes: SceneOutlineItem[]
-}
-
-export type AiResult = GoalResult | OutlineResult
-
-export async function generateAI(
-  projectId: string,
-  request: AiGenerateRequest,
-): Promise<AiResult> {
-  return apiPost<AiResult>(
-    `/api/projects/${projectId}/ai/generate`,
-    request,
-  )
-}
-
-// ============================================================
-// Create project from material (SSE streaming)
-// ============================================================
 
 export interface CreateMaterialRequest {
   title: string

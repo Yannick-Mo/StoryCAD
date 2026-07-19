@@ -232,7 +232,6 @@ class TestListThenWriteScenario:
         "create_character", "create_act", "create_project_from_material",
         "create_theme", "set_chapter_goal", "set_chapter_rhythm",
         "link_theme_chapter", "unlink_theme_chapter",
-        "call_goal_agent", "call_outline_agent",
         "update_project",
     }
 

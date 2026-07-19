@@ -53,6 +53,28 @@ def _get_static_section(name: str) -> str:
     return builder.get_static_section(name)
 
 
+_COWRITER_PERSONA_CACHE: str | None = None
+
+
+async def _load_cowriter_persona() -> str:
+    """Lazily load & cache the cowriter persona from cowriter.yaml."""
+    global _COWRITER_PERSONA_CACHE
+    if _COWRITER_PERSONA_CACHE is not None:
+        return _COWRITER_PERSONA_CACHE
+
+    cowriter_path = _PROMPT_DIR / "cowriter.yaml"
+    try:
+        async with aiofiles.open(cowriter_path, encoding="utf-8") as f:
+            content = await f.read()
+        data = await asyncio.to_thread(yaml.safe_load, content)
+        _COWRITER_PERSONA_CACHE = (data or {}).get("system", "")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _COWRITER_PERSONA_CACHE = ""
+    return _COWRITER_PERSONA_CACHE
+
+
 async def _load_persona() -> str:
     """Lazily load & cache the persona prompt from persona.yaml (single source of truth)."""
     global _PERSONA_CACHE
@@ -233,6 +255,10 @@ async def build_system_prompt(state: dict) -> str:
     success_count = sum(1 for r in tool_results if r.get("success"))
     total_count = len(tool_results)
 
+    available_skills = project_ctx.get("available_skills", [])
+    active_skills = state.get("active_skills", [])
+    recent_hint = project_ctx.get("_recent_scenes_hint", "")
+
     persona = await _load_persona()
     sections: list[_ContextSection] = []
 
@@ -247,8 +273,21 @@ async def build_system_prompt(state: dict) -> str:
 
     # Tier 1 — high: compact stats, tool results, plan, errors
     if project_structure:
+        chars_count = len(project_ctx.get("characters", []))
+        themes_count = len(project_ctx.get("themes", []))
+        rels_count = len(project_ctx.get("relations", []))
+        edges_count = len(project_ctx.get("edges", []))
+        stats_parts = [f"项目规模：{project_structure}"]
+        if chars_count:
+            stats_parts.append(f"{chars_count}角色")
+        if themes_count:
+            stats_parts.append(f"{themes_count}主题")
+        if rels_count:
+            stats_parts.append(f"{rels_count}条关系")
+        if edges_count:
+            stats_parts.append(f"{edges_count}条连线")
         sections.append(
-            _ContextSection(tier=1, label="project_stats", text=f"项目规模：{project_structure}")
+            _ContextSection(tier=1, label="project_stats", text=" | ".join(stats_parts))
         )
 
     if tool_results:
@@ -277,6 +316,42 @@ async def build_system_prompt(state: dict) -> str:
             plan_lines.append(f"{i}. {step.get('description') or step.get('tool', '')}")
         plan_lines.append("请询问用户确认是否执行此计划。")
         sections.append(_ContextSection(tier=1, label="pending_plan", text="\n".join(plan_lines)))
+
+    # Recent scenes hint
+    if recent_hint:
+        sections.append(_ContextSection(tier=1, label="recent_scenes", text=recent_hint))
+
+    # Available skills
+    if available_skills:
+        skill_lines = ["\n# --- 可用写作技能 ---"]
+        for s in available_skills:
+            name = s.get("name", "?")
+            desc = s.get("description", "")
+            when = s.get("when_to_use", "")
+            if when:
+                skill_lines.append(f"- {name}: {desc}（适用场景：{when[:200]}）")
+            else:
+                skill_lines.append(f"- {name}: {desc}")
+        sections.append(_ContextSection(tier=1, label="available_skills", text="\n".join(skill_lines)))
+
+    # Active skills prompts
+    if active_skills and state.get("project_id"):
+        try:
+            from app.knowledge.skill_engine import _shared_engine as _skill_engine
+            merged_prompts = await _skill_engine.get_merged_prompts(active_skills)
+            if merged_prompts:
+                prompt_lines = ["# --- 当前已激活技能写作指导 ---"]
+                for key, val in merged_prompts.items():
+                    prompt_lines.append(f"\n## {key}\n{val.strip()}")
+                sections.append(_ContextSection(tier=1, label="active_skills", text="\n".join(prompt_lines)))
+        except Exception:
+            pass
+
+    # Cowriter persona
+    if cowriter_active:
+        persona_text = await _load_cowriter_persona()
+        if persona_text:
+            sections.append(_ContextSection(tier=0, label="cowriter_persona", text=persona_text))
 
     # Cowriter session
     session = state.get("cowriter_session", {})

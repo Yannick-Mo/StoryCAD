@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.context_compressor import async_compress_context, estimate_tokens
 from app.agent.privacy import sanitise_event
 from app.agent.super_agent import SuperAgent
+from app.agent.tools.base import verify_project_owner as _verify_tool_owner
 from app.api.deps import get_db, get_current_user, get_redis
 from app.llm.client import get_shared_client, get_tracker
-from app.project.repository import ProjectRepository
 
 router = APIRouter(prefix="/api/v2", tags=["AI v2"])
 
@@ -25,9 +25,9 @@ SSE_PING_INTERVAL = 15
 
 
 async def _verify_project_owner(db: AsyncSession, project_id: uuid.UUID, user: dict) -> None:
-    repo = ProjectRepository(db)
-    project = await repo.get(project_id)
-    if not project or str(project.owner_id) != user["id"]:
+    try:
+        await _verify_tool_owner(db, project_id, user["id"])
+    except PermissionError:
         raise HTTPException(status_code=403, detail="Not authorized to access this project")
 
 

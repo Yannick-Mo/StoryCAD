@@ -23,6 +23,7 @@ from app.storycad.models import (
     Scene,
     SceneContent,
     Theme,
+    ThemeChapter,
 )
 from app.utils import row_to_dict
 
@@ -132,54 +133,6 @@ class ContextBuilder:
             _CONTEXT_CACHE.set(key, data)
         else:
             _CONTEXT_CACHE.set(key, data)
-
-    # ------------------------------------------------------------------
-    # Build (legacy mode-specific)
-    # ------------------------------------------------------------------
-
-    async def build(self, mode: str, project_id: uuid.UUID, chapter_id: uuid.UUID) -> dict:
-        ctx: dict[str, Any] = {}
-
-        proj = await self._get_project(project_id)
-        target_chapter = await self._get_chapter(chapter_id)
-        if not proj or not target_chapter:
-            return ctx
-
-        ctx["project_title"] = proj.title
-        ctx["genre"] = proj.genre or "未指定"
-        ctx["chapter_title"] = target_chapter.title
-        ctx["chapter_goal"] = target_chapter.goal or "未设定"
-
-        config = await self._get_config(project_id)
-        ctx["total_words"] = config.total_words if config else 100000
-
-        if target_chapter.act_id is None:
-            ctx["act_name"] = "未命名幕"
-        else:
-            act = await self._get_act(target_chapter.act_id)
-            ctx["act_name"] = act.name if act else "未命名幕"
-
-        ctx["characters_summary"] = await self._characters_text(project_id)
-
-        if mode in ("goal", "outline", "writing"):
-            ctx["themes_summary"] = await self._themes_text(project_id)
-
-        if mode == "goal":
-            ctx["adjacent_chapters"] = await self._adjacent_chapters_text(
-                project_id, target_chapter.sort_order, target_chapter.act_id
-            )
-            chapter_count_result = await self.db.execute(
-                select(func.count(Chapter.id)).where(Chapter.project_id == project_id)
-            )
-            total_chapters = chapter_count_result.scalar() or 0
-            ctx["position_desc"] = self._position_desc(target_chapter.sort_order, total_chapters)
-
-        if mode in ("outline", "writing"):
-            ctx["relations_summary"] = await self._relations_text(project_id)
-
-        ctx["available_skills"] = await self._get_available_skills()
-
-        return ctx
 
     # ------------------------------------------------------------------
     # Shared project tree loader (used by both build_full and build_summary)
@@ -460,6 +413,184 @@ class ContextBuilder:
         return result
 
     # ------------------------------------------------------------------
+    # build_for_writing — focused context for the WritingAgent
+    # ------------------------------------------------------------------
+
+    async def build_for_writing(self, scene_id: uuid.UUID, action: str = "write") -> dict:
+        """Build a focused context dict for WritingAgent.
+
+        Returns only what a writing agent needs — no tool definitions,
+        no safety rules, no session state. Includes the scene, its POV
+        character, related themes/edges, and continuity context.
+        """
+        ctx: dict[str, Any] = {}
+
+        # 1. Scene
+        result = await self.db.execute(select(Scene).where(Scene.id == scene_id))
+        scene = result.scalar_one_or_none()
+        if not scene:
+            return ctx
+
+        ctx["scene_title"] = scene.title or ""
+        ctx["scene_summary"] = scene.summary or ""
+        ctx["scene_setting"] = scene.setting or ""
+        ctx["scene_time"] = scene.scene_time or ""
+        ctx["pov_character_name"] = scene.pov_character or ""
+
+        # 2. Scene content (existing)
+        result = await self.db.execute(
+            select(SceneContent).where(SceneContent.scene_id == scene_id)
+        )
+        sc = result.scalar_one_or_none()
+        existing_content = sc.content or "" if sc else ""
+        if existing_content:
+            if action == "continue":
+                ctx["existing_content_tail"] = existing_content[-1500:]
+            ctx["existing_content"] = existing_content
+
+        # 3. Chapter
+        result = await self.db.execute(
+            select(Chapter).where(Chapter.id == scene.chapter_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if chapter:
+            ctx["chapter_title"] = chapter.title or ""
+            ctx["chapter_sort_order"] = chapter.sort_order
+            ctx["chapter_goal"] = chapter.goal or ""
+
+            # 4. Act
+            if chapter.act_id:
+                result = await self.db.execute(
+                    select(Act).where(Act.id == chapter.act_id)
+                )
+                act = result.scalar_one_or_none()
+                ctx["act_name"] = act.name if act else ""
+            else:
+                ctx["act_name"] = ""
+
+            # 5. Previous scene (continuity)
+            result = await self.db.execute(
+                select(Scene)
+                .where(
+                    Scene.chapter_id == chapter.id,
+                    Scene.sort_order < scene.sort_order,
+                )
+                .order_by(Scene.sort_order.desc())
+                .limit(1)
+            )
+            prev_scene = result.scalar_one_or_none()
+            if prev_scene:
+                result = await self.db.execute(
+                    select(SceneContent).where(SceneContent.scene_id == prev_scene.id)
+                )
+                prev_content = result.scalar_one_or_none()
+                if prev_content and prev_content.content:
+                    ctx["previous_scene_tail"] = prev_content.content[-500:]
+
+            # 6. Related edges for this chapter
+            result = await self.db.execute(
+                select(ChapterEdge).where(
+                    ChapterEdge.project_id == scene.project_id,
+                    ChapterEdge.source_id == chapter.id,
+                )
+            )
+            edges = result.scalars().all()
+            if edges:
+                # Fetch chapter titles for edge display
+                ch_ids = set()
+                for e in edges:
+                    ch_ids.add(e.source_id)
+                    ch_ids.add(e.target_id)
+                ch_result = await self.db.execute(
+                    select(Chapter).where(Chapter.id.in_(list(ch_ids)))
+                )
+                ch_map = {ch.id: ch.title for ch in ch_result.scalars().all()}
+                edge_lines = []
+                for e in edges:
+                    src = ch_map.get(e.source_id, "?")
+                    tgt = ch_map.get(e.target_id, "?")
+                    edge_lines.append(f"- {e.edge_type}: {src} → {tgt}")
+                ctx["related_edges"] = "\n".join(edge_lines)
+
+            # 7. Related themes (via ThemeChapter)
+            result = await self.db.execute(
+                select(ThemeChapter).where(ThemeChapter.chapter_id == chapter.id)
+            )
+            tc_links = result.scalars().all()
+            if tc_links:
+                theme_ids = [t.theme_id for t in tc_links]
+                result = await self.db.execute(
+                    select(Theme).where(Theme.id.in_(theme_ids))
+                )
+                themes = result.scalars().all()
+                theme_lines = []
+                for t in themes:
+                    prop = f" — {t.proposition}" if t.proposition else ""
+                    theme_lines.append(f"- {t.name}{prop}")
+                ctx["related_themes"] = "\n".join(theme_lines)
+
+        # 8. Project info
+        result = await self.db.execute(
+            select(Project).where(Project.id == scene.project_id)
+        )
+        proj = result.scalar_one_or_none()
+        if proj:
+            ctx["project_title"] = proj.title or ""
+            ctx["genre"] = proj.genre or ""
+            ctx["global_settings"] = (proj.global_settings or "")[:2000]
+
+        # 9. POV character detail
+        if scene.pov_character:
+            result = await self.db.execute(
+                select(Character).where(
+                    Character.project_id == scene.project_id,
+                    Character.name == scene.pov_character,
+                )
+            )
+            pov = result.scalar_one_or_none()
+            if pov:
+                parts = [f"## {pov.name}（{pov.role or '角色'}）"]
+                if pov.personality:
+                    parts.append(f"性格：{pov.personality}")
+                if pov.motivation:
+                    parts.append(f"动机：{pov.motivation}")
+                if pov.background:
+                    parts.append(f"背景：{pov.background}")
+                if pov.appearance:
+                    parts.append(f"外貌：{pov.appearance}")
+                ctx["pov_character_detail"] = "\n".join(parts)
+
+        # 10. Other characters (all project characters, excluding POV)
+        result = await self.db.execute(
+            select(Character)
+            .where(Character.project_id == scene.project_id)
+            .order_by(Character.sort_order)
+        )
+        all_chars = result.scalars().all()
+        other_lines = []
+        total = 0
+        limit = 3000
+        for c in all_chars:
+            if scene.pov_character and c.name == scene.pov_character:
+                continue
+            parts = [f"- {c.name}（{c.role or '角色'}）"]
+            if c.personality:
+                parts.append(f"  性格：{c.personality[:100]}")
+            if c.motivation:
+                parts.append(f"  动机：{c.motivation[:100]}")
+            block = "\n".join(parts)
+            total += len(block) + 1
+            if total > limit and other_lines:
+                other_lines.append(f"  （还有 {len(all_chars) - len(other_lines)} 个角色略）")
+                break
+            other_lines.append(block)
+        if other_lines:
+            ctx["other_characters"] = "\n".join(other_lines)
+
+        ctx["available_skills"] = await self._get_available_skills()
+        return ctx
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -469,16 +600,6 @@ class ContextBuilder:
 
     async def _get_config(self, project_id: uuid.UUID):
         r = await self.db.execute(select(ProjectConfig).where(ProjectConfig.project_id == project_id))
-        return r.scalar_one_or_none()
-
-    async def _get_chapter(self, chapter_id: uuid.UUID):
-        r = await self.db.execute(select(Chapter).where(Chapter.id == chapter_id))
-        return r.scalar_one_or_none()
-
-    async def _get_act(self, act_id: uuid.UUID | None):
-        if not act_id:
-            return None
-        r = await self.db.execute(select(Act).where(Act.id == act_id))
         return r.scalar_one_or_none()
 
     async def _characters_text(self, project_id: uuid.UUID) -> str:
@@ -519,38 +640,6 @@ class ContextBuilder:
             prop = f" — {t.proposition}" if t.proposition else ""
             lines.append(f"- {t.name}{prop}")
         return "\n".join(lines)
-
-    async def _adjacent_chapters_text(self, project_id: uuid.UUID, sort_order: int, act_id: uuid.UUID | None) -> str:
-        r = await self.db.execute(
-            select(Chapter)
-            .where(Chapter.project_id == project_id)
-            .order_by(Chapter.sort_order)
-            .limit(200)
-        )
-        all_chapters = r.scalars().all()
-        if len(all_chapters) <= 1:
-            return "（只有一个章节，暂无相邻章节）"
-
-        idx = next((i for i, ch in enumerate(all_chapters) if ch.sort_order == sort_order), 0)
-        start = max(0, idx - 2)
-        end = min(len(all_chapters), idx + 3)
-
-        lines = []
-        for i in range(start, end):
-            ch = all_chapters[i]
-            marker = " ← 当前章节" if ch.sort_order == sort_order else ""
-            goal_preview = ""
-            if ch.goal:
-                goal_preview = f" | 目标：{ch.goal[:40]}..." if len(ch.goal) > 40 else f" | 目标：{ch.goal}"
-            lines.append(f"{ch.sort_order}. {ch.title}{goal_preview}{marker}")
-        return "\n".join(lines)
-
-    def _position_desc(self, sort_order: int, total_chapters: int = 0) -> str:
-        if sort_order <= 1:
-            return "故事开篇章节"
-        if total_chapters > 4 and sort_order >= total_chapters:
-            return "故事结尾章节"
-        return "故事中段章节"
 
     async def _relations_text(self, project_id: uuid.UUID) -> str:
         r = await self.db.execute(

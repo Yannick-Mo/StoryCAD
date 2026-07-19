@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
 import type { Chapter, Scene } from '../../types'
-import AiAssistModal from '../../modals/AiAssistModal'
-import type { SceneOutlineItem } from '../../../../api/ai'
 import { loadSceneContent } from '../../../../api/editor'
 import { useToast } from '../../components/Toast'
 
@@ -16,6 +14,7 @@ interface ChapterDetailProps {
   onAddScene: (chapterId: string) => Scene
   onDeleteScene: (chapterId: string, sceneId: string) => void
   projectId?: string
+  onOpenAiPanel?: (contextView: string, contextId?: string) => void
 }
 
 const STATUS_OPTIONS = [
@@ -24,13 +23,12 @@ const STATUS_OPTIONS = [
   { value: 'final' as const, label: '定稿' },
 ]
 
-export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId }: ChapterDetailProps) {
+export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapterSave, onOpenSceneEditor, onUpdateChapter, onUpdateScene, onAddScene, onDeleteScene, projectId, onOpenAiPanel }: ChapterDetailProps) {
   const [editSceneId, setEditSceneId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editGoal, setEditGoal] = useState('')
   const [saving, setSaving] = useState(false)
   const [contentCache, setContentCache] = useState<Record<string, string>>({})
-  const [aiMode, setAiMode] = useState<'goal' | 'outline' | null>(null)
   const { addToast } = useToast()
 
   useEffect(() => {
@@ -247,50 +245,14 @@ export default function ChapterDetail({ chapter, onClose, onSceneSave, onChapter
         {/* AI Assist section */}
         <section className="bg-gray-800/20 border border-gray-700/30 rounded-xl p-3">
           <div className="text-[10px] text-gray-500 mb-2">🤖 AI 辅助</div>
-          <div className="flex flex-col gap-1.5">
-            <button
-              onClick={() => setAiMode('goal')}
-              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
-            >
-              ✨ 生成章节目标
-            </button>
-            <button
-              onClick={() => setAiMode('outline')}
-              className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
-            >
-              ✨ 生成场景大纲
-            </button>
-
-          </div>
+          <button
+            onClick={() => onOpenAiPanel?.('chapter', chapter.id)}
+            className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-400 hover:text-amber-300 hover:bg-gray-700/40 transition-colors border border-gray-700/30"
+          >
+            ✨ 打开 AI 助手
+          </button>
         </section>
       </div>
-
-      {/* AI Modal */}
-      {aiMode && projectId && (
-        <AiAssistModal
-          mode={aiMode}
-          projectId={projectId}
-          chapter={chapter}
-          onClose={() => setAiMode(null)}
-          onApplyGoal={(goal) => {
-            onChapterSave(chapter.id, goal)
-            setAiMode(null)
-          }}
-          onApplyOutlines={(outlines) => {
-            outlines.forEach((sc) => {
-              const newScene = onAddScene(chapter.id)
-              onUpdateScene(chapter.id, newScene.id, {
-                title: sc.title,
-                povCharacter: sc.pov_character,
-                setting: sc.setting,
-                time: sc.scene_time,
-                summary: sc.summary,
-              })
-            })
-            setAiMode(null)
-          }}
-        />
-      )}
     </div>
   )
 }

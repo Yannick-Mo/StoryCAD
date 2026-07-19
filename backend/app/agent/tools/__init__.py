@@ -26,7 +26,6 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
     )
-    from .agent_tools import GoalAgentTool, OutlineAgentTool
     from .analysis_tools import ConsistencyCheckTool, RhythmAnalyzeTool
     from .analysis_v2_tools import AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool
     from .writing_tools import WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool
@@ -44,13 +43,13 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
     )
     from .skill_tool import InvokeSkillTool
+    from .writer_tool import CallWriterAgentTool
     classes = [
         ListChaptersTool, ListScenesTool, ListRelationsTool, ListEdgesTool, SearchNodesTool,
         ReadProjectTool, ReadChapterTool, ReadSceneTool, CreateSceneTool, UpdateSceneTool,
         ReadFullProjectTool, ReadProjectOverviewTool, SetChapterGoalTool, UpdateChapterTool, UpdateActTool,
         ListCharactersTool, ReadCharacterTool, CreateCharacterTool, UpdateCharacterTool,
         CreateRelationTool, UpdateRelationTool, DeleteCharacterTool, DeleteRelationTool,
-        GoalAgentTool, OutlineAgentTool,
         ConsistencyCheckTool, RhythmAnalyzeTool,
         AnalyzeChapterTool, AnalyzeCharacterArcTool, SuggestNextTool, ProjectHealthTool,
         WriteSceneContentTool, ContinueSceneTool, RewriteSceneTool, ExpandSelectionTool, CompressSelectionTool,
@@ -63,6 +62,7 @@ def get_tool_registry(llm_client: LLMClient | None = None) -> dict[str, BaseTool
         CreateThemeTool, UpdateThemeTool, DeleteThemeTool,
         LinkThemeChapterTool, UnlinkThemeChapterTool, SetChapterRhythmTool,
         InvokeSkillTool,
+        CallWriterAgentTool,
     ]
     registry: dict[str, BaseTool] = {}
     for cls in classes:

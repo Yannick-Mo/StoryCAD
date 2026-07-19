@@ -365,6 +365,7 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                 onUpdateScene={store.updateScene}
                 onAddScene={store.addScene}
                 onDeleteScene={(chapterId, sceneId) => setConfirmDelete({ type: 'scene', id: sceneId, chapterId })}
+                onOpenAiPanel={(view, id) => handleOpenAiPanel(view, id)}
               />
             ) : selectedEdge && selectedEdge.type !== 'timeline' ? (
               <EdgeDetail

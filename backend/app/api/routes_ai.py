@@ -8,23 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
 from app.api.rate_limiter import rate_limiter
-from app.project.service import ProjectService
 from app.project.models import Project, ProjectConfig
-from app.agent.orchestrator import AgentOrchestrator
 from app.agent.project_creator.graph import run_pipeline
 from app.agent.project_creator.state import MaterialState
 from app.llm.client import LLMClient
 from app.llm.types import Message
-from app.agent.utils import count_words
 from app.storycad.entity_map import ENTITY_MAP
 from app.storycad.repository import StoryCADRepository
-from app.storycad.models import Scene, SceneContent
-
-
-class AiGenerateRequest(BaseModel):
-    chapter_id: str
-    mode: str
-    prompt: str = ""
+from app.storycad.models import Scene
 
 
 class AiInlineRequest(BaseModel):
@@ -38,35 +29,6 @@ class ContinueSuggestionsRequest(BaseModel):
 
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["ai"])
-
-
-@router.post("/ai/generate")
-async def ai_generate(
-    project_id: uuid.UUID,
-    payload: AiGenerateRequest,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if not await rate_limiter.check(f"ai_generate:{current_user['id']}", max_attempts=10, window=60):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
-    svc = ProjectService(db)
-    project = await svc.get_project(project_id, uuid.UUID(current_user["id"]))
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if payload.mode not in ("goal", "outline"):
-        raise HTTPException(status_code=400, detail=f"Invalid mode: {payload.mode}")
-
-    prompt = payload.prompt.strip()[:2000]
-
-    orchestrator = AgentOrchestrator(db)
-    result = await orchestrator.generate(
-        project_id,
-        uuid.UUID(payload.chapter_id),
-        payload.mode,
-        prompt,
-    )
-    return result
 
 
 # ============================================================

@@ -123,14 +123,19 @@ def _compress_entity_data(data: Any) -> Any:
 
 class HistoryManager:
     def __init__(self, llm_client: LLMClient | None = None):
-        from app.llm.client import get_shared_client
-        self.llm = llm_client or get_shared_client()
+        self._llm_client = llm_client
         self._last_summary_count = 0
+
+    @property
+    def llm(self) -> LLMClient:
+        if self._llm_client is None:
+            from app.llm.client import get_shared_client
+            self._llm_client = get_shared_client()
+        return self._llm_client
 
     async def maybe_summarize(self, messages: list[Message]) -> list[Message]:
         user_msgs = [m for m in messages if m.role == "user"]
-        raw_text = " ".join(m.content or "" for m in messages)
-        total_tokens = _estimate_tokens(raw_text)
+        total_tokens = _estimate_tokens(" ".join(m.content or "" for m in messages))
 
         if len(user_msgs) <= SUMMARIZE_AFTER and total_tokens <= MAX_HISTORY_TOKENS_EST:
             return messages
@@ -138,20 +143,19 @@ class HistoryManager:
         if len(messages) - self._last_summary_count < MIN_SUMMARIZE_INTERVAL:
             return messages
 
-        # Hard limit: if still above MAX_HISTORY_TOKENS_HARD after summary, truncate further
         try:
             summary = await self._summarize_old(messages)
         except Exception:
             logger.exception("Summarization failed, keeping original messages")
             return messages
 
-        if not summary or summary == "[Summary unavailable]":
+        if not summary or summary == "[摘要生成失败]":
             return messages
 
         recent = messages[-KEEP_RECENT * 2:] if len(messages) > KEEP_RECENT * 2 else messages
 
         self._last_summary_count = len(messages)
-        summary_msg = Message(role="system", content=f"[Conversation summary up to this point]:\n{summary}")
+        summary_msg = Message(role="system", content=f"[至此的对话摘要]:\n{summary}")
 
         result = [summary_msg] + recent
 
@@ -178,11 +182,11 @@ class HistoryManager:
             recent_text += f"{role}: {(m.content or '')[:300]}\n"
 
         prompt = (
-            "Summarize the following conversation between a user and a novel-writing assistant. "
-            "Keep it concise but include: key user requests, decisions made, project changes, and any pending actions.\n\n"
-            "Older messages:\n" + old_text + "\n"
-            "Most recent messages (for context):\n" + recent_text + "\n\n"
-            "Summary:"
+            "请用中文摘要以下小说创作助手与用户的对话。\n"
+            "保留：用户的关键需求、已做出的创作决策、项目变更、以及待办事项。\n\n"
+            "较早的消息：\n" + old_text + "\n"
+            "最近的消息（供参考上下文）：\n" + recent_text + "\n\n"
+            "摘要："
         )
 
         msgs = [Message(role="user", content=prompt)]
@@ -191,4 +195,4 @@ class HistoryManager:
             return result.content or ""
         except Exception:
             logger.exception("LLM summarization call failed")
-            return "[Summary unavailable]"
+            return "[摘要生成失败]"

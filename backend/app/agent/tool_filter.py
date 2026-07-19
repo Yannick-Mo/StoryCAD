@@ -39,7 +39,7 @@ COWRITER_TOOLS: set[str] = {
     "write_scene_content", "continue_scene", "rewrite_scene",
     "expand_selection", "compress_selection",
     # Agents
-    "call_goal_agent", "call_outline_agent",
+    "call_writer_agent",
 }
 
 # All known tool names — used for startup consistency check.

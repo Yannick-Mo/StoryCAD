@@ -54,8 +54,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "update_edge": "修改关联",
     "delete_edge": "删除关联",
     # Agents
-    "call_goal_agent": "调用目标分析",
-    "call_outline_agent": "调用大纲分析",
+    "call_writer_agent": "调用写作智能体",
     # Analysis
     "check_consistency": "检查一致性",
     "analyze_rhythm": "分析节奏",

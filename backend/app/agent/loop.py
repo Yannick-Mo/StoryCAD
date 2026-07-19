@@ -170,8 +170,6 @@ def _section_for_tool(tool_name: str) -> str:
                      "link_theme_chapter", "unlink_theme_chapter",
                      "set_chapter_rhythm"):
         return "themes"
-    if tool_name in ("call_goal_agent", "call_outline_agent"):
-        return "project"
     return "project"
 
 
@@ -245,40 +243,6 @@ def _build_skill_probe_paths(ctx: dict) -> list[str]:
             if len(word) >= 2:
                 paths.append(f"logline/{word}")
     return paths
-
-
-def _detect_context_depth(messages: list["Message"]) -> str:
-    """Analyze recent user messages to determine the appropriate context depth.
-
-    Returns ``"framework"``, ``"summary"``, or ``"minimal"``.
-
-    ``"framework"`` is the default and provides the richest context
-    (full character profiles, scene summaries, chapter goals, etc.).
-    Falls back to ``"summary"`` or ``"minimal"`` only for trivial queries.
-    """
-    if not messages:
-        return "framework"
-
-    # Collect recent user text content
-    texts = []
-    seen = 0
-    for m in reversed(messages):
-        if m.role == "user" and m.content:
-            texts.append(m.content)
-            seen += 1
-            if seen >= 3:
-                break
-    combined = " ".join(texts).lower()
-
-    # All non-trivial queries get framework depth (full structural data).
-    # Only greetings/acknowledgements get minimal.
-    trivial = {"嗯", "是", "好", "ok", "yes", "no", "y", "n",
-               "哦", "嗯嗯", "好的", "是的", "hi", "hello", "你好", "您好"}
-    stripped = combined.strip().lower()
-    if stripped in trivial or any(m.content and m.content.strip() in trivial for m in messages[-3:] if m.role == "user"):
-        return "minimal"
-
-    return "framework"
 
 
 def _get_recent_scenes_hint(
@@ -591,14 +555,12 @@ async def autonomous_loop(
                     last = state.messages[-1]
                     query_hint = (last.content or "")[:200]
 
-                depth = "framework"
-
                 skip_ctx_cache = len(state._invalidated_sections) > 0
 
                 ctx = await builder.build_summary(
                     _uuid.UUID(state.project_id),
                     query_hint=query_hint,
-                    depth=depth,
+                    depth="framework",
                     skip_cache=skip_ctx_cache,
                 )
 
@@ -609,7 +571,7 @@ async def autonomous_loop(
 
                 state = state.replace(project_context=ctx, _context_loaded=True,
                                       _invalidated_sections=set(),
-                                      transition=f"context_loaded_depth_{depth}")
+                                      transition=f"context_loaded_framework")
 
                 # ── Auto-activate skills by genre/title keyword ──
                 try:
@@ -852,7 +814,7 @@ async def autonomous_loop(
                                          turn_start=turn_start)
                 continue
             # --- Recover ---
-            decision = _try_recovery(state, llm, str(e))
+            decision = await _try_recovery(state, llm, str(e))
             if decision.get("give_up"):
                 assistant_text = "".join(assistant_text_parts)
                 if assistant_text:
@@ -1136,8 +1098,8 @@ async def autonomous_loop(
 # ── Recovery helper ─────────────────────────────────────────────────────
 
 
-def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
-    """Attempt error recovery. Delegates to ``RecoveryExecutor.apply()``.
+async def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
+    """Attempt error recovery. Delegates to ``RecoveryExecutor``.
 
     Returns:
         ``{"give_up": False, "state": <updated LoopState>}`` if recovery
@@ -1146,12 +1108,11 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
     """
     from app.agent.recovery import ErrorClassifier, RecoveryAction, RecoveryExecutor, get_fallback_models
 
-    recovery_history = state.recovery_state.get("recovery_history", [])
     decision = ErrorClassifier.classify(
         error,
         state.retry_count,
         max_retries=MAX_RECOVERY,
-        recovery_history=recovery_history,
+        recovery_history=state.recovery_state.get("recovery_history", []),
     )
 
     logger.info(
@@ -1162,47 +1123,25 @@ def _try_recovery(state: LoopState, llm: LLMClient, error: str) -> dict:
     if decision.action == RecoveryAction.GIVE_UP:
         return {"give_up": True, "message": decision.message}
 
-    retry_state = state.replace(
+    executor = RecoveryExecutor(fallback_models=get_fallback_models())
+    updates = await executor.apply(decision, state.to_dict())
+    state_dict = state.to_dict()
+    state_dict.update(updates)
+    retry_state = LoopState.from_initial(state_dict).replace(
         retry_count=state.retry_count + 1,
     )
-    base_result = {"give_up": False, "state": retry_state, "delay_seconds": decision.delay_seconds}
 
-    if decision.action == RecoveryAction.RETRY:
-        return {**base_result, "state": retry_state.replace(transition="recovery_retry")}
+    transition_map = {
+        RecoveryAction.RETRY: "recovery_retry",
+        RecoveryAction.RETRY_WITH_ERROR_CONTEXT: "recovery_error_context",
+        RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT: "recovery_compressed",
+        RecoveryAction.RETRY_ESCALATED_TOKENS: "recovery_escalated",
+        RecoveryAction.SWITCH_MODEL: "recovery_model_switch",
+    }
+    transition = transition_map.get(decision.action, "recovery_unknown")
 
-    if decision.action == RecoveryAction.RETRY_WITH_ERROR_CONTEXT:
-        return {**base_result, "state": retry_state.replace(
-            errors=state.errors + [f"[SELF-CORRECTION] {error}"],
-            transition="recovery_error_context",
-        )}
-
-    if decision.action == RecoveryAction.RETRY_WITH_COMPRESSED_CONTEXT:
-        from app.agent.context_compressor import compress_history
-        compressed = compress_history(state.messages, model_limit=MODEL_CONTEXT_LIMIT)
-        return {**base_result, "state": retry_state.replace(
-            messages=compressed,
-            transition="recovery_compressed",
-        )}
-
-    if decision.action == RecoveryAction.RETRY_ESCALATED_TOKENS:
-        return {**base_result, "state": retry_state.replace(
-            transition="recovery_escalated",
-        )}
-
-    if decision.action == RecoveryAction.SWITCH_MODEL:
-        fallbacks = get_fallback_models()
-        idx = state.recovery_state.get("model_index", 0)
-        if idx < len(fallbacks):
-            new_model = fallbacks[idx]
-            logger.info("Switching to fallback model: {}", new_model)
-            return {**base_result, "state": retry_state.replace(
-                _model_override=new_model,
-                recovery_state={
-                    **state.recovery_state,
-                    "model_index": idx + 1,
-                    "switched_model": new_model,
-                },
-                transition="recovery_model_switch",
-            )}
-
-    return {"give_up": True, "message": decision.message}
+    return {
+        "give_up": False,
+        "state": retry_state.replace(transition=transition),
+        "delay_seconds": decision.delay_seconds,
+    }

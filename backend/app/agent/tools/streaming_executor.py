@@ -241,7 +241,7 @@ class StreamingToolExecutor:
                 yield {"type": "tool_done", "data": result}
 
         # Phase 2 – after stream ends
-        for result in await executor.get_remaining_results():
+        for result in executor.get_completed_results():
             yield {"type": "tool_done", "data": result}
 
         # If the model fallback path is taken, discard pending work:
@@ -415,60 +415,6 @@ class StreamingToolExecutor:
         """
         self._queued_exclusive.clear()
         self._queued_barrier.clear()
-
-    async def get_remaining_results(self) -> list[dict]:
-        """Wait for all pending SAFE tools, then execute queued tools serially.
-
-        Order:
-          1. Await all remaining SAFE tasks.
-          2. Execute EXCLUSIVE tools serially (one at a time).
-          3. Execute BARRIER tools serially.
-
-        Returns:
-            All results accumulated throughout the executor's lifecycle
-            (including those returned earlier by ``get_completed_results``).
-
-        Note:
-            Prefer the split API (``await_pending_safe`` + ``get_queued_tools``
-            + ``execute_tool``) in the autonomous loop so the interceptor can
-            gate EXCLUSIVE/BARRIER tools before execution.  This method exists
-            for backward compatibility with the LangGraph path.
-        """
-        if self._discarded:
-            return []
-
-        # 1. Await all pending SAFE tools
-        if self._pending:
-            tasks = [task for _, task in self._pending.values()]
-            await asyncio.gather(*tasks, return_exceptions=True)
-            for tid, (tool_name, task) in list(self._pending.items()):
-                try:
-                    result = task.result()
-                    self._completed.append((tid, result))
-                except asyncio.CancelledError:
-                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": "Cancelled", "_tool_use_id": tid}))
-                except Exception as exc:
-                    self._completed.append((tid, {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}))
-            self._pending.clear()
-
-        # 2. Execute EXCLUSIVE tools serially
-        for tool_name, args, tool_use_id in self._queued_exclusive:
-            if self._discarded:
-                break
-            result = await self._execute_tool(tool_name, args, tool_use_id)
-            self._completed.append((tool_use_id, result))
-        self._queued_exclusive.clear()
-
-        # 3. Execute BARRIER tools serially
-        for tool_name, args, tool_use_id in self._queued_barrier:
-            if self._discarded:
-                break
-            result = await self._execute_tool(tool_name, args, tool_use_id)
-            self._completed.append((tool_use_id, result))
-        self._queued_barrier.clear()
-
-        # Return all results as a flat list
-        return [r for _, r in self._completed]
 
     def discard(self) -> None:
         """Discard all pending and queued work.

@@ -1,14 +1,11 @@
 """Token-aware context compression for the autonomous agent loop.
 
-Three compression layers, inspired by Claude Code's multi-layer pipeline
+Two compression layers, inspired by Claude Code's multi-layer pipeline
 (``src/services/compact/``):
 
-1. **micro_compact** — lightweight, per-turn.  Replaces cached tool
-   results with short markers so the LLM still sees the schema/flow but
-   avoids paying token cost for data it already processed.
-2. **compress_history** — proactive, triggered at 80% threshold.
+1. **compress_history** — proactive, triggered at 80% threshold.
    ``head + summary + tail`` classic strategy.
-3. **reactive_compress** — last-resort, triggered on API 413 / context
+2. **reactive_compress** — last-resort, triggered on API 413 / context
    overflow.  More aggressive than proactive compress.
 """
 
@@ -37,12 +34,6 @@ AGGRESSIVE_HEAD_COUNT = 3
 AGGRESSIVE_TAIL_COUNT = 8
 REACTIVE_HEAD_COUNT = 2
 REACTIVE_TAIL_COUNT = 5
-
-# ── Micro-compact config ────────────────────────────────────────────
-# Micro-compact is disabled by default — tool results are never truncated.
-# Set _MICRO_COMPACT_MAX_CHARS to a positive value to re-enable for
-# extremely large results only (safety net).
-_MICRO_COMPACT_MAX_CHARS: int = 0  # 0 = disabled
 
 # Tools whose results carry entity IDs that downstream tools depend on.
 # These must survive all compression layers so the LLM can chain
@@ -112,46 +103,7 @@ def should_compress(
     return tokens > int(model_limit * COMPRESS_THRESHOLD)
 
 
-# ── Layer 1: Micro-compact (per-turn, lightweight) ─────────────────
-
-
-def micro_compact(
-    messages: list["Message"],
-    keep_recent: int = 5,
-) -> list["Message"]:
-    """No-op per default — tool results are never truncated.
-
-    If ``_MICRO_COMPACT_MAX_CHARS > 0``, compact any tool result larger
-    than that threshold to a short marker, keeping the last *keep_recent*
-    results intact.
-    """
-    if _MICRO_COMPACT_MAX_CHARS <= 0:
-        return messages
-
-    from app.llm.types import Message as M
-
-    seen_large: list[int] = []
-    for i, msg in enumerate(messages):
-        if msg.role != "tool":
-            continue
-        content = msg.content or ""
-        if len(content) > _MICRO_COMPACT_MAX_CHARS:
-            seen_large.append(i)
-
-    keep = set(seen_large[-keep_recent:]) if keep_recent > 0 else set()
-    for i in seen_large:
-        if i not in keep:
-            messages[i] = M(
-                role="tool",
-                content=f"[工具结果已缓存: {len(messages[i].content or '')} chars]",
-                tool_call_id=messages[i].tool_call_id,
-                name=messages[i].name,
-            )
-
-    return messages
-
-
-# ── Layer 2: Proactive compress (head + summary + tail) ────────────
+# ── Layer 1: Proactive compress (head + summary + tail) ────────────
 
 
 def _msg_role_label(role: str) -> str:
@@ -233,7 +185,7 @@ def compress_history(
     return result
 
 
-# ── Layer 3: Reactive compress (413 / context overflow) ────────────
+# ── Layer 2: Reactive compress (413 / context overflow) ────────────
 
 
 def reactive_compress(
@@ -316,40 +268,7 @@ def reactive_compress(
     return result
 
 
-# ── Orchestrator ────────────────────────────────────────────────────
-
-
-def compress_context(
-    messages: list["Message"],
-    *,
-    model_limit: int = DEFAULT_MODEL_LIMIT,
-    reactive: bool = False,
-) -> list["Message"]:
-    """Run the appropriate compression layer.
-
-    Args:
-        messages: Message list to compress.
-        model_limit: Model context window limit.
-        reactive: If True, use reactive compression (for 413 recovery).
-                  Otherwise, use proactive compression.
-
-    Returns:
-        Compressed message list.
-    """
-    if reactive:
-        return reactive_compress(messages, model_limit=model_limit)
-
-    compressed = compress_history(messages, model_limit=model_limit)
-    # If proactive compression wasn't enough (still over threshold),
-    # escalate to reactive.
-    if should_compress(compressed, model_limit):
-        logger.warning("Proactive compress insufficient — escalating to reactive")
-        return reactive_compress(messages, model_limit=model_limit)
-
-    return compressed
-
-
-# ── Layer 4: LLM-powered compression (async, real summary) ────────
+# ── Layer 3: LLM-powered compression (async, real summary) ────────
 
 
 def _format_for_summary(messages: list["Message"]) -> str:

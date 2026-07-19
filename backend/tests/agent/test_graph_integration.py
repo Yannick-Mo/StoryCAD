@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agent.loop_state import LoopState
-from app.agent.loop import _detect_plan_decision, _detect_context_depth
+from app.agent.loop import _detect_plan_decision
 
 
 class TestLoopState:
@@ -73,38 +73,6 @@ class TestLoopState:
         state = LoopState.from_initial({"project_id": None, "user_id": None})
         assert state.project_id == ""
         assert state.user_id == ""
-
-
-class TestDetectContextDepth:
-    """Tests for _detect_context_depth() which determines context loading level."""
-
-    def test_default_is_minimal(self):
-        from app.llm.types import Message
-        msgs = [Message(role="user", content="你好")]
-        assert _detect_context_depth(msgs) == "minimal"
-
-    def test_empty_messages(self):
-        assert _detect_context_depth([]) == "minimal"
-
-    def test_character_query_triggers_summary(self):
-        from app.llm.types import Message
-        msgs = [Message(role="user", content="分析一下这个角色的性格和动机")]
-        assert _detect_context_depth(msgs) == "summary"
-
-    def test_setting_query_triggers_summary(self):
-        from app.llm.types import Message
-        msgs = [Message(role="user", content="场景地点设定在哪里？")]
-        assert _detect_context_depth(msgs) == "summary"
-
-    def test_writing_style_query_triggers_summary(self):
-        from app.llm.types import Message
-        msgs = [Message(role="user", content="帮我改一下文笔和写作风格")]
-        assert _detect_context_depth(msgs) == "summary"
-
-    def test_structure_query_stays_minimal(self):
-        from app.llm.types import Message
-        msgs = [Message(role="user", content="分析一下情节结构")]
-        assert _detect_context_depth(msgs) == "minimal"
 
 
 class TestDetectPlanDecision:

@@ -82,21 +82,4 @@ system: |
    "cons": ["需要额外规划中间章节的线索分布", "对写作节奏要求更高"],
    "action": {"tool": "update_outline", "params": {"chapter_id": "ch3", "add_subplot": "false_lead"}}}
 
-  {% if tool_descriptions %}
-  Available tools:
-  {{tool_descriptions}}
-  {% endif %}
 
-  {% if characters %}
-  Characters:
-  {% for c in characters|take(10) %}
-  - {{c.name}} ({{c.role}})
-  {% endfor %}
-  {% endif %}
-
-  {% if acts %}
-  Chapter structure:
-  {% for a in acts %}
-  [{{a.name}}] {% for ch in a.chapters|take(5) %}{{ch.get('sort_order', '')}}. {{ch.title}}; {% endfor %}{% if a.chapters|length > 5 %}...and {{a.chapters|length - 5}} more chapters{% endif %}
-  {% endfor %}
-  {% endif %}
