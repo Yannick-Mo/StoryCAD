@@ -74,7 +74,7 @@ export default function ActDetail({ act, chapters, onClose, onSelectChapter, onS
   }
 
   return (
-    <div className="absolute right-0 top-0 h-full w-96 bg-gray-900/95 backdrop-blur-xl border-l border-gray-800 z-20 flex flex-col shadow-2xl">
+    <div className="h-full bg-gray-900/95 backdrop-blur-xl flex flex-col shadow-2xl">
       {/* Header */}
       <div className="p-4 border-b border-gray-800 space-y-2" style={{ borderLeft: `3px solid ${act.color}` }}>
         <div className="flex items-center justify-between gap-2">
