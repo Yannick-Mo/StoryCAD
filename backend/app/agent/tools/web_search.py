@@ -126,7 +126,7 @@ async def _search_searxng(
         return cached
 
     url = f"{settings.searxng_url.rstrip('/')}/search"
-    params = {"q": query, "format": "json", "language": "zh-CN,en-US"}
+    params = {"q": query, "format": "json"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, params=params)
@@ -151,33 +151,32 @@ async def _search_searxng(
 
 def _parse_ddg_lite_html(text: str) -> list[dict]:
     results = []
-    row_pattern = re.compile(
-        r'<tr[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>(.*?)</tr>',
-        re.DOTALL | re.IGNORECASE,
-    )
-    for row_match in row_pattern.finditer(text):
+    current = None
+    for row_match in re.finditer(r'<tr[^>]*>(.*?)</tr>', text, re.DOTALL | re.IGNORECASE):
         row = row_match.group(1)
         title_match = re.search(
-            r'<a[^>]*class="[^"]*result-link[^"]*"[^>]*>(.*?)</a>',
+            r'<a[^>]*class=["\']result-link["\'][^>]*>(.*?)</a>',
             row, re.DOTALL | re.IGNORECASE,
         )
-        if not title_match:
+        if title_match:
+            if current and current.get("title"):
+                results.append(current)
+            title = html_mod.unescape(re.sub(r"<[^>]+>", "", title_match.group(1)).strip())
+            url_match = re.search(r'href="(https?://[^"]+)"', row)
+            url = html_mod.unescape(url_match.group(1)) if url_match else ""
+            current = {"title": title, "url": url, "snippet": ""}
             continue
-        title = html_mod.unescape(re.sub(r"<[^>]+>", "", title_match.group(1)).strip())
-        if not title:
-            continue
-        snippet = ""
-        snippet_match = re.search(
-            r'<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>(.*?)</td>',
-            row, re.DOTALL | re.IGNORECASE,
-        )
-        if snippet_match:
-            snippet = html_mod.unescape(re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip())
-        url = ""
-        url_match = re.search(r'href="(https?://[^"]+)"', row)
-        if url_match:
-            url = html_mod.unescape(url_match.group(1))
-        results.append({"title": title, "url": url, "snippet": snippet})
+        if current:
+            snippet_match = re.search(
+                r'<td[^>]*class=["\']result-snippet["\'][^>]*>(.*?)</td>',
+                row, re.DOTALL | re.IGNORECASE,
+            )
+            if snippet_match:
+                current["snippet"] = html_mod.unescape(
+                    re.sub(r"<[^>]+>", "", snippet_match.group(1)).strip()
+                )
+    if current and current.get("title"):
+        results.append(current)
     return results
 
 
