@@ -135,17 +135,19 @@ def _invalidate_after_write(
             transition=f"context_invalidated_{section}",
         )
     # Handle invoke_skill — add to active_skills
-    if tool_name == "invoke_skill" and result.get("data"):
-        skill_name = result["data"].get("skill_name", "")
-        if skill_name:
-            active = list(state.active_skills)
-            if skill_name not in active:
-                active.append(skill_name)
-            return state.replace(
-                active_skills=active,
-                _context_loaded=False,
-                transition=f"skill_activated_{skill_name}",
-            )
+    if tool_name == "invoke_skill":
+        data = result.get("data")
+        if isinstance(data, dict):
+            skill_name = data.get("skill_name", "")
+            if skill_name:
+                active = list(state.active_skills)
+                if skill_name not in active:
+                    active.append(skill_name)
+                return state.replace(
+                    active_skills=active,
+                    _context_loaded=False,
+                    transition=f"skill_activated_{skill_name}",
+                )
     return state
 
 

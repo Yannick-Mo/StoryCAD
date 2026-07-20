@@ -284,6 +284,10 @@ class StreamingToolExecutor:
         # Track the last user message for mode checks
         self._blocked_writes: list[tuple[str, dict, str]] = []
 
+        # How many items from _completed have been yielded via get_completed_results.
+        # Used by await_pending_safe to avoid re-yielding duplicate tool_done events.
+        self._completed_yielded: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -362,6 +366,7 @@ class StreamingToolExecutor:
             del self._pending[tid]
 
         self._completed.extend((r.get("tool", ""), r) for r in results)
+        self._completed_yielded = len(self._completed)
         return results
 
     # ── Split API for interceptor-aware execution ──────────────────────
@@ -396,7 +401,10 @@ class StreamingToolExecutor:
                     self._completed.append((tid, {"tool": tool_name, "success": False, "error": str(exc), "_tool_use_id": tid}))
             self._pending.clear()
 
-        return [r for _, r in self._completed]
+        # Only return results NOT already yielded by get_completed_results
+        new_slice = self._completed[self._completed_yielded:]
+        self._completed_yielded = len(self._completed)
+        return [r for _, r in new_slice]
 
     def get_queued_tools(self) -> tuple[list[tuple[str, dict, str]], list[tuple[str, dict, str]]]:
         """Return queued EXCLUSIVE and BARRIER tools without executing them.

@@ -308,11 +308,15 @@ class SuperAgent:
                     assistant_content += token
                     yield {"type": "token", "data": token}
                 elif "_tool_done" in event:
+                    td_val = event["_tool_done"]
+                    if not isinstance(td_val, dict):
+                        log.warning("_tool_done value is not dict: type=%s value=%s", type(td_val).__name__, str(td_val)[:200])
+                        continue
                     yield {
                         "type": "tool_done",
-                        "data": json.dumps(event["_tool_done"], ensure_ascii=False),
+                        "data": json.dumps(td_val, ensure_ascii=False),
                     }
-                    _tool_use_id = event["_tool_done"].get("_tool_use_id", "")
+                    _tool_use_id = td_val.get("_tool_use_id", "")
                     if _tool_use_id:
                         _streaming_tool_results.add(_tool_use_id)
                 elif "pending_plan" in event:
@@ -322,8 +326,10 @@ class SuperAgent:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
             log.error(
-                "agent_loop_error | error_type={} | error={}", type(exc).__name__, exc, exc_info=True,
+                "agent_loop_error | error_type={} | error={}\n{}", type(exc).__name__, exc, tb,
             )
             yield {
                 "type": "error",
