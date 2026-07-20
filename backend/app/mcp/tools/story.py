@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.mcp.server import mcp
 from app.database import async_session
 from app.storycad.models import Chapter, Scene, SceneContent
@@ -143,3 +143,44 @@ async def update_scene(
             await db.rollback()
             raise
         return updated
+
+
+@mcp.tool()
+async def recalc_project_word_counts(token: str, project_id: str) -> dict:
+    """重算项目所有场景和章节的字数。读取每个场景的正文内容用 count_words() 重新计数字数，
+    然后汇总更新每个章节的总字数。已经写了正文的场景会重新计算字数，从未写过正文的场景保持 0。"""
+    from app.agent.utils import count_words
+
+    async with async_session() as db:
+        user = await get_current_user_mcp(token, db)
+        await verify_project_ownership(project_id, user["id"], db)
+
+        pid = uuid.UUID(project_id)
+
+        scenes_result = await db.execute(
+            select(Scene.id).where(Scene.project_id == pid)
+        )
+        scene_ids = [row[0] for row in scenes_result.all()]
+
+        updated = 0
+        for sid in scene_ids:
+            content_result = await db.execute(
+                select(SceneContent.content).where(SceneContent.scene_id == sid)
+            )
+            content_row = content_result.one_or_none()
+            wc = count_words(content_row[0]) if content_row else 0
+            await db.execute(
+                Scene.__table__.update().where(Scene.id == sid).values(word_count=wc)
+            )
+            if content_row:
+                updated += 1
+
+        repo = StoryCADRepository(db)
+        await repo._recalc_chapter_counts(pid)
+        await db.commit()
+
+        return {
+            "project_id": project_id,
+            "scenes_recalculated": updated,
+            "scenes_total": len(scene_ids),
+        }
