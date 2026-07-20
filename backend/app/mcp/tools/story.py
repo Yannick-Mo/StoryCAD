@@ -177,10 +177,24 @@ async def recalc_project_word_counts(token: str, project_id: str) -> dict:
 
         repo = StoryCADRepository(db)
         await repo._recalc_chapter_counts(pid)
+
+        chapters_result = await db.execute(
+            select(Chapter.id, Chapter.title, func.coalesce(Chapter.total_words, 0))
+            .where(Chapter.project_id == pid)
+            .order_by(Chapter.sort_order)
+        )
+        chapters = [
+            {"id": str(row[0]), "title": row[1], "word_count": row[2]}
+            for row in chapters_result.all()
+        ]
+        project_total = sum(ch["word_count"] for ch in chapters)
+
         await db.commit()
 
         return {
             "project_id": project_id,
+            "total_word_count": project_total,
+            "chapters": chapters,
             "scenes_recalculated": updated,
             "scenes_total": len(scene_ids),
         }

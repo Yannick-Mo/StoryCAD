@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.tools.base import BaseTool, ToolResult, ToolMeta, ConcurrencyMode, verify_project_owner
-from app.storycad.models import Scene, SceneContent
+from app.storycad.models import Chapter, Scene, SceneContent
 from app.storycad.repository import StoryCADRepository
 from app.agent.utils import count_words
 
@@ -55,10 +55,24 @@ class RecalcWordCountsTool(BaseTool):
                     updated += 1
 
             await StoryCADRepository(db)._recalc_chapter_counts(pid)
+
+            chapters_result = await db.execute(
+                select(Chapter.id, Chapter.title, func.coalesce(Chapter.total_words, 0))
+                .where(Chapter.project_id == pid)
+                .order_by(Chapter.sort_order)
+            )
+            chapters = [
+                {"id": str(row[0]), "title": row[1], "word_count": row[2]}
+                for row in chapters_result.all()
+            ]
+            project_total = sum(ch["word_count"] for ch in chapters)
+
             await db.commit()
 
             return ToolResult(success=True, data={
                 "project_id": project_id_raw,
+                "total_word_count": project_total,
+                "chapters": chapters,
                 "scenes_recalculated": updated,
                 "scenes_total": len(scene_ids),
             })
