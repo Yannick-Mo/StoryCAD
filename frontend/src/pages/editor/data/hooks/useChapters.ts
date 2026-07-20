@@ -70,7 +70,9 @@ export function useChapters(
     setData((d: any) => d ? {
       ...d,
       chapters: d.chapters.map((ch: any) => ch.id === chapterId ? {
-        ...ch, scenes: ch.scenes.filter((s: any) => s.id !== sceneId),
+        ...ch,
+        scenes: ch.scenes.filter((s: any) => s.id !== sceneId),
+        wordCount: ch.scenes.filter((s: any) => s.id !== sceneId).reduce((sum: number, s: any) => sum + s.wordCount, 0),
       } : ch),
     } : d)
     enqueueChange({ entity: 'scenes', op: 'delete', id: sceneId })

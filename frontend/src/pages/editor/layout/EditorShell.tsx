@@ -308,11 +308,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                       const result = await saveSceneContent(projectId, sceneId, content)
                       setData(d => {
                         if (!d) return d
-                        const chs = d.chapters.map(ch =>
-                          ch.id === chapterId
-                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
-                            : ch
-                        )
+                        const chs = d.chapters.map(ch => {
+                          if (ch.id !== chapterId) return ch
+                          const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
+                          return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+                        })
                         updatedChapter = chs.find(c => c.id === chapterId)
                         return { ...d, chapters: chs }
                       })
@@ -350,11 +350,11 @@ export default function EditorShell({ projectId }: { projectId: string }) {
                       const result = await saveSceneContent(projectId, sceneId, content)
                       setData(d => {
                         if (!d) return d
-                        const chs = d.chapters.map(ch =>
-                          ch.id === chapterId
-                            ? { ...ch, scenes: ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s) }
-                            : ch
-                        )
+                        const chs = d.chapters.map(ch => {
+                          if (ch.id !== chapterId) return ch
+                          const newScenes = ch.scenes.map(s => s.id === sceneId ? { ...s, content, wordCount: result.word_count } : s)
+                          return { ...ch, scenes: newScenes, wordCount: newScenes.reduce((sum, sc) => sum + sc.wordCount, 0) }
+                        })
                         updatedChapter = chs.find(c => c.id === chapterId)
                         return { ...d, chapters: chs }
                       })
