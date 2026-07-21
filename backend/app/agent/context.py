@@ -487,7 +487,64 @@ class ContextBuilder:
                 if prev_content and prev_content.content:
                     ctx["previous_scene_tail"] = prev_content.content[-500:]
 
-            # 6. Related edges for this chapter
+            # 6. Chapter scenes framework
+            result = await self.db.execute(
+                select(Scene)
+                .where(Scene.chapter_id == chapter.id)
+                .order_by(Scene.sort_order)
+            )
+            chapter_scene_list = result.scalars().all()
+            if len(chapter_scene_list) > 1:
+                ch_scene_ids = [s.id for s in chapter_scene_list]
+                result = await self.db.execute(
+                    select(SceneContent).where(SceneContent.scene_id.in_(ch_scene_ids))
+                )
+                content_status = {
+                    sc.scene_id: bool(sc.content and sc.content.strip())
+                    for sc in result.scalars().all()
+                }
+
+                current_idx = None
+                for i, s in enumerate(chapter_scene_list):
+                    if s.id == scene_id:
+                        current_idx = i
+                        break
+
+                framework_lines = []
+                for i, s in enumerate(chapter_scene_list):
+                    title = s.title or "未命名场景"
+                    pov = s.pov_character or ""
+
+                    markers = []
+                    is_current = s.id == scene_id
+                    if is_current:
+                        markers.append("← 当前场景")
+                    elif current_idx is not None and i == current_idx + 1:
+                        markers.append("→ 下一场")
+
+                    has = content_status.get(s.id, False)
+                    if has:
+                        markers.append("✅ 已有正文")
+                    elif not is_current:
+                        markers.append("⬜ 待写入")
+
+                    marker_str = f"（{' '.join(markers)}）" if markers else ""
+
+                    line = f"- **{s.sort_order}. {title}**"
+                    if pov:
+                        line += f" — POV: {pov}"
+                    if marker_str:
+                        line += f" {marker_str}"
+
+                    summary = (s.summary or "")[:200]
+                    if summary:
+                        line += f"\n  {summary}"
+
+                    framework_lines.append(line)
+
+                ctx["chapter_scenes_framework"] = "\n".join(framework_lines)
+
+            # 7. Related edges for this chapter
             result = await self.db.execute(
                 select(ChapterEdge).where(
                     ChapterEdge.project_id == scene.project_id,
@@ -512,7 +569,7 @@ class ContextBuilder:
                     edge_lines.append(f"- {e.edge_type}: {src} → {tgt}")
                 ctx["related_edges"] = "\n".join(edge_lines)
 
-            # 7. Related themes (via ThemeChapter)
+            # 8. Related themes (via ThemeChapter)
             result = await self.db.execute(
                 select(ThemeChapter).where(ThemeChapter.chapter_id == chapter.id)
             )
@@ -529,7 +586,7 @@ class ContextBuilder:
                     theme_lines.append(f"- {t.name}{prop}")
                 ctx["related_themes"] = "\n".join(theme_lines)
 
-        # 8. Project info
+        # 9. Project info
         result = await self.db.execute(
             select(Project).where(Project.id == scene.project_id)
         )
@@ -539,7 +596,7 @@ class ContextBuilder:
             ctx["genre"] = proj.genre or ""
             ctx["global_settings"] = (proj.global_settings or "")[:2000]
 
-        # 9. POV character detail
+        # 10. POV character detail
         if scene.pov_character:
             result = await self.db.execute(
                 select(Character).where(
@@ -560,7 +617,7 @@ class ContextBuilder:
                     parts.append(f"外貌：{pov.appearance}")
                 ctx["pov_character_detail"] = "\n".join(parts)
 
-        # 10. Other characters (all project characters, excluding POV)
+        # 11. Other characters (all project characters, excluding POV)
         result = await self.db.execute(
             select(Character)
             .where(Character.project_id == scene.project_id)

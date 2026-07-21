@@ -13,6 +13,11 @@ system: |
   - 位置：第{{chapter_sort_order}}章《{{chapter_title}}》— {{act_name}}
   - 本章目标：{{chapter_goal}}
 
+  {% if chapter_scenes_framework %}
+  ## 本章场景结构
+  {{chapter_scenes_framework}}
+  {% endif %}
+
   {% if pov_character_detail %}
   ## 视角角色
   {{pov_character_detail}}
